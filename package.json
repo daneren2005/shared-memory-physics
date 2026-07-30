@@ -1,0 +1,61 @@
+{
+	"name": "@daneren2005/shared-memory-physics",
+	"description": "2D physics components and systems built on the shared-memory ECS.",
+	"author": "Scott Jackson",
+	"version": "0.0.0",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/daneren2005/shared-memory-physics.git"
+	},
+	"homepage": "https://github.com/daneren2005/shared-memory-physics#readme",
+	"bugs": {
+		"url": "https://github.com/daneren2005/shared-memory-physics/issues"
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			}
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "vite build && tsc -p tsconfig.build.json --emitDeclarationOnly",
+		"type-check": "tsc --noEmit",
+		"lint": "cross-env NODE_ENV=production oxlint .",
+		"lint:fix": "cross-env NODE_ENV=production oxlint --fix .",
+		"test": "vitest run",
+		"release": "semantic-release",
+		"prepare": "husky"
+	},
+	"devDependencies": {
+		"@daneren2005/shared-memory-ecs": "^1.1.1",
+		"@daneren2005/shared-memory-objects": "^1.0.0",
+		"@semantic-release/git": "^10.0.1",
+		"@stylistic/eslint-plugin": "^5.10.0",
+		"@types/node": "^26.1.1",
+		"@vitest/web-worker": "^4.1.10",
+		"cross-env": "^10.1.0",
+		"husky": "^9.1.7",
+		"lint-staged": "^17.0.8",
+		"oxlint": "^1.76.0",
+		"oxlint-tsgolint": "^7.0.2001",
+		"semantic-release": "^25.0.6",
+		"typescript": "^7.0.2",
+		"vite": "^8.1.4",
+		"vitest": "^4.1.10"
+	},
+	"peerDependencies": {
+		"@daneren2005/shared-memory-ecs": "^1.1.1",
+		"@daneren2005/shared-memory-objects": "^1.0.0"
+	},
+	"dependencies": {
+		"flatbush": "^4.6.2"
+	}
+}
