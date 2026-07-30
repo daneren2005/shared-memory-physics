@@ -1,0 +1,39 @@
+import bodyDefinition, { type BodyComponent } from './body-component';
+import transformDefinition, { type TransformComponent } from './transform-component';
+import velocityDefinition, { type VelocityComponent } from './velocity-component';
+
+// The component definitions this library supplies.  A game spreads them into its own registry so its world
+// allocates their memory pools alongside its game specific components:
+//
+//   const registry = { ...physicsRegistry, health: healthDefinition };
+//   const world = new BaseWorld(registry);
+//
+// The names here are what the physics systems query on, so they must be kept as the registry keys.
+export const physicsRegistry = {
+	transform: transformDefinition,
+	velocity: velocityDefinition,
+	body: bodyDefinition,
+};
+
+// The slice of a game's component map that the physics systems need.  Declared as a type alias (not an
+// interface) so it satisfies the ECS's `ComponentMap` index signature.  Systems here are generic over the
+// game's full component map and only require that it extends this.
+export type PhysicsComponents = {
+	transform: TransformComponent
+	velocity: VelocityComponent
+	body: BodyComponent
+};
+
+// The same components as their concrete backing arrays, which is the form a system's update function sees them
+// in on the worker thread.  `body` is optional here because it is optional on the query that moves entities -
+// movement does not need it, and it is only sent along when something is going to collide.  The collidable
+// query requires it, so CollisionComponents narrows it back to guaranteed for the entities found through that.
+//
+// A game that hands extra components to its collision callback widens this with its own:
+//
+//   type GameUpdateComponents = PhysicsUpdateComponents & { health?: Float32Array };
+export type PhysicsUpdateComponents = {
+	transform: Float32Array
+	velocity: Float32Array
+	body?: Uint32Array
+};

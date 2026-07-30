@@ -1,0 +1,27 @@
+{
+	"compilerOptions": {
+		"target": "esnext",
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"declaration": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"sourceMap": true,
+		"outDir": "./dist",
+		"rootDir": ".",
+		"lib": [
+			"esnext",
+			"dom",
+			"dom.iterable"
+		],
+		"types": [
+			"vitest/globals",
+			"node"
+		]
+	},
+	"include": [
+		"src/**/*.ts",
+		"*.config.ts"
+	]
+}
