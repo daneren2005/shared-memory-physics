@@ -121,8 +121,24 @@ world.update(1000); // one second: the entity above is now at x = 10
 `elapsedTime` is in milliseconds (what `BaseWorld#update` is driven with) and velocity is in world units per
 **second**, so a run covering 16ms moves an entity 16/1000ths of its velocity.
 
-Movement does not emit a `component-property-updated` event: position changes every run for every moving
-entity, so a per-entity event each frame would cost far more than it is worth. Read the transform instead.
+An entity that moved is reported back to the main thread as a single `position-updated` event carrying where
+it ended up, so anything you keep keyed off position can follow a move rather than having to poll the block:
+
+```ts
+import { POSITION_UPDATED_EVENT } from '@daneren2005/shared-memory-physics';
+
+entity.on(POSITION_UPDATED_EVENT, (x, y) => {
+	// 12.5, -3
+});
+```
+
+Both axes come with it even when only one of them moved, so a listener always has the whole position without
+having to remember the last one it was told - and a diagonal move costs one event across the worker boundary
+rather than the two a `component-property-updated` per property would. The move is not reported as a property
+change as well, so a listener on `component-property-updated` no longer hears about positions at all.
+
+An entity that did not move says nothing, so a world of still entities stays quiet - and so does one held
+against something it cannot move past.
 
 The move is written with `addAtomicFloat32` rather than a plain `+=`, so a game system on another thread can
 add to the same position in the same instant without either move being lost.
@@ -218,11 +234,51 @@ Writes go straight into shared memory, so a callback can bounce an entity by fli
 value another thread also touches with the atomics from `@daneren2005/shared-memory-objects`. To reach past
 the two entities in front of it - to credit a third for a kill, say - a callback can walk
 `queries[COLLIDABLE_QUERY]`, the full collidable list. Anything that has to happen on the main thread goes
-through `callbacks`: `entityDied`, `entityComponentChanged`, `createEntity`.
+through `callbacks`: `entityDied`, `entityComponentChanged`, `createEntity`, and `emitEntityEvent` for an
+event of your own - the same one the move above reports itself through.
 
 **What collides.** Everything with a transform and a `body`, not only the entities the system moves, so a
 ship can run into a station that has no velocity of its own. Shapes that only just touch do not count as
 overlapping, and one with no area never collides at all.
+
+### Stopping at the edge
+
+An entity is never moved into another one. Before anything is written to the transform, the move is swept
+against everything along its path, and the entity is put down on the edge of whatever is in the way - then
+`onCollision` runs for it, exactly as it would if the two had ended up overlapping.
+
+```ts
+// A ship at x = 0 and a station at x = 30, both 10 wide, with a velocity that asks for 25 in this run.
+world.update(1000);
+console.log(ship.components.transform!.x); // ~20, their edges touching - not 25, and never inside it
+```
+
+The move is one decision over everything it lands on rather than one per entity, so a mover ending up on top of
+two units comes to rest against the *near* one however the two happened to come up, and only the near one is
+reported as a collision - the far one was never reached. An entity wedged between two at the same moment gets a
+call for each.
+
+Two details worth knowing:
+
+- **An entity that was already inside another one is let through.** Something you spawned on top of it, or
+  another system pushed it into, cannot be what *this* move ran into, and blocking on it would pin the entity
+  there for good. It still gets its `onCollision` call for the overlap.
+- **An entity with nowhere left to go stays exactly where it is** rather than creeping the last fraction
+  forwards each run, so it reports no position change while it pushes - but it does keep reporting the
+  collision for as long as it keeps pushing.
+
+**What it costs.** A move is checked where it *ends*, so a clear one - which is nearly every move - is a single
+shape test against each thing near where it lands, and nothing more. Only a move that is genuinely stopping
+somewhere pays for working out where: contact is then halved in on rather than solved, since three shapes at any
+rotation to one another have no single formula for when a pair first touches, while the overlap test the
+narrowphase already has answers it for any pair anywhere. The position an entity is put down at is always one
+that tested clear, so it is genuinely outside everything - within about `1e-4` world units of touching.
+
+The trade for that is **a move long enough to carry an entity clean past something is not stopped by it**: by
+the time the move is out there is nothing left to land on. That takes a single run covering more ground than the
+thing in the way is thick, so at any normal frame rate it does not arise - a ship crossing 100 units a second
+moves 1.6 of them per frame at 60fps. A fixed `deltaBetweenRuns` puts a ceiling on it if your game has anything
+fast enough to care.
 
 ### Collision filtering
 
@@ -275,7 +331,9 @@ geometry is all reachable on its own - see the end of [Body shapes](#body-shapes
 **One thing to know about the ordering.** Entities move one at a time, and the narrowphase reads live
 positions - so an entity that has not had its own move yet is still tested where it started. Two entities
 closing head on will usually collide off the *second* one's move, when both are in their new places, rather
-than off both. The pair is never missed, just attributed to the side that moved last.
+than off both. The pair is never missed, just attributed to the side that moved last. The same ordering is why
+the entity that moves first gets the clear road: it takes its whole move, and the second one is the one that
+comes to rest against it.
 
 ## Using physicsUpdate in your own system
 
@@ -296,6 +354,61 @@ import { CollisionBroadphase, COLLIDABLE_QUERY } from '@daneren2005/shared-memor
 const broadphase = new CollisionBroadphase(queries[COLLIDABLE_QUERY], world.elapsedTime / 1000);
 broadphase.forEachOverlapping({ entityId, components }, other => { /* ... */ });
 ```
+
+`sweep` is the other half, for a system that moves things itself and wants the same
+[stopping at the edge](#stopping-at-the-edge). Hand it the move you were about to make and it says how much of
+it is available, along with whatever the rest of it would have run into:
+
+```ts
+const { fraction, blocking } = broadphase.sweep({ entityId, components }, moveX, moveY);
+transform[TRANSFORM_X_INDEX] += moveX * fraction;
+transform[TRANSFORM_Y_INDEX] += moveY * fraction;
+```
+
+`blocking` is what the entity came to rest *against*, which `forEachOverlapping` will not report from that
+resting place: the two are touching rather than through each other.
+
+## Spatial queries
+
+`SpatialIndex` answers the other kind of question about where things are - who is in this area, and what is
+the closest thing to this point - for the systems that are not about collisions at all: targeting, aggro
+range, spawning somewhere clear, area effects. It is the same R-tree the broadphase is built on, without the
+collide categories or the shape tests.
+
+Build one from anything shaped like a query result and it reads the transform (and the body, to know which
+outline that transform describes) off each entity. Only the transform is needed, so it indexes anything with
+a place in the world rather than only what collides:
+
+```ts
+import { SpatialIndex } from '@daneren2005/shared-memory-physics';
+
+const index = new SpatialIndex(queries.collidable);
+```
+
+Nothing reads the blocks after that, so the index is a **snapshot** of where everything was when it was
+built - build one per run, in `preRun`, and let every entity in that run search it.
+
+| Query                                              | Answers                                              |
+| -------------------------------------------------- | ---------------------------------------------------- |
+| `search(minX, minY, maxX, maxY, filter?)`           | everything whose box reaches into that one            |
+| `searchAround(x, y, reachX, reachY, filter?)`       | the same, written from the middle out                 |
+| `findNearest(x, y, maxDistance?, filter?)`          | the closest one, or `undefined`                       |
+| `findNearby(x, y, maxResults, maxDistance?, filter?)` | the closest `maxResults`, nearest first             |
+
+Every one of them takes a `filter`, run per candidate the tree turns up, and hands it the whole entity -
+`{ entityId, components }` - so it can read back any block that came along with the query. That is where the
+things the index cannot know go: the searcher's own id, which side something is on, whether it is worth
+shooting at.
+
+```ts
+const target = index.findNearest(x, y, 150, other => other.entityId !== entityId && isEnemy(other));
+```
+
+`findNearest` walks the tree in distance order rather than searching a box and sorting what comes back, so
+ask it directly rather than building the sort yourself - it settles as soon as the nearest box is reached, and
+`maxDistance` stops it walking the rest of the world when the answer is that there is nobody. Distance is
+measured to an entity's **box**, not to its centre, so a large target is as near as its nearest edge and
+`maxDistance` reads as a range past the hull.
 
 ## Building
 

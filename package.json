@@ -2,7 +2,7 @@
 	"name": "@daneren2005/shared-memory-physics",
 	"description": "2D physics components and systems built on the shared-memory ECS.",
 	"author": "Scott Jackson",
-	"version": "0.0.0",
+	"version": "0.0.1",
 	"type": "module",
 	"repository": {
 		"type": "git",
@@ -35,7 +35,7 @@
 		"prepare": "husky"
 	},
 	"devDependencies": {
-		"@daneren2005/shared-memory-ecs": "^1.1.1",
+		"@daneren2005/shared-memory-ecs": "^1.2.0",
 		"@daneren2005/shared-memory-objects": "^1.0.0",
 		"@semantic-release/git": "^10.0.1",
 		"@stylistic/eslint-plugin": "^5.10.0",

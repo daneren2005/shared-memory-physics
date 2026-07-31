@@ -61,9 +61,12 @@ export {
 } from './math/shapes';
 
 export { default as CollisionBroadphase, COLLIDABLE_QUERY } from './systems/collision';
-export type { CollisionComponents, CollisionEntity, CollisionFunction, MovingEntity } from './systems/collision';
+export type { CollisionComponents, CollisionEntity, CollisionFunction, MovingEntity, SweepResult } from './systems/collision';
 
-export { default as physicsUpdate, createPhysicsUpdate } from './systems/physics-update';
+export { default as SpatialIndex } from './systems/spatial-index';
+export type { SpatialComponents, SpatialEntity, SpatialFilter } from './systems/spatial-index';
+
+export { default as physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT } from './systems/physics-update';
 export type { PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions } from './systems/physics-update';
 export { default as PhysicsSystem } from './systems/physics-system';
 export type { PhysicsSystemConfig } from './systems/physics-system';

@@ -1,4 +1,4 @@
-import CollisionBroadphase, { type MovingEntity } from '../collision';
+import CollisionBroadphase, { type MovingEntity, type SweepResult } from '../collision';
 import type { PhysicsUpdateComponents } from '../../components/registry';
 import {
 	BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SHAPE_INDEX, BODY_SIZE,
@@ -66,6 +66,12 @@ function overlapping(broadphase: CollisionBroadphase<PhysicsUpdateComponents>, s
 	broadphase.forEachOverlapping(self, other => found.push(other.entityId));
 
 	return found.sort((first, second) => first - second);
+}
+
+// The entities a sweep came to rest against, which the overlap check at that resting place never reports: the
+// whole point of stopping there is that the two are touching rather than through each other.
+function blocking(result: SweepResult<PhysicsUpdateComponents>): Array<number> {
+	return result.blocking.map(other => other.entityId).sort((first, second) => first - second);
 }
 
 // Everything the entity at `entityId` is on top of, over a broadphase built from those same boxes - the case
@@ -352,6 +358,185 @@ describe('collision-broadphase', () => {
 		it('leaves an entity with no velocity where it is', () => {
 			// A station has no velocity to allow for, so its box is only ever as big as the station.
 			expect(hits([{ x: 0, y: 0 }, { x: 20, y: 0 }], 1)).toEqual([]);
+		});
+	});
+
+	// How much of a move an entity is let have, so that it comes to rest against what is in its way rather than
+	// ending up inside it.  Everything here is 10x10 unless the box says otherwise, so two of them meet when
+	// their centres are 10 apart.
+	describe('sweeping a move', () => {
+		// The move `entityId` asked for, put through a broadphase built from those same boxes.
+		function sweep(boxes: Array<Box>, entityId: number, moveX: number, moveY: number, seconds = 0): SweepResult<PhysicsUpdateComponents> {
+			const entities = createEntities(boxes);
+
+			return build(entities, seconds).sweep(entities[entityId - 1], moveX, moveY);
+		}
+
+		it('takes the whole move when nothing is in the way', () => {
+			const result = sweep([{ x: 0, y: 0 }, { x: 100, y: 0 }], 1, 10, 0);
+
+			expect(result.fraction).toEqual(1);
+			expect(blocking(result)).toEqual([]);
+		});
+
+		it('takes the whole move when there is nothing collidable at all', () => {
+			expect(sweep([{ x: 0, y: 0 }], 1, 10, 0).fraction).toEqual(1);
+		});
+
+		it('has nothing to work out for an entity that is not going anywhere', () => {
+			// Sitting right on top of the other one, so it is only the lack of a move that leaves this clear.
+			const result = sweep([{ x: 0, y: 0 }, { x: 5, y: 0 }], 1, 0, 0);
+
+			expect(result.fraction).toEqual(1);
+			expect(blocking(result)).toEqual([]);
+		});
+
+		it('stops on the edge of what is in its way', () => {
+			// 30 apart, so their edges meet 20 along - four fifths of the 25 it wanted.
+			const result = sweep([{ x: 0, y: 0 }, { x: 30, y: 0 }], 1, 25, 0);
+
+			expect(result.fraction).toBeCloseTo(0.8, 4);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('stops on the edge going the other way, and along y', () => {
+			expect(sweep([{ x: 0, y: 0 }, { x: -30, y: 0 }], 1, -25, 0).fraction).toBeCloseTo(0.8, 4);
+			expect(sweep([{ x: 0, y: 0 }, { x: 0, y: 30 }], 1, 0, 25).fraction).toBeCloseTo(0.8, 4);
+			expect(sweep([{ x: 0, y: 0 }, { x: 0, y: -30 }], 1, 0, -25).fraction).toBeCloseTo(0.8, 4);
+		});
+
+		// The case that makes the answer one decision over the whole move rather than one per candidate: stopping
+		// at whichever entity came up first would leave this one sitting inside the near one.
+		it('stops at the nearest of two it lands on, whichever came up first', () => {
+			// A huddle 8 apart, both of which the move ends up on top of: the near one's edge is 10 along and the
+			// far one's is 18, which is 8 deep inside the near one.
+			const near = { x: 20, y: 0 };
+			const far = { x: 28, y: 0 };
+
+			const nearFirst = sweep([{ x: 0, y: 0 }, near, far], 1, 25, 0);
+			expect(nearFirst.fraction).toBeCloseTo(0.4, 4);
+			// Only the near one: the far one is never reached, so it is not what this move came to rest against.
+			expect(blocking(nearFirst)).toEqual([2]);
+
+			// The same two the other way round in the list, where taking the first answer found would stop it 18
+			// along - well inside the near one.
+			const farFirst = sweep([{ x: 0, y: 0 }, far, near], 1, 25, 0);
+			expect(farFirst.fraction).toBeCloseTo(0.4, 4);
+			expect(blocking(farFirst)).toEqual([3]);
+		});
+
+		it('never comes to rest inside what stopped it', () => {
+			const entities = createEntities([{ x: 0, y: 0 }, { x: 28, y: 0 }, { x: 20, y: 0 }]);
+			const broadphase = build(entities);
+			const result = broadphase.sweep(entities[0], 25, 0);
+
+			// Where the sweep said it may go, which is what the update writes back into the block.
+			entities[0].components.transform[TRANSFORM_X_INDEX] = 25 * result.fraction;
+
+			// Touching both of nothing and reported as blocked by the near one: the two lists never overlap, which
+			// is what lets the update run its callback for each without checking for repeats.
+			expect(overlapping(broadphase, entities[0])).toEqual([]);
+			expect(blocking(result)).toEqual([3]);
+		});
+
+		it('stays put when it is already up against something', () => {
+			// Exactly touching, which is not overlapping - so it is a real blocker rather than something it has
+			// already ended up inside.
+			const result = sweep([{ x: 0, y: 0 }, { x: 10, y: 0 }], 1, 5, 0);
+
+			// Reported as 0 rather than as the sliver it could creep forward, so an entity held against a wall
+			// stays exactly where it is run after run instead of drifting into it.
+			expect(result.fraction).toEqual(0);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('lets an entity that started inside another one move on out', () => {
+			// Something the game spawned on top of it, or another system pushed it into: blocking on it would pin
+			// it there for good, so the move is let through and left to the overlap callback instead.  The move
+			// is short enough to still be inside it at the end, so it is only the head start letting this through.
+			const result = sweep([{ x: 0, y: 0 }, { x: 5, y: 0 }], 1, 2, 0);
+
+			expect(result.fraction).toEqual(1);
+			expect(blocking(result)).toEqual([]);
+		});
+
+		it('is not stopped by an entity its categories keep apart', () => {
+			// The same 25 that stops on a plain box above, so it is the categories letting this one through.
+			const boxes = [
+				{ x: 0, y: 0, collideCategory: GROUND, collideMask: GROUND | PROJECTILE },
+				{ x: 30, y: 0, collideCategory: AIR, collideMask: AIR | PROJECTILE },
+			];
+
+			expect(sweep(boxes, 1, 25, 0).fraction).toEqual(1);
+		});
+
+		// The accepted limit of asking where the move ends rather than walking the whole path: a run long enough
+		// to carry an entity clean past something leaves nothing there to land on, so nothing stops it.  A move
+		// has to cover more ground than what is in the way is thick for this to be reachable at all, which a
+		// fixed `deltaBetweenRuns` rules out.
+		it('is not stopped by something it goes clean past in one move', () => {
+			// A 1 thick wall and a 2 wide entity moving 60 in one run, ending well out the far side of it.
+			expect(sweep([{ x: 0, y: 0, width: 2, height: 2 }, { x: 50, y: 0, width: 1, height: 40 }], 1, 60, 0).fraction).toEqual(1);
+			// The same wall and the same entity, moving only as far as the wall: stopped on its edge.
+			expect(sweep([{ x: 0, y: 0, width: 2, height: 2 }, { x: 50, y: 0, width: 1, height: 40 }], 1, 50, 0).fraction).toBeCloseTo(48.5 / 50, 4);
+		});
+
+		it('reports both of two it wedged between at the same moment', () => {
+			// One above and one below the line it is travelling along, their near edges level with each other, so
+			// there is no order in which one of them comes first.
+			const result = sweep([{ x: 0, y: 0 }, { x: 30, y: -5 }, { x: 30, y: 5 }], 1, 25, 0);
+
+			expect(result.fraction).toBeCloseTo(0.8, 4);
+			expect(blocking(result)).toEqual([2, 3]);
+		});
+
+		it('stops where the shape does rather than where its box would', () => {
+			// Passing a circle at an offset: two 10 wide circles meet when their centres are 10 apart, which with
+			// 6 of that already spent on y leaves 8 of x - two further along than the boxes would allow.
+			const circles = { shape: SHAPE_CIRCLE, width: 10, height: 10 };
+			expect(sweep([{ x: 0, y: 0, ...circles }, { x: 30, y: 6, ...circles }], 1, 25, 0).fraction).toBeCloseTo(0.88, 4);
+			expect(sweep([{ x: 0, y: 0 }, { x: 30, y: 6 }], 1, 25, 0).fraction).toBeCloseTo(0.8, 4);
+		});
+
+		it('stops on the length of a capsule it is running along the side of', () => {
+			// The capsule lies along x reaching 20 either way and 5 thick, so a small box coming down onto its
+			// middle is stopped 6 above the centre line rather than at the 10 the box around it would suggest.
+			const capsule = { x: 0, y: 0, shape: SHAPE_CAPSULE, width: 40, height: 10 };
+			const result = sweep([{ x: 0, y: 20, width: 2, height: 2 }, capsule], 1, 0, -20);
+
+			expect(20 - 20 * result.fraction).toBeCloseTo(6, 3);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('is not stopped by an entity that cannot collide', () => {
+			const entities = createEntities([{ x: 0, y: 0 }, { x: 30, y: 0 }]);
+			delete entities[1].components.body;
+
+			expect(build(entities).sweep(entities[0], 25, 0).fraction).toEqual(1);
+		});
+
+		it('has nothing to work out for an entity that cannot collide itself', () => {
+			const entities = createEntities([{ x: 0, y: 0 }, { x: 30, y: 0 }]);
+			delete entities[0].components.body;
+
+			expect(build(entities).sweep(entities[0], 25, 0).fraction).toEqual(1);
+		});
+
+		it('stops on an entity that has moved out from under its own box', () => {
+			// Both closing at 40 a second from 80 apart.  The second one has already had its move by the time this
+			// one goes, so it is 40 further in than the tree has it - which the room left for its velocity covers.
+			const entities = createEntities([
+				{ x: 0, y: 0, velocityX: 40 },
+				{ x: 80, y: 0, velocityX: -40 },
+			]);
+			const broadphase = build(entities, ONE_SECOND);
+			entities[1].components.transform[TRANSFORM_X_INDEX] = 40;
+
+			const result = broadphase.sweep(entities[0], 40, 0);
+
+			// Meeting it at 30 rather than running to the 40 it asked for.
+			expect(result.fraction).toBeCloseTo(0.75, 4);
+			expect(blocking(result)).toEqual([2]);
 		});
 	});
 });

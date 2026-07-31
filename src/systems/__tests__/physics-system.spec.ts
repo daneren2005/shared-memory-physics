@@ -1,4 +1,5 @@
 import PhysicsSystem, { type PhysicsSystemConfig } from '../physics-system';
+import { POSITION_UPDATED_EVENT } from '../physics-update';
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import { createTestWorld, type Components, type Config, type TestWorld } from '../../__tests__/fixtures/world';
 import { SHAPE_CAPSULE } from '../../components/body-component';
@@ -385,7 +386,9 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 		await run(ONE_SECOND);
 
-		expect(circle.components.transform?.y).toEqual(5);
+		// Stopped on the capsule's surface rather than going the whole 15: 5 of capsule thickness plus its own 1
+		// of radius is as close as their centres can get.
+		expect(circle.components.transform?.y).toBeCloseTo(6);
 		expect(circle.components.health?.health).toBeLessThan(FULL_HEALTH);
 		expect(capsule.components.health?.health).toBeLessThan(FULL_HEALTH);
 	});
@@ -466,17 +469,18 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 	});
 
 	it('collides an entity in the same run its movement drove it in', async () => {
-		// 20 apart with 10 of width each, closing at 6 units per second from both sides - so this run leaves
-		// their centres 8 apart, which is 2 further in than the 10 it takes for their edges to meet.
+		// 20 apart with 10 of width each, closing at 6 units per second from both sides - so between them this run
+		// closes 12 of the 10 they have to spare, and they meet part way through it.
 		let first = createShip({ x: 0, y: 0, velocityX: 6 });
 		let second = createShip({ x: 20, y: 0, velocityX: -6 });
 
 		await run(ONE_SECOND);
 
 		// The check happens straight after each entity moves, so the run that closes the gap is the run that
-		// reports it rather than the one after.
+		// reports it rather than the one after.  The first one moves before there is anything within reach and
+		// gets its whole 6; the second is then stopped on its edge, 4 into its own 6.
 		expect(first.components.transform?.x).toEqual(6);
-		expect(second.components.transform?.x).toEqual(14);
+		expect(second.components.transform?.x).toBeCloseTo(16);
 		expect(first.components.health?.health).toBeLessThan(FULL_HEALTH);
 		expect(second.components.health?.health).toBeLessThan(FULL_HEALTH);
 	});
@@ -489,10 +493,102 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 		await run(ONE_SECOND);
 
+		// The first one has 30 of clear road ahead of it at the moment it moves, so its whole 40 is taken; the
+		// second then runs into it where it stopped.
 		expect(first.components.transform?.x).toEqual(40);
-		expect(second.components.transform?.x).toEqual(40);
+		expect(second.components.transform?.x).toBeCloseTo(50);
 		expect(first.components.health?.health).toBeLessThan(FULL_HEALTH);
 		expect(second.components.health?.health).toBeLessThan(FULL_HEALTH);
+	});
+
+	it('stops an entity on the edge of what it moves into rather than inside it', async () => {
+		// 30 apart with 10 of width each, so their edges meet with the ship at 20 - short of the 25 its velocity
+		// asked for.
+		let ship = createShip({ x: 0, y: 0, velocityX: 25 });
+		let station = createStation({ x: 30, y: 0 });
+
+		await run(ONE_SECOND);
+
+		expect(ship.components.transform?.x).toBeCloseTo(20, 3);
+		// And the callback still ran, even though the two are touching rather than through each other.
+		expect(ship.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE);
+		expect(station.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
+	});
+
+	it('does not stop inside the near entity because the far one collided first', async () => {
+		// A huddle the ship's move ends up on top of, with the far station created before the near one so it is
+		// ahead of it in the collidable query: an implementation that stopped at the first collision it reported
+		// would come to rest at 18, well inside the near one.
+		let far = createStation({ x: 28, y: 0 });
+		let near = createStation({ x: 20, y: 0 });
+		let ship = createShip({ x: 0, y: 0, velocityX: 25 });
+
+		await run(ONE_SECOND);
+
+		expect(ship.components.transform?.x).toBeCloseTo(10, 3);
+		// Only the near one was ever reached, so only the near one was collided with.
+		expect(near.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
+		expect(far.components.health?.health).toEqual(FULL_HEALTH);
+		expect(ship.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE);
+	});
+
+	it('holds an entity against what it is up against run after run', async () => {
+		// Closing the last 4 of the gap on the first run, which leaves it touching at 20.
+		let ship = createShip({ x: 16, y: 0, velocityX: 5 });
+		createStation({ x: 30, y: 0 });
+
+		await run(ONE_SECOND);
+		const restingPlace = ship.components.transform?.x;
+		expect(restingPlace).toBeCloseTo(20, 3);
+
+		// Still pushing into it with the same velocity, and it has nowhere left to go: the position does not creep
+		// forwards, and the collision keeps being reported for as long as it keeps pushing.
+		await run(ONE_SECOND);
+
+		expect(ship.components.transform?.x).toEqual(restingPlace);
+		expect(ship.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE * 2);
+	});
+
+	it('reports where an entity ended up as it moves', async () => {
+		let ship = createShip({ x: 0, y: 0, velocityX: 3, velocityY: -4 });
+		let reported: Array<[number, number]> = [];
+		ship.on(POSITION_UPDATED_EVENT, (x: number, y: number) => {
+			reported.push([x, y]);
+		});
+
+		await run(ONE_SECOND);
+
+		// Both axes in the one event rather than an event each: the whole point of the move having an event of its
+		// own is that a diagonal move is one thing to send back to the main thread rather than two.
+		expect(reported).toEqual([[3, -4]]);
+	});
+
+	it('does not report the move as component property changes as well', async () => {
+		let ship = createShip({ x: 0, y: 0, velocityX: 3, velocityY: -4 });
+		let reported: Array<string> = [];
+		ship.on('component-property-updated', (componentName: string, prop: string) => {
+			reported.push(`${componentName}.${prop}`);
+		});
+
+		await run(ONE_SECOND);
+
+		expect(reported).toEqual([]);
+	});
+
+	it('reports the position it came to rest at, not the one it was heading for', async () => {
+		let ship = createShip({ x: 0, y: 0, velocityX: 25 });
+		createStation({ x: 30, y: 0 });
+		let reported: Array<number> = [];
+		ship.on(POSITION_UPDATED_EVENT, (x: number) => {
+			reported.push(x);
+		});
+
+		await run(ONE_SECOND);
+
+		// One report rather than one for the move and another for being pushed back out of it: the block is only
+		// written once the sweep has settled where the entity may go.
+		expect(reported.length).toEqual(1);
+		expect(reported[0]).toBeCloseTo(20, 3);
 	});
 
 	it('keeps moving entities while it collides them', async () => {
