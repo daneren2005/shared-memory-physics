@@ -1,6 +1,7 @@
 import type { Example } from '../example';
 import { bouncingCircles } from './bouncing-circles';
 import { bouncingRectangles } from './bouncing-rectangles';
+import { breakout } from './breakout';
 import { clickToMove } from './click-to-move';
 import { interpolationWalk } from './interpolation-walk';
 import { sensors } from './sensors';
@@ -12,6 +13,7 @@ export const EXAMPLES: Array<Example> = [
 	interpolationWalk,
 	clickToMove,
 	sensors,
+	breakout,
 ];
 
 export function findExample(id: string): Example | undefined {
