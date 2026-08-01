@@ -27,9 +27,6 @@ const base = process.env.EXAMPLES_BASE ?? '/';
 const server = {
 	host: '127.0.0.1',
 	port: 8080,
-	// Fail loudly rather than quietly moving to 8081 when something else already has the port: an example page
-	// that is not where it was expected to be is a worse few minutes than a message saying so.
-	strictPort: true,
 	headers: {
 		'Cross-Origin-Opener-Policy': 'same-origin',
 		'Cross-Origin-Embedder-Policy': 'require-corp',
