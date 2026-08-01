@@ -137,26 +137,31 @@ export function createPhysicsUpdate<
 				return;
 			}
 
+			// A bounce off what it hit is native, so an entity turns around on contact without the game writing a
+			// callback for it: whether it bounces, and how much speed it keeps, is the bounciness component it
+			// carries (or does not).  It also decides how the move itself resolves - see below - so it is read
+			// before the move rather than after it.
+			const bouncing = components.bounciness !== undefined;
+
 			// Where the entity may actually get to is worked out here, off the blocks rather than in them: the
 			// position is only written once the answer is known, so an entity is never inside another one - not
 			// even for the moment it would take to push it back out.
 			//
-			// The sweep happens whether or not the game gave a callback.  Coming to rest against what is in the
+			// The move is resolved whether or not the game gave a callback.  Coming to rest against what is in the
 			// way is what physics *does* about a collision; `onCollision` is what the game does about it, and
 			// plenty of games want the first without the second.  Movement that ignores everything around it is
 			// the bare physicsUpdate below rather than an option here.
-			const sweep = broadphase.sweep(self, moveX, moveY);
-			move(entityId, components.transform, moveX * sweep.fraction, moveY * sweep.fraction, callbacks, world.reportMoves);
+			//
+			// An entity that is not bouncing is let slide along a single axis where its diagonal is blocked, so it
+			// comes off a corner still moving rather than sticking to it.  A bouncing one is not: it is about to
+			// turn around off the face it hit, so skating along that face is the wrong answer for it.
+			const moved = broadphase.resolveMove(self, moveX, moveY, !bouncing);
+			move(entityId, components.transform, moved.moveX, moved.moveY, callbacks, world.reportMoves);
 			// Straight after the move and before any callback, so the stamp covers exactly the pair physics itself
 			// produced.  A callback that goes on to write the transform is a move the game made rather than one
 			// this step did, and it is blended towards on the next frame the same way a teleport is.
 			finishInterpolationStep(interpolation, world.tick);
 
-			// A bounce off what it hit is native, so an entity turns around on contact without the game writing a
-			// callback for it: whether it bounces, and how much speed it keeps, is the bounciness component it
-			// carries (or does not).  `bounce` is a no-op for an entity without one, which is what keeps a world of
-			// walls and terrain paying nothing for it.
-			const bouncing = components.bounciness !== undefined;
 			if(!bouncing && !onCollision) {
 				return;
 			}
@@ -177,7 +182,7 @@ export function createPhysicsUpdate<
 			// Then whatever the move was stopped *against*, which the overlap check above cannot find by design:
 			// the entity was put down touching it rather than through it.  The two lists never share an entry, so
 			// nothing here has already bounced or had its callback.
-			for(const other of sweep.blocking) {
+			for(const other of moved.blocking) {
 				if(bouncing) {
 					bounce(self, other);
 				}

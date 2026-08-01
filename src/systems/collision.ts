@@ -73,9 +73,24 @@ export interface SweepResult<T extends PhysicsUpdateComponents> {
 	blocking: Array<CollisionEntity<T>>
 }
 
+// How a move actually came out, given as the displacement to apply rather than a fraction of the one that was
+// asked for - because a move that had to drop an axis to get anywhere is no longer a scaling of the original.
+//
+// `blocking` is what it came to rest against, and is empty for a move that got where it was going - including
+// one that slid off a corner and completed along a single axis, which is touching nothing by the time it stops.
+export interface MoveResult<T extends PhysicsUpdateComponents> {
+	moveX: number
+	moveY: number
+	blocking: Array<CollisionEntity<T>>
+}
+
 // What `blocking` is for the sweeps that find nothing in the way, which is most of them: one shared empty array
 // rather than one per entity per run.  Read-only to a caller by nature - there is nothing in it to iterate.
 const NOTHING_BLOCKING: Array<never> = [];
+
+// The result of a per-axis sweep that hit nothing: the whole of that axis, with nothing in the way of it.  Held
+// once rather than rebuilt for every axis a slide finds clear.
+const CLEAR = { fraction: 1, blocking: NOTHING_BLOCKING };
 
 // Everything about the entity doing the searching, read out of its blocks once so that a sweep testing the same
 // pair a dozen times over does not read them a dozen times over.  x/y are where it started the move.
@@ -216,16 +231,9 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 	}
 
 	// How much of the move (moveX, moveY) `self` may take before it runs into something, so that an entity comes
-	// to rest against what is in its way instead of ending up inside it.
-	//
-	// Everything the move lands on is collected first and then they are all asked together, which is what keeps
-	// an entity from stopping inside the near one because the far one happened to be looked at first: there is
-	// one answer for the whole move, and it is the earliest contact of the lot.
-	//
-	// Contact is halved in on rather than solved: three shapes at any rotation to one another have no single
-	// formula for when a pair first touches, while the overlap test the narrowphase already has answers it for
-	// any pair anywhere.  The result is always taken from a position that tested clear, so wherever the entity
-	// is put down it is genuinely not inside any of them.
+	// to rest against what is in its way instead of ending up inside it.  The whole move is checked in one pass
+	// for what it lands on, and only if something is there is the resting place refined - so there is one answer
+	// for the move and it is the earliest contact of the lot, not whichever candidate happened to come up first.
 	sweep(self: MovingEntity<T>, moveX: number, moveY: number): SweepResult<T> {
 		const distance = Math.sqrt(moveX * moveX + moveY * moveY);
 		const searcher = toSearcher(self);
@@ -234,17 +242,85 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			return { fraction: 1, blocking: NOTHING_BLOCKING };
 		}
 
+		const candidates = this.gatherCandidates(searcher, moveX, moveY);
+		if(candidates.length === 0) {
+			return { fraction: 1, blocking: NOTHING_BLOCKING };
+		}
+
+		return this.refine(searcher, candidates, moveX, moveY, distance);
+	}
+
+	// Resolves a move the way physics applies it, as the displacement to write rather than a fraction of what was
+	// asked - because a move that had to drop or shorten an axis is no longer a scaling of the original.  With
+	// `slide` off it is `sweep` in different clothes: the whole move, or the swept-short part of it.
+	//
+	// With `slide` on, a diagonal move blocked where it wanted to go is resolved one axis at a time, so an entity
+	// clipping a corner keeps running along the wall instead of sticking to it.  Each axis is taken as far as it
+	// can go on its own: the blocked one stops hard against the edge it hit, and the clear one slides its whole
+	// length past - so the entity ends up right against what stopped it rather than hovering short of it.  Where
+	// the diagonal was only caught at the corner and each axis alone is clear, there is nothing to press against,
+	// so it slides the full length of the axis the move was mostly along and leaves the other be.
+	//
+	// A clear move still costs the one endpoint pass and nothing else; only a blocked one does the axis work.
+	//
+	// Sliding is the caller's to ask for because it is the wrong answer for a bouncing entity: that one turns
+	// around off whatever it hits rather than skating along it, so the bounce path resolves with `slide` off.
+	resolveMove(self: MovingEntity<T>, moveX: number, moveY: number, slide: boolean): MoveResult<T> {
+		const distance = Math.sqrt(moveX * moveX + moveY * moveY);
+		const searcher = toSearcher(self);
+		if(!searcher || distance === 0) {
+			return { moveX, moveY, blocking: NOTHING_BLOCKING };
+		}
+
+		// The common case: the whole move lands clear, settled by the one endpoint pass and nothing else.
+		const candidates = this.gatherCandidates(searcher, moveX, moveY);
+		if(candidates.length === 0) {
+			return { moveX, moveY, blocking: NOTHING_BLOCKING };
+		}
+
+		// Blocked on the diagonal, and asked to slide: resolve each axis on its own.  The diagonal candidates
+		// above only told us it is blocked *somewhere*; which axis that was is what the two passes here work out.
+		if(slide && moveX !== 0 && moveY !== 0) {
+			const xCandidates = this.gatherCandidates(searcher, moveX, 0);
+			const yCandidates = this.gatherCandidates(searcher, 0, moveY);
+
+			// Corner clip: each axis on its own reaches clear, so only the diagonal itself was caught and there is
+			// nothing to press up against.  Slide the full length of the axis the move was mostly along - keeping
+			// most of its heading - and leave the other alone, since advancing it would walk back into the corner.
+			if(xCandidates.length === 0 && yCandidates.length === 0) {
+				return Math.abs(moveX) >= Math.abs(moveY)
+					? { moveX, moveY: 0, blocking: NOTHING_BLOCKING }
+					: { moveX: 0, moveY, blocking: NOTHING_BLOCKING };
+			}
+
+			// At least one axis runs into something.  Take each as far as it goes: a clear axis slides its whole
+			// length, a blocked one is refined right up to the edge it hit rather than dropped to nothing - which
+			// is what puts the entity hard against the obstacle instead of floating a step short of it.
+			const x = xCandidates.length === 0 ? CLEAR : this.refine(searcher, xCandidates, moveX, 0, Math.abs(moveX));
+			const y = yCandidates.length === 0 ? CLEAR : this.refine(searcher, yCandidates, 0, moveY, Math.abs(moveY));
+
+			return { moveX: moveX * x.fraction, moveY: moveY * y.fraction, blocking: mergeBlocking(x.blocking, y.blocking) };
+		}
+
+		// Not sliding, or a straight move with no other axis to fall onto: come to rest where the move stops, the
+		// same short move `sweep` gives, handed back as the displacement it works out to.
+		const rest = this.refine(searcher, candidates, moveX, moveY, distance);
+
+		return { moveX: moveX * rest.fraction, moveY: moveY * rest.fraction, blocking: rest.blocking };
+	}
+
+	// The cheap half of a sweep: everything the move would land on top of, asked where it *ends* rather than
+	// anywhere along the way.  That is what keeps a clear move - which is nearly every move - down to a single
+	// shape test per candidate: an entity only ever walks its own path once something is genuinely in the way.
+	//
+	// The trade is that a move long enough to carry an entity clean past something is not stopped by it: by the
+	// time the move is out there is nothing left to land on.  That takes a single run covering more ground than
+	// the thing in the way is thick, which a fixed `deltaBetweenRuns` rules out.
+	private gatherCandidates(searcher: Searcher, moveX: number, moveY: number): Array<CollisionEntity<T>> {
 		const { x, y, halfWidth, halfHeight } = searcher;
 		const endX = x + moveX;
 		const endY = y + moveY;
 
-		// What the move would land on top of, asked where it *ends* rather than anywhere along the way.  That is
-		// what keeps a clear move - which is nearly every move - down to a single shape test per candidate and
-		// nothing else: an entity only ever walks its own path once something is genuinely in the way of it.
-		//
-		// The trade is that a move long enough to carry an entity clean past something is not stopped by it: by
-		// the time the move is out there is nothing left to land on.  That takes a single run covering more
-		// ground than the thing in the way is thick, which a fixed `deltaBetweenRuns` rules out.
 		const candidates: Array<CollisionEntity<T>> = [];
 		this.forEachCandidate(searcher, endX - halfWidth, endY - halfHeight, endX + halfWidth, endY + halfHeight, other => {
 			// Not where the move ends up, so nothing this move has to stop for.
@@ -252,24 +328,30 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 				return;
 			}
 
-			// Already inside it before the move began - something the game put there, or another system pushed
-			// it into.  It cannot be what *this* move ran into, and blocking on it would pin the entity inside
-			// it for good with no way back out, so the move is let through and the pair is left to the overlap
-			// callback that follows it.
+			// Already inside it before the move began - something the game put there, or another system pushed it
+			// into.  It cannot be what *this* move ran into, and blocking on it would pin the entity inside it for
+			// good with no way back out, so the move is let through and the pair is left to the overlap callback
+			// that follows it.
 			if(overlapsAt(searcher, x, y, other)) {
 				return;
 			}
 
 			candidates.push(other);
 		});
-		if(candidates.length === 0) {
-			return { fraction: 1, blocking: NOTHING_BLOCKING };
-		}
 
-		// From here the entity is definitely stopping short of where it asked to go, and all that is left is
-		// where.  `clear` is a fraction of the move it is known to fit at and `blocked` one it is known not to -
-		// the whole move to begin with, since landing there is what put these candidates in the list at all -
-		// and halving closes the gap between the two.
+		return candidates;
+	}
+
+	// The expensive half: the move is known to stop short of where it asked to go, and this finds where.  `clear`
+	// is a fraction of the move it is known to fit at and `blocked` one it is known not to - the whole move to
+	// begin with, since landing there is what put these candidates in the list - and halving closes the gap.
+	//
+	// Contact is halved in on rather than solved: three shapes at any rotation to one another have no single
+	// formula for when a pair first touches, while the overlap test the narrowphase already has answers it for any
+	// pair anywhere.  The result is always taken from a position that tested clear, so wherever the entity is put
+	// down it is genuinely not inside any of them.
+	private refine(searcher: Searcher, candidates: Array<CollisionEntity<T>>, moveX: number, moveY: number, distance: number): SweepResult<T> {
+		const { x, y } = searcher;
 		let clear = 0;
 		let blocked = 1;
 		const tolerance = CONTACT_TOLERANCE / distance;
@@ -342,6 +424,27 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			}
 		}
 	}
+}
+
+// Combines what stopped each axis of a slide into one list, without repeating an entity that stopped both - a
+// single box in the corner of a diagonal move can be the thing each axis ran into.  Either side being empty is
+// the common case (usually only one axis is blocked), so that side is handed straight back rather than copied.
+function mergeBlocking<T extends PhysicsUpdateComponents>(a: Array<CollisionEntity<T>>, b: Array<CollisionEntity<T>>): Array<CollisionEntity<T>> {
+	if(a.length === 0) {
+		return b;
+	}
+	if(b.length === 0) {
+		return a;
+	}
+
+	const merged = [...a];
+	for(const other of b) {
+		if(!merged.some(entry => entry.entityId === other.entityId)) {
+			merged.push(other);
+		}
+	}
+
+	return merged;
 }
 
 // Reads out what a searching entity needs to be measured by, or undefined for one that cannot collide at all.
