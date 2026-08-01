@@ -5,6 +5,8 @@
 lives in the ECS's shared-memory blocks, so the simulation can run on a worker thread while the main thread
 reads positions straight off its entities.
 
+Examples at https://daneren2005.github.io/shared-memory-physics/
+
 The ECS (`>=1.1.1`) and the shared-memory primitives it is built on are **peer dependencies**: a game must
 register these components against the same copy of the ECS it builds its world with.
 
