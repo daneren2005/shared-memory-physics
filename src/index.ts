@@ -94,7 +94,7 @@ export {
 } from './math/shapes';
 
 export { default as CollisionBroadphase, COLLIDABLE_QUERY } from './systems/collision';
-export type { CollisionComponents, CollisionEntity, CollisionFunction, MovingEntity, SweepResult } from './systems/collision';
+export type { CollisionComponents, CollisionEntity, CollisionFunction, MoveResult, MovingEntity, SweepResult } from './systems/collision';
 
 export { default as SpatialIndex } from './systems/spatial-index';
 export type { SpatialComponents, SpatialEntity, SpatialFilter } from './systems/spatial-index';

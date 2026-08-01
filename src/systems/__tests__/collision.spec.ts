@@ -1,4 +1,4 @@
-import CollisionBroadphase, { type MovingEntity, type SweepResult } from '../collision';
+import CollisionBroadphase, { type MoveResult, type MovingEntity, type SweepResult } from '../collision';
 import type { PhysicsUpdateComponents } from '../../components/registry';
 import {
 	BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SHAPE_INDEX, BODY_SIZE,
@@ -70,7 +70,7 @@ function overlapping(broadphase: CollisionBroadphase<PhysicsUpdateComponents>, s
 
 // The entities a sweep came to rest against, which the overlap check at that resting place never reports: the
 // whole point of stopping there is that the two are touching rather than through each other.
-function blocking(result: SweepResult<PhysicsUpdateComponents>): Array<number> {
+function blocking(result: SweepResult<PhysicsUpdateComponents> | MoveResult<PhysicsUpdateComponents>): Array<number> {
 	return result.blocking.map(other => other.entityId).sort((first, second) => first - second);
 }
 
@@ -536,6 +536,117 @@ describe('collision-broadphase', () => {
 
 			// Meeting it at 30 rather than running to the 40 it asked for.
 			expect(result.fraction).toBeCloseTo(0.75, 4);
+			expect(blocking(result)).toEqual([2]);
+		});
+	});
+
+	// Resolving a move the way physics applies it, with the single-axis slide that keeps an entity clipping a
+	// corner running along the wall rather than sticking to it.  Everything here is 10x10 unless the box says
+	// otherwise, so two of them meet when their centres are 10 apart.
+	describe('resolving a move with sliding', () => {
+		// The move `entityId` asked for, resolved with sliding on unless the test turns it off.
+		function resolve(boxes: Array<Box>, entityId: number, moveX: number, moveY: number, slide = true): MoveResult<PhysicsUpdateComponents> {
+			const entities = createEntities(boxes);
+
+			return build(entities).resolveMove(entities[entityId - 1], moveX, moveY, slide);
+		}
+
+		it('takes the whole move when nothing is in the way', () => {
+			const result = resolve([{ x: 0, y: 0 }, { x: 100, y: 0 }], 1, 10, 10);
+
+			expect(result.moveX).toEqual(10);
+			expect(result.moveY).toEqual(10);
+			expect(blocking(result)).toEqual([]);
+		});
+
+		it('slides along x when a wall below blocks the diagonal but leaves x clear', () => {
+			// A long low wall the diagonal ends up inside of, while the same move along x alone stays above it - so
+			// the square runs along the top of the wall instead of stopping on its corner.  It is already sitting on
+			// the wall's edge, so the y half of the move gets nowhere and the wall is what it is up against.
+			const result = resolve([{ x: 0, y: 0 }, { x: 0, y: 10, width: 100, height: 10 }], 1, 10, 10);
+
+			expect(result.moveX).toEqual(10);
+			expect(result.moveY).toEqual(0);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('slides along y when the nearer axis is blocked too', () => {
+			// A tall wall to the right: the diagonal and the x-only move both run into it, so x gets nowhere and the
+			// slide carries on down the y axis, which is clear.
+			const result = resolve([{ x: 0, y: 0 }, { x: 10, y: 0, width: 10, height: 100 }], 1, 10, 10);
+
+			expect(result.moveX).toEqual(0);
+			expect(result.moveY).toEqual(10);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('presses the blocked axis right up to the edge while sliding the other its whole length', () => {
+			// The wall is off to the right with room in front of it, so the x half of the move is not spent before
+			// it starts: the square has to travel to reach the wall.  Sliding down y its full length must not cost
+			// it that x travel - it should still end hard against the wall's face, not hovering a step short of it.
+			// The wall's left face is at 15 and the square is 10 wide, so its centre stops at 10, an x move of 10.
+			const result = resolve([{ x: 0, y: 0 }, { x: 20, y: 0, width: 10, height: 100 }], 1, 20, 20);
+
+			expect(result.moveX).toEqual(10);
+			expect(result.moveY).toEqual(20);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('presses up to a wall below while sliding its whole length along x', () => {
+			// The same, turned a quarter: a wall below with room above it, so sliding x its full length must still
+			// carry the square down onto the wall's top face rather than leaving a gap under it.  The face is at 15,
+			// so the square's centre stops at 10, a y move of 10.
+			const result = resolve([{ x: 0, y: 0 }, { x: 0, y: 20, width: 100, height: 10 }], 1, 20, 20);
+
+			expect(result.moveX).toEqual(20);
+			expect(result.moveY).toEqual(10);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('slides along the larger axis when a clipped corner leaves both clear', () => {
+			// A single box the diagonal just catches the corner of, which neither single-axis move reaches - so the
+			// tie is broken towards whichever axis the move was mostly along, keeping most of its heading.
+			const mostlyX = resolve([{ x: 0, y: 0 }, { x: 10, y: 10 }], 1, 12, 6);
+			expect(mostlyX.moveX).toEqual(12);
+			expect(mostlyX.moveY).toEqual(0);
+
+			const mostlyY = resolve([{ x: 0, y: 0 }, { x: 10, y: 10 }], 1, 6, 12);
+			expect(mostlyY.moveX).toEqual(0);
+			expect(mostlyY.moveY).toEqual(12);
+		});
+
+		it('comes to rest in the corner when both axes are blocked', () => {
+			// An inside corner - a wall on the right and a wall below - so there is no axis to slide onto and it
+			// stops against the pair of them, exactly as a move with nowhere to go would.
+			const result = resolve([
+				{ x: 0, y: 0 },
+				{ x: 10, y: 0, width: 10, height: 100 },
+				{ x: 0, y: 10, width: 100, height: 10 },
+			], 1, 10, 10);
+
+			expect(result.moveX).toEqual(0);
+			expect(result.moveY).toEqual(0);
+			expect(blocking(result)).toEqual([2, 3]);
+		});
+
+		it('does not invent an axis to slide onto for a straight move', () => {
+			// Nothing to fall back to when only one axis was moving in the first place: it just stops on the edge,
+			// four fifths of the 25 it wanted, the same as the plain sweep.
+			const result = resolve([{ x: 0, y: 0 }, { x: 30, y: 0 }], 1, 25, 0);
+
+			expect(result.moveX).toBeCloseTo(20, 3);
+			expect(result.moveY).toEqual(0);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('does not slide when sliding is turned off, coming to rest instead', () => {
+			// The same wall-below the x slide clears above, but with sliding off - the way the bounce path resolves.
+			// The square is already sitting on the wall's edge, so the downward half of the diagonal has nowhere to
+			// go: with no axis to fall back on it stops dead rather than running along the top of the wall.
+			const result = resolve([{ x: 0, y: 0 }, { x: 0, y: 10, width: 100, height: 10 }], 1, 10, 10, false);
+
+			expect(result.moveX).toEqual(0);
+			expect(result.moveY).toEqual(0);
 			expect(blocking(result)).toEqual([2]);
 		});
 	});

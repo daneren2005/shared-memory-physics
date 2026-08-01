@@ -17,6 +17,8 @@ const PLAYER_SIZE = 28;
 const STOP_DISTANCE = 5;
 // A gap left between anything placed, so the targets read as separate shapes rather than a pile.
 const MARGIN = 12;
+// A perfect bounce, so the ricochet off an obstacle is unmistakable when the toggle is on.
+const BOUNCINESS = 1;
 
 // Cycled through as targets are placed so even a handful still shows one of each of the three shapes.
 const SHAPES = [SHAPE_RECTANGLE, SHAPE_CIRCLE, SHAPE_CAPSULE];
@@ -24,6 +26,9 @@ const SHAPES = [SHAPE_RECTANGLE, SHAPE_CIRCLE, SHAPE_CAPSULE];
 const settings = {
 	targets: 9,
 	speed: 260,
+	// Off by default: the square slides around obstacles.  Turned on it bounces off them instead - and physics
+	// turns the sliding off for anything that can bounce, so the two are never fighting over the same contact.
+	bouncy: false,
 };
 
 // The one entity a click steers, and where it is currently headed.  Both are rebuilt with the world and read
@@ -35,15 +40,18 @@ let destination: { x: number, y: number } | undefined;
 export const clickToMove: Example = {
 	id: 'click-to-move',
 	title: 'Click to move',
-	description: 'Click anywhere and the square drives itself there. A click writes a destination, and each frame '
-		+ 'the square points its velocity straight at it - so this is steering, not a path: a target in the way is '
-		+ 'something the square presses into and stops on, not something it goes around. The velocity is dropped to '
-		+ 'zero once the square is within five units of where you clicked, which is what stops it cleanly instead of '
-		+ 'jittering back and forth across the spot. The rectangles, circles and capsules scattered about have a '
-		+ 'size but no velocity, so physics never moves them - they are just there to bump into.',
+	description: 'Click anywhere and the square drives itself there. A click writes a destination and the square '
+		+ 'points its velocity straight at it - so this is steering, not a path: it heads at the spot in a straight '
+		+ 'line rather than finding a way round. What it does when a target is in the way is the interesting part, '
+		+ 'and it depends on the bounciness toggle. Off, the square slides: physics lets a blocked diagonal keep '
+		+ 'going along whichever single axis is still clear, so the square runs along the face of an obstacle and '
+		+ 'off its corner instead of sticking to it. On, the square bounces off instead - and because a bouncing '
+		+ 'entity is going to turn around off the face anyway, physics turns the sliding off for it, so the two are '
+		+ 'never fighting over the same contact. The rectangles, circles and capsules scattered about have a size '
+		+ 'but no velocity, so physics never moves them - they are just there to run into.',
 	backend: 'sweep',
 
-	controls(): Array<Control> {
+	controls(host): Array<Control> {
 		return [
 			{
 				kind: 'slider',
@@ -69,6 +77,20 @@ export const clickToMove: Example = {
 					settings.targets = value;
 				},
 			},
+			{
+				kind: 'toggle',
+				label: 'Bounciness',
+				value: settings.bouncy,
+				note: 'Gives the square a perfect bounce, so it ricochets off obstacles instead of sliding along them '
+					+ '- and because it can then bounce, physics stops sliding it. Aim it past a target with this on '
+					+ 'and it deflects rather than steering back on, since it is set loose on a click rather than '
+					+ 'steered every frame while it is bouncing. Rebuilds the square, since bounciness is set when it '
+					+ 'is created.',
+				change(value) {
+					settings.bouncy = value;
+					host.restart();
+				},
+			},
 		];
 	},
 
@@ -81,10 +103,10 @@ export const clickToMove: Example = {
 		const startY = level.height / 2;
 
 		// The square starts in the middle and stays still until the first click.  It carries a velocity component
-		// from the off - the steering writes into it every frame - but starts at rest, and no bounciness, so a
-		// collision stops it against a face rather than turning it around.
+		// from the off - a click writes into it - but starts at rest.  Bounciness is set here rather than toggled
+		// live because it is loaded when the entity is created, which is why the toggle rebuilds the world.
 		destination = undefined;
-		player = world.loadEntity({
+		const config: Config = {
 			x: startX,
 			y: startY,
 			width: PLAYER_SIZE,
@@ -92,7 +114,11 @@ export const clickToMove: Example = {
 			velocityX: 0,
 			velocityY: 0,
 			interpolate: true,
-		});
+		};
+		if(settings.bouncy) {
+			config.bounciness = BOUNCINESS;
+		}
+		player = world.loadEntity(config);
 
 		// Keep the targets clear of where the square sits, so it never opens the scene already jammed inside one.
 		placed.push({ x: startX, y: startY, reach: PLAYER_SIZE / 2 });
@@ -123,16 +149,28 @@ export const clickToMove: Example = {
 	},
 
 	pointerDown(runtime, x, y): void {
-		if(!player) {
+		const transform = player?.components.transform;
+		const velocity = player?.components.velocity;
+		if(!transform || !velocity) {
 			return;
 		}
 
-		// A click is a destination, nothing more - the steering in `update` is what turns it into motion, so
-		// clicking mid-journey simply hands the square a new place to aim at on the very next frame.
-		destination = {
+		const target = {
 			x: clamp(x, 0, runtime.level.width),
 			y: clamp(y, 0, runtime.level.height),
 		};
+		destination = target;
+
+		// Aim the square at the click straight away.  A sliding square is re-aimed every frame by `update` so this
+		// only saves it a frame, but a bouncing one is set loose here and left alone - `update` never re-steers it -
+		// so this launch is the only push it gets, and everything after is the bounce carrying it.
+		const dx = target.x - transform.x;
+		const dy = target.y - transform.y;
+		const distance = Math.hypot(dx, dy);
+		if(distance > 0) {
+			velocity.velocityX = (dx / distance) * settings.speed;
+			velocity.velocityY = (dy / distance) * settings.speed;
+		}
 	},
 
 	update(runtime, elapsedTime): void {
@@ -157,6 +195,14 @@ export const clickToMove: Example = {
 			velocity.velocityY = 0;
 			destination = undefined;
 
+			return;
+		}
+
+		// A bouncing square is set loose on the click and left to the bounce from there: re-aiming it every frame
+		// would overwrite the velocity the bounce just flipped before physics could act on it, so there would be no
+		// bounce to see.  It still stops when it happens to arrive - the check above - it is just not steered on the
+		// way, so it deflects off obstacles and walls rather than boring back toward the spot.
+		if(settings.bouncy) {
 			return;
 		}
 
