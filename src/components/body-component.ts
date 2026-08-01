@@ -12,6 +12,12 @@ export interface BodyComponent {
 	shape: number
 	collideCategory: number
 	collideMask: number
+	// Whether this body is a sensor: it takes part in collision *detection* - a mover that overlaps it still gets
+	// its onCollision, and it can still be found by a spatial-index search - but it stops nothing.  Nothing is
+	// swept short against it and nothing bounces off it, so a solid entity passes straight through where it would
+	// come to rest against an ordinary body.  See canCollide for the category/mask rules, which a sensor obeys
+	// unchanged: sensor is only about the *response*, not about which pairs are looked at.
+	sensor: boolean
 }
 
 // The shapes a body can be.  All three are held in the same transform - a position, a width, a height and an
@@ -73,6 +79,9 @@ export interface BodyConfig {
 	// The bit(s) this entity collides as, and the bits it is willing to collide with.  See canCollide.
 	collideCategory?: number
 	collideMask?: number
+	// Makes the body a sensor: found and reported like any other, but never blocking or bounced off, so movers
+	// pass through it.  Defaults to false - a body that says nothing is solid.  See BodyComponent#sensor.
+	sensor?: boolean
 }
 
 // Indexes into the backing Uint32Array block.  The collision broadphase reads the same offsets off the raw
@@ -80,17 +89,28 @@ export interface BodyConfig {
 export const BODY_SHAPE_INDEX = 0;
 export const BODY_CATEGORY_INDEX = 1;
 export const BODY_MASK_INDEX = 2;
-export const BODY_SIZE = 3;
+// 1 for a sensor, 0 for an ordinary solid body.  Held in the block rather than as a JS flag so the broadphase
+// and the bounce - both of which read the raw shared array on the worker thread - can see it the same way they
+// see the shape and the collide bits.
+export const BODY_SENSOR_INDEX = 3;
+export const BODY_SIZE = 4;
+
+// Whether a body block is a sensor.  Exported so a game system touching the block directly reads the flag the
+// same way the library's own broadphase and bounce do, rather than hard-coding the offset and the `!== 0`.
+export function isSensor(body: Uint32Array): boolean {
+	return body[BODY_SENSOR_INDEX] !== 0;
+}
 
 export const bodyDefinition: ComponentDefinition<BodyComponent, Uint32Array, BodyConfig> = {
 	type: Uint32Array,
 	size: BODY_SIZE,
-	loadProperties: ['width', 'height', 'radius', 'shape', 'collideCategory', 'collideMask'],
+	loadProperties: ['width', 'height', 'radius', 'shape', 'collideCategory', 'collideMask', 'sensor'],
 	load(entity, memory, config) {
 		const index = memory.create([
 			toShape(config),
 			config.collideCategory ?? DEFAULT_COLLIDE_CATEGORY,
 			config.collideMask ?? DEFAULT_COLLIDE_MASK,
+			config.sensor ? 1 : 0,
 		]);
 		const block = memory.getBlock(index);
 
@@ -113,6 +133,14 @@ export const bodyDefinition: ComponentDefinition<BodyComponent, Uint32Array, Bod
 			},
 			set collideMask(value: number) {
 				block[BODY_MASK_INDEX] = value;
+			},
+			// Stored as 1/0 in the block but read and written as a boolean here, so a game toggles a sensor on and
+			// off the same way it reads it - the block form is an implementation detail the broadphase shares.
+			get sensor() {
+				return block[BODY_SENSOR_INDEX] !== 0;
+			},
+			set sensor(value: boolean) {
+				block[BODY_SENSOR_INDEX] = value ? 1 : 0;
 			},
 		};
 	},

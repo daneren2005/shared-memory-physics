@@ -1,4 +1,4 @@
-import { BODY_SHAPE_INDEX, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../components/body-component';
+import { BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../components/body-component';
 import { BOUNCINESS_INDEX } from '../components/bounciness-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
@@ -29,6 +29,14 @@ const OTHER_HALF: Vector = { x: 0, y: 0 };
 export function bounce<T extends PhysicsUpdateComponents>(self: MovingEntity<T>, other: CollisionEntity<T>): void {
 	const bounciness = self.components.bounciness;
 	if(!bounciness) {
+		return;
+	}
+
+	// Nothing bounces off a sensor, and a sensor bounces off nothing: a sensor is felt only through onCollision,
+	// never as a surface, so the two pass through each other and the velocity is left exactly as it was.  The
+	// pair is still reported - this is a `return` from the bounce, not from the collision - so a callback that
+	// wants to react to the overlap still runs.
+	if(isSensorBody(self.components.body) || isSensorBody(other.components.body)) {
 		return;
 	}
 
@@ -105,6 +113,12 @@ function collisionNormal<T extends PhysicsUpdateComponents>(self: MovingEntity<T
 // a size-only entity would collide as is the fallback.
 function shapeOf(body: Uint32Array | undefined): number {
 	return body ? body[BODY_SHAPE_INDEX] : SHAPE_RECTANGLE;
+}
+
+// Whether a body block is a sensor, allowing for the entity that arrived without one at all - a size-only entity
+// is a solid, not a sensor, so a missing body is false rather than a guess either way.
+function isSensorBody(body: Uint32Array | undefined): boolean {
+	return body !== undefined && body[BODY_SENSOR_INDEX] !== 0;
 }
 
 // How far the shape reaches from its centre along each axis, allowing for whatever it is rotated to - the same

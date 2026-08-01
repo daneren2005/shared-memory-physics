@@ -2,7 +2,10 @@ import physicsUpdate, { createPhysicsUpdate, POSITION_UPDATED_EVENT, type Physic
 import type { ComponentSystemCallbacks } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
 import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
-import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SHAPE_INDEX, BODY_SIZE, DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../../components/body-component';
+import {
+	BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, BODY_SIZE,
+	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CIRCLE, SHAPE_RECTANGLE,
+} from '../../components/body-component';
 import { BOUNCINESS_INDEX, BOUNCINESS_SIZE } from '../../components/bounciness-component';
 import { TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
 import { VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component';
@@ -161,6 +164,9 @@ interface Unit {
 	shape?: number
 	// Left off, the unit has no bounciness block at all - the case a game's terrain and walls are.
 	bounciness?: number
+	// A sensor is detected and reported but stops nothing: a mover passes through it rather than coming to rest
+	// against it, and a bouncing one does not turn around off it.
+	sensor?: boolean
 }
 
 // The blocks one entity would arrive at the worker with.  Units are 10x10, still, and collide with everything
@@ -180,6 +186,7 @@ function createUnit(unit: Unit, entityId: number): MovingEntity<PhysicsUpdateCom
 	body[BODY_SHAPE_INDEX] = unit.shape ?? SHAPE_RECTANGLE;
 	body[BODY_CATEGORY_INDEX] = DEFAULT_COLLIDE_CATEGORY;
 	body[BODY_MASK_INDEX] = DEFAULT_COLLIDE_MASK;
+	body[BODY_SENSOR_INDEX] = unit.sensor ? 1 : 0;
 
 	const components: PhysicsUpdateComponents = { transform, velocity, body };
 	// Only a unit that names a bounciness carries the block, the same way only such an entity would at runtime.
@@ -347,6 +354,25 @@ describe('createPhysicsUpdate', () => {
 		expect(result.hits()).toEqual([2]);
 	});
 
+	it('passes a mover straight through a sensor while still running its callback', () => {
+		// The sensor sits where a plain box would stop the mover at 20; as a sensor it blocks nothing, so the mover
+		// takes its whole 25 - and the overlap is still reported, which is the whole point of the sensor.
+		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0, sensor: true }]);
+
+		expect(result.x(1)).toEqual(25);
+		expect(result.hits()).toEqual([2]);
+	});
+
+	it('reports the sensor from the overlap rather than as something it stopped against', () => {
+		// A sensor is never in the blocking list - nothing comes to rest against it - so the pair is reported by the
+		// overlap at the end of the move, with the mover having ended up on top of it rather than resting on an edge.
+		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 20, y: 0, sensor: true }]);
+
+		expect(result.hits()).toEqual([2]);
+		// The mover is well inside the sensor at the end of the move - the 25 it asked for, not stopped short of it.
+		expect(result.collisions[0].selfX).toEqual(25);
+	});
+
 	it('still reports two entities that are simply sitting on top of each other', () => {
 		// Neither is going anywhere, so this is the overlap check rather than the sweep - one call each, with the
 		// roles swapped.
@@ -509,6 +535,14 @@ describe('createPhysicsUpdate bounce', () => {
 		// The case a game's walls and terrain are: it collides and is stopped by the sweep, but nothing turns its
 		// velocity around, so the block still reads the heading it came in on.
 		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0 }]);
+
+		expect(result.velocityX(1)).toEqual(25);
+	});
+
+	it('does not bounce a full-bounciness unit off a sensor', () => {
+		// The same head-on hit that flips the velocity off a wall, but into a sensor: nothing bounces off a sensor,
+		// so the mover keeps its heading and sails through rather than turning around.
+		const result = run([{ x: 0, y: 0, velocityX: 25, bounciness: 1 }, { x: 30, y: 0, sensor: true }]);
 
 		expect(result.velocityX(1)).toEqual(25);
 	});

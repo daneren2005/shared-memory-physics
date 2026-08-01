@@ -1,14 +1,15 @@
 import { DEFAULT_PHYSICS_STEP_MS, InterpolationSystem, PhysicsSystem } from '@daneren2005/shared-memory-physics';
+import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import { renderControls } from './controls';
 import type { Control } from './controls';
-import type { Example, ExampleHost, ExampleRuntime } from './example';
+import type { EntityStyle, Example, ExampleHost, ExampleRuntime } from './example';
 import { EXAMPLES, findExample } from './examples';
 import { LEVEL, createWalls } from './level';
 import { PHYSICS_BACKENDS } from './physics';
 import { createGame } from './renderer';
 import type { Renderable } from './renderer';
 import { createExampleWorld } from './world';
-import type { Components } from './world';
+import type { Components, Config } from './world';
 
 // How often the stats under the controls are rewritten.  Every frame would be unreadable and would put a dozen
 // DOM writes in the way of the thing being measured.
@@ -79,6 +80,16 @@ class ExamplesPage implements ExampleHost, Renderable {
 		if(this.runtime) {
 			this.example.pointerDown?.(this.runtime, x, y);
 		}
+	}
+
+	// Asked by the scene per entity per frame for the current example's own colour for it, or undefined to let the
+	// renderer's default stand.  Routed to the example the same way a click is: the page only knows which one is up.
+	entityStyle(entity: BaseEntity<Components, Config>): EntityStyle | undefined {
+		if(!this.runtime) {
+			return undefined;
+		}
+
+		return this.example.entityStyle?.(this.runtime, entity);
 	}
 
 	// Called once per rendered frame by the scene, with however long the frame took.

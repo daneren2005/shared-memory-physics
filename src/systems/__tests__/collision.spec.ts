@@ -1,7 +1,7 @@
 import CollisionBroadphase, { type MoveResult, type MovingEntity, type SweepResult } from '../collision';
 import type { PhysicsUpdateComponents } from '../../components/registry';
 import {
-	BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SHAPE_INDEX, BODY_SIZE,
+	BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, BODY_SIZE,
 	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK,
 	SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE,
 } from '../../components/body-component';
@@ -27,6 +27,7 @@ interface Box {
 	shape?: number
 	collideCategory?: number
 	collideMask?: number
+	sensor?: boolean
 }
 
 // The blocks one entity would arrive at the worker with.  Boxes are 10x10, still, and collide with everything
@@ -47,6 +48,7 @@ function createEntity(box: Box, entityId: number): MovingEntity<PhysicsUpdateCom
 	body[BODY_SHAPE_INDEX] = box.shape ?? SHAPE_RECTANGLE;
 	body[BODY_CATEGORY_INDEX] = box.collideCategory ?? DEFAULT_COLLIDE_CATEGORY;
 	body[BODY_MASK_INDEX] = box.collideMask ?? DEFAULT_COLLIDE_MASK;
+	body[BODY_SENSOR_INDEX] = box.sensor ? 1 : 0;
 
 	return { entityId, components: { transform, velocity, body } };
 }
@@ -648,6 +650,83 @@ describe('collision-broadphase', () => {
 			expect(result.moveX).toEqual(0);
 			expect(result.moveY).toEqual(0);
 			expect(blocking(result)).toEqual([2]);
+		});
+	});
+
+	// A sensor takes part in detection but never in the response: it is found and reported like any other body,
+	// so a mover overlapping it still gets its callback, but nothing is ever swept short against it and it is
+	// swept short against nothing - so a solid entity passes straight through where it would otherwise stop.
+	describe('sensors', () => {
+		function sweep(boxes: Array<Box>, entityId: number, moveX: number, moveY: number): SweepResult<PhysicsUpdateComponents> {
+			const entities = createEntities(boxes);
+
+			return build(entities).sweep(entities[entityId - 1], moveX, moveY);
+		}
+
+		function resolve(boxes: Array<Box>, entityId: number, moveX: number, moveY: number, slide = true): MoveResult<PhysicsUpdateComponents> {
+			const entities = createEntities(boxes);
+
+			return build(entities).resolveMove(entities[entityId - 1], moveX, moveY, slide);
+		}
+
+		it('still reports a sensor a mover is sitting on top of', () => {
+			// Detection is exactly what a sensor is for: the overlap is found and handed back the same as any other,
+			// which is what carries the onCollision the game hangs off it.
+			expect(hits([{ x: 0, y: 0 }, { x: 5, y: 0, sensor: true }], 1)).toEqual([2]);
+		});
+
+		it('reports the overlap from the sensor\'s own side too', () => {
+			// The report is symmetric like every other pair: a sensor that moves finds the solids it overlaps, not
+			// only the other way round - so a sensor can be the entity whose update fires the callback.
+			expect(hits([{ x: 0, y: 0, sensor: true }, { x: 5, y: 0 }], 1)).toEqual([2]);
+		});
+
+		it('does not stop a move against a sensor', () => {
+			// The same 25 into a body 30 away that a plain box stops four fifths along: as a sensor it blocks nothing,
+			// so the whole move is taken and there is nothing to report as blocking.
+			const result = sweep([{ x: 0, y: 0 }, { x: 30, y: 0, sensor: true }], 1, 25, 0);
+
+			expect(result.fraction).toEqual(1);
+			expect(blocking(result)).toEqual([]);
+		});
+
+		it('does not stop a sensor moving into a solid', () => {
+			// The block is on the searcher this time: a sensor passes through whatever it moves into, so it is not
+			// swept short even against an ordinary body.
+			const result = sweep([{ x: 0, y: 0, sensor: true }, { x: 30, y: 0 }], 1, 25, 0);
+
+			expect(result.fraction).toEqual(1);
+			expect(blocking(result)).toEqual([]);
+		});
+
+		it('passes a resolved move straight through a sensor', () => {
+			// resolveMove is what physics actually applies, sliding and all: a sensor in the way changes none of it,
+			// so the whole diagonal is taken rather than being clipped to a wall's face.
+			const result = resolve([{ x: 0, y: 0 }, { x: 10, y: 0, width: 10, height: 100, sensor: true }], 1, 10, 10);
+
+			expect(result.moveX).toEqual(10);
+			expect(result.moveY).toEqual(10);
+			expect(blocking(result)).toEqual([]);
+		});
+
+		it('still stops on a solid body sitting behind a sensor', () => {
+			// The sensor is passed through and the solid past it is what the move comes to rest against, so a sensor
+			// laid over a wall does not stop things short of the wall.
+			const result = sweep([{ x: 0, y: 0 }, { x: 15, y: 0, sensor: true }, { x: 30, y: 0 }], 1, 25, 0);
+
+			expect(result.fraction).toBeCloseTo(0.8, 4);
+			expect(blocking(result)).toEqual([3]);
+		});
+
+		it('still obeys the collide categories a sensor is filtered by', () => {
+			// Sensor is only about the response - which pairs are looked at is still the category rule, so a sensor
+			// whose categories keep it apart from the mover is not even detected.
+			const boxes = [
+				{ x: 0, y: 0, collideCategory: GROUND, collideMask: GROUND | PROJECTILE },
+				{ x: 5, y: 0, collideCategory: AIR, collideMask: AIR | PROJECTILE, sensor: true },
+			];
+
+			expect(hits(boxes, 1)).toEqual([]);
 		});
 	});
 });

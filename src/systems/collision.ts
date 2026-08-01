@@ -1,7 +1,7 @@
 import Flatbush from 'flatbush';
 import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsUpdateComponents } from '../components/registry';
-import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SHAPE_INDEX } from '../components/body-component';
+import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX } from '../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import { shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapesOverlap } from '../math/shapes';
@@ -106,6 +106,10 @@ interface Searcher {
 	halfHeight: number
 	category: number
 	mask: number
+	// Whether this entity is a sensor, so its move is never swept short: a sensor passes through whatever it moves
+	// into rather than coming to rest against it.  Constant for the whole of a searcher's sweep, so it is read out
+	// here once rather than off the block per candidate.
+	sensor: boolean
 }
 
 // One category's worth of the broadphase: every collidable entity that collides *as* that category, and an
@@ -318,6 +322,14 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 	// the thing in the way is thick, which a fixed `deltaBetweenRuns` rules out.
 	private gatherCandidates(searcher: Searcher, moveX: number, moveY: number): Array<CollisionEntity<T>> {
 		const { x, y, halfWidth, halfHeight } = searcher;
+
+		// A sensor is swept short by nothing: it passes through whatever it moves into rather than coming to rest
+		// against it, so there is nothing to gather.  It is still reported by forEachOverlapping - detection is
+		// exactly what a sensor is for - but the *move* is never blocked, so this returns before any shape test.
+		if(searcher.sensor) {
+			return [];
+		}
+
 		const endX = x + moveX;
 		const endY = y + moveY;
 
@@ -325,6 +337,12 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		this.forEachCandidate(searcher, endX - halfWidth, endY - halfHeight, endX + halfWidth, endY + halfHeight, other => {
 			// Not where the move ends up, so nothing this move has to stop for.
 			if(!overlapsAt(searcher, endX, endY, other)) {
+				return;
+			}
+
+			// A sensor blocks nothing: a solid mover passes straight through it and comes to rest only against the
+			// next real body, so it is dropped as a candidate here and left to the overlap callback that follows.
+			if(other.components.body[BODY_SENSOR_INDEX] !== 0) {
 				return;
 			}
 
@@ -486,6 +504,7 @@ function toSearcher<T extends PhysicsUpdateComponents>(self: MovingEntity<T>): S
 		halfHeight: shapeHalfHeight(shape, width, height, angle),
 		category: body[BODY_CATEGORY_INDEX],
 		mask,
+		sensor: body[BODY_SENSOR_INDEX] !== 0,
 	};
 }
 
