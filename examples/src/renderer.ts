@@ -2,7 +2,7 @@ import { AUTO, Game, Math as PhaserMath, Scale, Scene } from 'phaser';
 import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '@daneren2005/shared-memory-physics';
 import type { TransformComponent } from '@daneren2005/shared-memory-physics';
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
-import type { EntityStyle, ExampleRuntime } from './example';
+import type { EntityStyle, HudText, ExampleRuntime } from './example';
 import { LEVEL } from './level';
 import type { Components, Config } from './world';
 
@@ -21,6 +21,9 @@ export interface Renderable {
 	// The current example's own colour for this entity, or undefined to fall back to the renderer's default.  The
 	// scene asks per entity per frame; the page routes it to whichever example is up - see Example#entityStyle.
 	entityStyle(entity: BaseEntity<Components, Config>): EntityStyle | undefined
+	// The score, lives and banner the current example wants drawn over the canvas, or undefined for one that has
+	// none.  Routed to whichever example is up the same way a colour is - see Example#hud.
+	hud(): HudText | undefined
 }
 
 // A frame after the tab has been in the background for a minute arrives with a delta of however long that was.
@@ -50,6 +53,11 @@ interface Position {
 // many entities exist while they are running, and a redraw does not care.
 class ExampleScene extends Scene {
 	private graphics!: Phaser.GameObjects.Graphics;
+	// The two HUD layers, made once and rewritten each frame rather than recreated: the status lines pinned to
+	// the top-left corner, and the banner across the middle.  Added after the graphics so they draw on top of
+	// the shapes, and left empty for every example that returns no `hud` at all.
+	private statusText!: Phaser.GameObjects.Text;
+	private bannerText!: Phaser.GameObjects.Text;
 
 	constructor(private readonly host: Renderable) {
 		super('example');
@@ -57,6 +65,18 @@ class ExampleScene extends Scene {
 
 	create(): void {
 		this.graphics = this.add.graphics();
+
+		this.statusText = this.add.text(16, 12, '', {
+			fontFamily: 'ui-monospace, monospace',
+			fontSize: '18px',
+			color: '#E2E8F0',
+		});
+		this.bannerText = this.add.text(LEVEL.width / 2, LEVEL.height / 2, '', {
+			fontFamily: 'ui-monospace, monospace',
+			fontSize: '34px',
+			color: '#F8FAFC',
+			align: 'center',
+		}).setOrigin(0.5);
 
 		// The level is drawn at its own size, so a pointer read off the scene is already in world units and needs
 		// no unproject - the click and the entity it is steering share one coordinate space.
@@ -68,6 +88,7 @@ class ExampleScene extends Scene {
 	update(time: number, delta: number): void {
 		this.host.step(Math.min(delta, MAX_FRAME_MS));
 		this.draw();
+		this.drawHud();
 	}
 
 	private draw(): void {
@@ -103,6 +124,15 @@ class ExampleScene extends Scene {
 			const interpolation = this.host.interpolate ? entity.components.interpolation : undefined;
 			drawShape(graphics, interpolation ?? transform, transform, entity.components.body?.shape ?? SHAPE_RECTANGLE);
 		}
+	}
+
+	// The score, lives and banner the current example asked for, written straight into the two text objects.
+	// Phaser#setText takes a joined string, so the status lines - however many the example returned - are joined
+	// with a newline, and an example with nothing to say clears both back to empty.
+	private drawHud(): void {
+		const hud = this.host.hud();
+		this.statusText.setText(hud?.status ? hud.status.join('\n') : '');
+		this.bannerText.setText(hud?.banner ?? '');
 	}
 }
 

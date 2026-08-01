@@ -2,7 +2,7 @@ import { DEFAULT_PHYSICS_STEP_MS, InterpolationSystem, PhysicsSystem } from '@da
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import { renderControls } from './controls';
 import type { Control } from './controls';
-import type { EntityStyle, Example, ExampleHost, ExampleRuntime } from './example';
+import type { EntityStyle, HudText, Example, ExampleHost, ExampleRuntime } from './example';
 import { EXAMPLES, findExample } from './examples';
 import { LEVEL, createWalls } from './level';
 import { PHYSICS_BACKENDS } from './physics';
@@ -90,6 +90,16 @@ class ExamplesPage implements ExampleHost, Renderable {
 		}
 
 		return this.example.entityStyle?.(this.runtime, entity);
+	}
+
+	// Asked by the scene once a frame for the current example's HUD text, routed the same way a colour is: the
+	// page only knows which example is up, and only breakout has anything to return.
+	hud(): HudText | undefined {
+		if(!this.runtime) {
+			return undefined;
+		}
+
+		return this.example.hud?.(this.runtime);
 	}
 
 	// Called once per rendered frame by the scene, with however long the frame took.

@@ -16,6 +16,18 @@ export interface EntityStyle {
 	alpha?: number
 }
 
+// Text an example wants drawn over the canvas, on top of the shapes.  The renderer's own job is the world -
+// palette by id, grey for scenery - and it has nothing to say about a score or a "you win", so an example that
+// is a game rather than a demonstration returns this from `hud` and the renderer lays it out.  The breakout
+// example is the one that uses it; the rest leave `hud` off and nothing is drawn.
+export interface HudText {
+	// Short lines pinned to the top-left corner - a score, a life count - drawn small and one under the next.
+	status?: ReadonlyArray<string>
+	// A single message across the middle of the canvas, large: "Press space to launch", "Game over". Left off
+	// (or empty) when there is nothing to announce, so the middle of the field is clear during play.
+	banner?: string
+}
+
 // A world that has been built and had its walls put in, handed to an example so it can fill it.
 export interface ExampleRuntime {
 	world: ExampleWorld
@@ -73,4 +85,9 @@ export interface Example {
 	// colours by something other than identity puts it - the sensors example reads a flag it set in `update` and
 	// returns a hot colour for a sensor that is currently overlapping something, a calm one for one that is not.
 	entityStyle?(runtime: ExampleRuntime, entity: BaseEntity<Components, Config>): EntityStyle | undefined
+
+	// The score, lives and any banner to draw over the canvas this frame, or undefined for an example that has no
+	// such text - which is all of them but breakout.  Asked once per frame and drawn on top of the shapes; see
+	// HudText.  Read straight out of the game state the example keeps, the same way `entityStyle` reads its flag.
+	hud?(runtime: ExampleRuntime): HudText | undefined
 }
