@@ -16,9 +16,10 @@ export const bouncingRectangles: Example = {
 	id: 'rectangles',
 	title: 'Bouncing rectangles',
 	description: 'The same bounce, on boxes with a random width and height as well as a random position and '
-		+ 'heading. A box has no single contact point the way two circles do, so the callback bounces it off the '
-		+ 'face it actually hit - the axis the two are least through each other on.',
-	backend: 'bounce',
+		+ 'heading. A box has no single contact point the way two circles do, so physics bounces it off the face '
+		+ 'it actually hit - the axis the two are least through each other on - all from the bounciness of 1 each '
+		+ 'one carries.',
+	backend: 'sweep',
 
 	controls(host): Array<Control> {
 		return [
@@ -89,6 +90,9 @@ export const bouncingRectangles: Example = {
 				height,
 				velocityX: Math.cos(heading) * settings.speed,
 				velocityY: Math.sin(heading) * settings.speed,
+				// A perfect bounce, the same as the circles: the one property that turns a box around off the face
+				// it hit, with no collision callback in the example.
+				bounciness: 1,
 				// Gives it a render position for the canvas to draw, blended between the two positions physics
 				// published either side of its last step.
 				interpolate: true,

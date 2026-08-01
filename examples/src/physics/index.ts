@@ -1,7 +1,6 @@
 import type { PhysicsUpdateFunction } from '@daneren2005/shared-memory-physics';
 import type { Components, ExampleUpdateComponents } from '../world';
-import { bounceUpdate } from './bounce-update';
-import { stopUpdate } from './stop-update';
+import { sweepUpdate } from './sweep-update';
 
 // An update function and the worker that runs it, kept together because they have to agree: whatever a game
 // hands `PhysicsSystem` as its `updateFunction` for the in-process fallback must be the same function its
@@ -11,17 +10,14 @@ export interface PhysicsBackend {
 	getWorker(): Worker
 }
 
-// The `new Worker(new URL(...))` calls are written out here, in the app's own source, because that literal
-// form is what a bundler needs in order to find the worker entry and build it.  An example names the one it
-// wants and the page below wires it up.
+// The `new Worker(new URL(...))` calls are written out here, in the app's own source, because that literal form
+// is what a bundler needs in order to find the worker entry and build it.  There is a single backend now: every
+// example runs the same sweep update and differs only in whether its entities carry a `bounciness` component,
+// which is what turns them around on contact - see ./sweep-update.ts.
 export const PHYSICS_BACKENDS = {
-	bounce: {
-		updateFunction: bounceUpdate,
-		getWorker: () => new Worker(new URL('./bounce.worker.ts', import.meta.url), { type: 'module' }),
-	},
-	stop: {
-		updateFunction: stopUpdate,
-		getWorker: () => new Worker(new URL('./stop.worker.ts', import.meta.url), { type: 'module' }),
+	sweep: {
+		updateFunction: sweepUpdate,
+		getWorker: () => new Worker(new URL('./sweep.worker.ts', import.meta.url), { type: 'module' }),
 	},
 } satisfies Record<string, PhysicsBackend>;
 

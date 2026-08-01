@@ -2,7 +2,8 @@ import physicsUpdate, { createPhysicsUpdate, POSITION_UPDATED_EVENT, type Physic
 import type { ComponentSystemCallbacks } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
 import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
-import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SHAPE_INDEX, BODY_SIZE, DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_RECTANGLE } from '../../components/body-component';
+import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SHAPE_INDEX, BODY_SIZE, DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../../components/body-component';
+import { BOUNCINESS_INDEX, BOUNCINESS_SIZE } from '../../components/bounciness-component';
 import { TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
 import { VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component';
 
@@ -157,6 +158,9 @@ interface Unit {
 	height?: number
 	velocityX?: number
 	velocityY?: number
+	shape?: number
+	// Left off, the unit has no bounciness block at all - the case a game's terrain and walls are.
+	bounciness?: number
 }
 
 // The blocks one entity would arrive at the worker with.  Units are 10x10, still, and collide with everything
@@ -173,11 +177,24 @@ function createUnit(unit: Unit, entityId: number): MovingEntity<PhysicsUpdateCom
 	velocity[VELOCITY_Y_INDEX] = unit.velocityY ?? 0;
 
 	const body = new Uint32Array(BODY_SIZE);
-	body[BODY_SHAPE_INDEX] = SHAPE_RECTANGLE;
+	body[BODY_SHAPE_INDEX] = unit.shape ?? SHAPE_RECTANGLE;
 	body[BODY_CATEGORY_INDEX] = DEFAULT_COLLIDE_CATEGORY;
 	body[BODY_MASK_INDEX] = DEFAULT_COLLIDE_MASK;
 
-	return { entityId, components: { transform, velocity, body } };
+	const components: PhysicsUpdateComponents = { transform, velocity, body };
+	// Only a unit that names a bounciness carries the block, the same way only such an entity would at runtime.
+	if(unit.bounciness !== undefined) {
+		const bounciness = new Float32Array(BOUNCINESS_SIZE);
+		bounciness[BOUNCINESS_INDEX] = unit.bounciness;
+		components.bounciness = bounciness;
+	}
+
+	return { entityId, components };
+}
+
+// A round 10-wide unit, whose body reads the circle shape off its radius the same way a config would.
+function circle(unit: Omit<Unit, 'width' | 'height' | 'shape'>): Unit {
+	return { ...unit, width: 10, height: 10, shape: SHAPE_CIRCLE };
 }
 
 describe('createPhysicsUpdate', () => {
@@ -408,5 +425,91 @@ describe('createPhysicsUpdate', () => {
 		expect(run([{ x: 0, y: 0, velocityX: 50 }, { x: 30, y: 0 }], 500).x(1)).toBeCloseTo(20, 3);
 		// ...and a run too short to reach it is not stopped at all.
 		expect(run([{ x: 0, y: 0, velocityX: 50 }, { x: 30, y: 0 }], 100).x(1)).toEqual(5);
+	});
+});
+
+// The native bounce a unit gets from carrying a bounciness block - no onCollision callback in sight, so this is
+// physics turning an entity around on contact rather than a game doing it.  Driven straight against raw blocks
+// the way the worker would, the same as createPhysicsUpdate above.
+describe('createPhysicsUpdate bounce', () => {
+	// One run of an update built with nothing but its native bounce, over the units given in order.  Returns the
+	// velocity each entity ended the run with, which is where a bounce shows up: the flip is applied to the block
+	// this run, and the next run's move follows it.
+	function run(units: Array<Unit>, elapsedTime = 1000) {
+		const entities = units.map((unit, index) => createUnit(unit, index + 1));
+		const update = createPhysicsUpdate();
+
+		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1 };
+		const queries = { [COLLIDABLE_QUERY]: entities };
+		const ignored: ComponentSystemCallbacks = {
+			entityComponentChanged: () => {},
+			emitEntityEvent: () => {},
+			emitSystemEvent: () => {},
+			entityDied: () => {},
+			createEntity: () => {},
+		};
+
+		update.preRun!(world, entities, queries, ignored);
+		for(const entity of entities) {
+			update(world, entity.entityId, entity.components, queries, ignored);
+		}
+
+		return {
+			velocityX: (entityId: number) => entities[entityId - 1].components.velocity[VELOCITY_X_INDEX],
+			velocityY: (entityId: number) => entities[entityId - 1].components.velocity[VELOCITY_Y_INDEX],
+		};
+	}
+
+	it('flips the velocity of a full-bounciness unit that runs head-on into a wall', () => {
+		// Moving right into a wall on its right at bounciness 1: the whole velocity into the face comes back, so
+		// the mover is heading left at the same speed by the end of the run.
+		const result = run([{ x: 0, y: 0, velocityX: 25, bounciness: 1 }, { x: 30, y: 0 }]);
+
+		expect(result.velocityX(1)).toBeCloseTo(-25, 3);
+		expect(result.velocityY(1)).toEqual(0);
+	});
+
+	it('keeps half the speed at bounciness 0.5', () => {
+		// Half of the velocity into the surface comes back out, so a head-on hit reverses at half the speed.
+		const result = run([{ x: 0, y: 0, velocityX: 25, bounciness: 0.5 }, { x: 30, y: 0 }]);
+
+		expect(result.velocityX(1)).toBeCloseTo(-12.5, 3);
+	});
+
+	it('cancels the velocity into the surface at bounciness 0', () => {
+		// Nothing bounces: the part of the velocity heading into the wall is removed and the mover comes to rest
+		// against it rather than rebounding.
+		const result = run([{ x: 0, y: 0, velocityX: 25, bounciness: 0 }, { x: 30, y: 0 }]);
+
+		expect(result.velocityX(1)).toBeCloseTo(0, 3);
+	});
+
+	it('keeps the velocity along the surface and only flips the part into it', () => {
+		// A glancing hit on a tall wall to the right: the wall is deep enough in y that the mover meets its left
+		// face however far it has slid up it, so the x heading into the face reverses and the y sliding along it is
+		// left exactly alone.
+		const result = run([{ x: 0, y: 0, velocityX: 25, velocityY: 40, bounciness: 1 }, { x: 30, y: 0, height: 200 }]);
+
+		expect(result.velocityX(1)).toBeCloseTo(-25, 3);
+		expect(result.velocityY(1)).toBeCloseTo(40, 3);
+	});
+
+	it('bounces two circles apart along the line between their centres', () => {
+		// A circle closing on another straight along x reverses straight back: the contact normal between two
+		// circles is the line joining their centres.  10 wide each, so they touch when their centres are 10 apart.
+		const result = run([
+			circle({ x: 0, y: 0, velocityX: 20, bounciness: 1 }),
+			circle({ x: 12, y: 0 }),
+		]);
+
+		expect(result.velocityX(1)).toBeCloseTo(-20, 3);
+	});
+
+	it('leaves a unit with no bounciness block moving as it was, merely stopped short', () => {
+		// The case a game's walls and terrain are: it collides and is stopped by the sweep, but nothing turns its
+		// velocity around, so the block still reads the heading it came in on.
+		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0 }]);
+
+		expect(result.velocityX(1)).toEqual(25);
 	});
 });

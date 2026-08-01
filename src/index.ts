@@ -42,6 +42,16 @@ export type {
 	BodyConfig,
 } from './components/body-component';
 
+export { default as bouncinessDefinition } from './components/bounciness-component';
+export {
+	BOUNCINESS_INDEX,
+	BOUNCINESS_SIZE,
+} from './components/bounciness-component';
+export type {
+	BouncinessComponent,
+	BouncinessConfig,
+} from './components/bounciness-component';
+
 export { default as interpolationDefinition, snapEntity } from './components/interpolation-component';
 export {
 	INTERPOLATION_X_INDEX,
