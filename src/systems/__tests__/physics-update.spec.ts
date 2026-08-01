@@ -1,5 +1,5 @@
-import physicsUpdate, { createPhysicsUpdate, POSITION_UPDATED_EVENT } from '../physics-update';
-import type { ComponentSystemCallbacks, ComponentSystemWorld } from '@daneren2005/shared-memory-ecs';
+import physicsUpdate, { createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
+import type { ComponentSystemCallbacks } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
 import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
 import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SHAPE_INDEX, BODY_SIZE, DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_RECTANGLE } from '../../components/body-component';
@@ -12,6 +12,7 @@ describe('physics-update', () => {
 	const callbacks: ComponentSystemCallbacks = {
 		entityComponentChanged: () => {},
 		emitEntityEvent: () => {},
+		emitSystemEvent: () => {},
 		entityDied: () => {},
 		createEntity: () => {},
 	};
@@ -27,7 +28,7 @@ describe('physics-update', () => {
 		velocityBlock[VELOCITY_X_INDEX] = velocity[0];
 		velocityBlock[VELOCITY_Y_INDEX] = velocity[1];
 
-		const world: ComponentSystemWorld = { gameTime: 0, elapsedTime };
+		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1 };
 		physicsUpdate(world, 1, { transform, velocity: velocityBlock }, {}, callbacks);
 
 		return [transform[TRANSFORM_X_INDEX], transform[TRANSFORM_Y_INDEX]];
@@ -73,43 +74,75 @@ describe('physics-update', () => {
 	// Position is where the entity is rather than what it is, so a game that keeps anything of its own keyed off
 	// it - a spatial index, a minimap - hears about every move rather than having to poll the block.
 	describe('reporting the move', () => {
-		// Every event the move reported, as [entityId.event, ...args] - so a test says how many events there were
-		// as well as what was in them, which is the whole point of reporting a move as one event rather than two.
-		function eventsFrom(velocity: [number, number]): Array<Array<unknown>> {
-			const events: Array<Array<unknown>> = [];
+		// Every event the move reported, as `event.entityId` or `entityId.component.prop` - so a test says how many
+		// events there were as well as what they were about, which is the whole point of reporting a run's moves as
+		// ids on the system rather than as an event apiece on the entities.  Nothing carries a position: the
+		// transform block the update just wrote is the same memory the main thread reads, so `endedUpAt` below
+		// checks the move by reading that block instead.
+		function eventsFrom(velocity: [number, number]): { events: Array<string>, endedUpAt: [number, number] } {
+			const events: Array<string> = [];
 			const transform = new Float32Array(TRANSFORM_SIZE);
 			const velocityBlock = new Float32Array(VELOCITY_SIZE);
 			velocityBlock[VELOCITY_X_INDEX] = velocity[0];
 			velocityBlock[VELOCITY_Y_INDEX] = velocity[1];
 
-			physicsUpdate({ gameTime: 0, elapsedTime: 1000 }, 7, { transform, velocity: velocityBlock }, {}, {
+			physicsUpdate({ gameTime: 0, elapsedTime: 1000, tick: 1 }, 7, { transform, velocity: velocityBlock }, {}, {
 				...callbacks,
-				emitEntityEvent(entityId, event, ...args) {
-					events.push([`${entityId}.${event}`, ...args]);
+				emitSystemEvent(event, entityId) {
+					events.push(`${event}.${entityId}`);
 				},
-				// Position is reported through its own event now, so the property-at-a-time callback must not fire for
-				// a move as well - two reports of the same thing is exactly what this is meant to stop.
-				entityComponentChanged(entityId, componentName, prop, value) {
-					events.push([`${entityId}.${componentName}.${String(prop)}`, value]);
+				// A move is reported through the batched event alone, so neither of the per-entity callbacks may fire
+				// for one as well - two reports of the same thing is exactly what this is meant to stop.
+				emitEntityEvent(entityId, event) {
+					events.push(`${entityId}.${event}`);
+				},
+				entityComponentChanged(entityId, componentName, prop) {
+					events.push(`${entityId}.${componentName}.${String(prop)}`);
 				},
 			});
 
-			return events;
+			return {
+				events,
+				endedUpAt: [transform[TRANSFORM_X_INDEX], transform[TRANSFORM_Y_INDEX]],
+			};
 		}
 
-		it('reports where the entity ended up as a single event carrying both axes', () => {
-			expect(eventsFrom([3, -4])).toEqual([[`7.${POSITION_UPDATED_EVENT}`, 3, -4]]);
+		it('reports the entity that moved once, by id, with the position left in the block', () => {
+			const { events, endedUpAt } = eventsFrom([3, -4]);
+			expect(events).toEqual([`${POSITION_UPDATED_EVENT}.7`]);
+			expect(endedUpAt).toEqual([3, -4]);
 		});
 
-		it('still reports both axes when only one of them moved', () => {
-			// The axis that did not move comes through as where the entity is rather than being left out, so a
-			// listener always has the whole position without having to remember the last one it was told.
-			expect(eventsFrom([3, 0])).toEqual([[`7.${POSITION_UPDATED_EVENT}`, 3, 0]]);
-			expect(eventsFrom([0, -4])).toEqual([[`7.${POSITION_UPDATED_EVENT}`, 0, -4]]);
+		it('reports one move however many axes it moved along', () => {
+			// A move along a single axis is one report, the same as a diagonal one: a listener wants the place, and
+			// the place is in the block whichever axes changed to get there.
+			expect(eventsFrom([3, 0]).events).toEqual([`${POSITION_UPDATED_EVENT}.7`]);
+			expect(eventsFrom([0, -4]).events).toEqual([`${POSITION_UPDATED_EVENT}.7`]);
 		});
 
 		it('says nothing at all about an entity that did not move', () => {
-			expect(eventsFrom([0, 0])).toEqual([]);
+			expect(eventsFrom([0, 0]).events).toEqual([]);
+		});
+
+		it('says nothing at all when the run was told not to report', () => {
+			// PhysicsSystem sets this from whether anything is listening.  The saving is not here - it is the id
+			// that never joins the run's event array, and so the array that is never cloned back across the worker
+			// boundary once a step.
+			const transform = new Float32Array(TRANSFORM_SIZE);
+			const velocity = new Float32Array(VELOCITY_SIZE);
+			velocity[VELOCITY_X_INDEX] = 3;
+
+			const events: Array<string> = [];
+			physicsUpdate({ gameTime: 0, elapsedTime: 1000, tick: 1, reportMoves: false }, 7, { transform, velocity }, {}, {
+				...callbacks,
+				emitSystemEvent(event, entityId) {
+					events.push(`${event}.${entityId}`);
+				},
+			});
+
+			expect(events).toEqual([]);
+			// And the entity still moved: this silences the report, not the physics.
+			expect(transform[TRANSFORM_X_INDEX]).toEqual(3);
 		});
 	});
 });
@@ -158,7 +191,7 @@ describe('createPhysicsUpdate', () => {
 	}
 
 	// One run over the whole list, in the order it is given - entity ids are its positions in the list + 1.
-	function run(units: Array<Unit>, elapsedTime = 1000) {
+	function run(units: Array<Unit>, elapsedTime = 1000, reportMoves?: boolean) {
 		const entities = units.map((unit, index) => createUnit(unit, index + 1));
 		const collisions: Array<Collision> = [];
 		const changes: Array<string> = [];
@@ -174,7 +207,7 @@ describe('createPhysicsUpdate', () => {
 			},
 		});
 
-		const world: ComponentSystemWorld = { gameTime: 0, elapsedTime };
+		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, reportMoves };
 		const queries = { [COLLIDABLE_QUERY]: entities };
 		const recording: ComponentSystemCallbacks<PhysicsComponents> = {
 			entityComponentChanged(entityId, componentName, prop) {
@@ -182,6 +215,9 @@ describe('createPhysicsUpdate', () => {
 			},
 			emitEntityEvent(entityId, event) {
 				changes.push(`${entityId}.${event}`);
+			},
+			emitSystemEvent(event, entityId) {
+				changes.push(`${event}.${entityId}`);
 			},
 			entityDied: () => {},
 			createEntity: () => {},
@@ -234,7 +270,18 @@ describe('createPhysicsUpdate', () => {
 		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0 }]);
 
 		// One report, and only after the final position was known.
-		expect(result.changes).toEqual([`1.${POSITION_UPDATED_EVENT}`]);
+		expect(result.changes).toEqual([`${POSITION_UPDATED_EVENT}.1`]);
+	});
+
+	it('still stops where it should when the run was told not to report', () => {
+		// The sweep and the move are physics; the report is a courtesy to whatever is keyed off position, and
+		// turning it off has to leave the first two exactly as they were.
+		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0 }], 1000, false);
+
+		expect(result.x(1)).toBeCloseTo(20, 3);
+		expect(result.changes).toEqual([]);
+		// The collision callback is not a position report and still runs.
+		expect(result.pairs()).toEqual([[1, 2]]);
 	});
 
 	it('says nothing about an entity a wall left with nowhere to go', () => {
@@ -305,7 +352,54 @@ describe('createPhysicsUpdate', () => {
 		const result = run([{ x: 0, y: 0, velocityY: -25 }, { x: 0, y: -30 }]);
 
 		expect(result.y(1)).toBeCloseTo(-20, 3);
-		expect(result.changes).toEqual([`1.${POSITION_UPDATED_EVENT}`]);
+		expect(result.changes).toEqual([`${POSITION_UPDATED_EVENT}.1`]);
+	});
+
+	// Sweeping is not something the callback turns on: coming to rest against what is in the way is what physics
+	// does about a collision, and what the game does about it is a separate question.  A world of walls and
+	// terrain wants the first without ever writing the second.
+	describe('with no onCollision', () => {
+		const ignored: ComponentSystemCallbacks = {
+			entityComponentChanged: () => {},
+			emitEntityEvent: () => {},
+			emitSystemEvent: () => {},
+			entityDied: () => {},
+			createEntity: () => {},
+		};
+
+		// The same single run as `run` above, on an update built with nothing asked of it at all.
+		function runWithoutCallback(units: Array<Unit>, elapsedTime = 1000) {
+			const entities = units.map((unit, index) => createUnit(unit, index + 1));
+			const update = createPhysicsUpdate();
+
+			const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1 };
+			const queries = { [COLLIDABLE_QUERY]: entities };
+
+			update.preRun!(world, entities, queries, ignored);
+			for(const entity of entities) {
+				update(world, entity.entityId, entity.components, queries, ignored);
+			}
+
+			return (entityId: number) => entities[entityId - 1].components.transform[TRANSFORM_X_INDEX];
+		}
+
+		it('still stops an entity on the edge of what it moved into', () => {
+			expect(runWithoutCallback([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0 }])(1)).toBeCloseTo(20, 3);
+		});
+
+		it('still leaves an entity with nowhere to go exactly where it is', () => {
+			expect(runWithoutCallback([{ x: 0, y: 0, velocityX: 5 }, { x: 10, y: 0 }])(1)).toEqual(0);
+		});
+
+		it('still moves an entity that has nothing in its way', () => {
+			expect(runWithoutCallback([{ x: 0, y: 0, velocityX: 25 }, { x: 300, y: 0 }])(1)).toEqual(25);
+		});
+
+		it('asks for the collidable query, which is what the sweep is searched through', () => {
+			// PhysicsSystem reads this off the function to decide whether to gather the query at all, so an update
+			// that sweeps but says it does not collide would be swept against an empty world.
+			expect(createPhysicsUpdate().physics.collision).toEqual(true);
+		});
 	});
 
 	it('stops short by the same fraction however long the run is', () => {

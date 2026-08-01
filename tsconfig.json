@@ -18,10 +18,16 @@
 		"types": [
 			"vitest/globals",
 			"node"
-		]
+		],
+		"paths": {
+			"@daneren2005/shared-memory-physics": [
+				"./src/index.ts"
+			]
+		}
 	},
 	"include": [
 		"src/**/*.ts",
+		"examples/**/*.ts",
 		"*.config.ts"
 	]
 }

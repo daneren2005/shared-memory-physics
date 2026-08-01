@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>shared-memory-physics examples</title>
+		<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='12' cy='12' r='9' fill='%237DD3FC'/><circle cx='22' cy='23' r='6' fill='%23FCA5A5'/></svg>" />
+		<link rel="stylesheet" href="/src/style.css" />
+	</head>
+	<body>
+		<header>
+			<h1>shared-memory-physics</h1>
+			<nav id="examples"></nav>
+		</header>
+
+		<main>
+			<div id="game"></div>
+
+			<aside id="panel">
+				<h2 id="example-title"></h2>
+				<p id="example-description"></p>
+
+				<section>
+					<h3>Example</h3>
+					<div id="example-controls"></div>
+				</section>
+
+				<section>
+					<h3>Simulation</h3>
+					<div id="simulation-controls"></div>
+				</section>
+
+				<section>
+					<h3>Stats</h3>
+					<dl id="stats"></dl>
+				</section>
+			</aside>
+		</main>
+
+		<script type="module" src="/src/main.ts"></script>
+	</body>
+</html>
