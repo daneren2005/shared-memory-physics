@@ -3,6 +3,7 @@ import { bouncingCircles } from './bouncing-circles';
 import { bouncingRectangles } from './bouncing-rectangles';
 import { clickToMove } from './click-to-move';
 import { interpolationWalk } from './interpolation-walk';
+import { sensors } from './sensors';
 
 // The order they appear in the nav, and the first one is what a visit with no hash lands on.
 export const EXAMPLES: Array<Example> = [
@@ -10,6 +11,7 @@ export const EXAMPLES: Array<Example> = [
 	bouncingRectangles,
 	interpolationWalk,
 	clickToMove,
+	sensors,
 ];
 
 export function findExample(id: string): Example | undefined {

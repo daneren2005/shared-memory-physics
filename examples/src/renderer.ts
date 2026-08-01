@@ -1,8 +1,10 @@
 import { AUTO, Game, Math as PhaserMath, Scale, Scene } from 'phaser';
 import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '@daneren2005/shared-memory-physics';
 import type { TransformComponent } from '@daneren2005/shared-memory-physics';
-import type { ExampleRuntime } from './example';
+import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
+import type { EntityStyle, ExampleRuntime } from './example';
 import { LEVEL } from './level';
+import type { Components, Config } from './world';
 
 // What the scene needs from the page: somewhere to send the frame, and whatever world is currently up.
 export interface Renderable {
@@ -16,6 +18,9 @@ export interface Renderable {
 	// The canvas was clicked, at this point in world units.  The page forwards it to whichever example is up, so
 	// the scene does not have to know which examples care about a click.
 	pointerDown(x: number, y: number): void
+	// The current example's own colour for this entity, or undefined to fall back to the renderer's default.  The
+	// scene asks per entity per frame; the page routes it to whichever example is up - see Example#entityStyle.
+	entityStyle(entity: BaseEntity<Components, Config>): EntityStyle | undefined
 }
 
 // A frame after the tab has been in the background for a minute arrives with a delta of however long that was.
@@ -83,8 +88,12 @@ class ExampleScene extends Scene {
 				continue;
 			}
 
-			const color = entity.components.velocity ? PALETTE[entity.eid % PALETTE.length] : STATIC_COLOR;
-			graphics.fillStyle(color, 0.85);
+			// The example gets first say on how one of its entities is drawn - that is how the sensors read as
+			// coloured zones - and only where it declines does the renderer's own rule apply: palette by id for a
+			// mover, flat grey for the scenery the physics system never moves.
+			const style = this.host.entityStyle(entity);
+			const color = style ? style.color : entity.components.velocity ? PALETTE[entity.eid % PALETTE.length] : STATIC_COLOR;
+			graphics.fillStyle(color, style?.alpha ?? 0.85);
 			graphics.lineStyle(1.5, color, 1);
 
 			// Where to draw it and how big it is come from different blocks: the interpolation component holds

@@ -1,8 +1,20 @@
+import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import type { InterpolationSystem, PhysicsSystem } from '@daneren2005/shared-memory-physics';
 import type { Control } from './controls';
 import type { Level } from './level';
 import type { PhysicsBackendName } from './physics';
-import type { Components, ExampleWorld } from './world';
+import type { Components, Config, ExampleWorld } from './world';
+
+// How an example wants one of its entities drawn, when the renderer's own rule - palette by id for a mover, flat
+// grey for scenery - is not what it means to show.  The sensors example returns one of these for a sensor block
+// so it reads as a zone rather than a solid, and flips its colour the frame something is inside it.
+export interface EntityStyle {
+	// Fill and stroke colour as a Phaser hex int.
+	color: number
+	// Fill opacity from 0 to 1, so a zone can be drawn see-through with the shapes passing through it still
+	// visible on top.  Left off, the renderer uses the same fill alpha it draws everything else at.
+	alpha?: number
+}
 
 // A world that has been built and had its walls put in, handed to an example so it can fill it.
 export interface ExampleRuntime {
@@ -55,4 +67,10 @@ export interface Example {
 	// drawn at its own size, so these are the same coordinates entities live in.  Only an example that is steered
 	// by clicking needs this; the rest leave it off and the click does nothing.
 	pointerDown?(runtime: ExampleRuntime, x: number, y: number): void
+
+	// An override for how a single entity is drawn, asked per entity every frame.  Return a colour (and optional
+	// alpha) to draw it with, or undefined to leave it to the renderer's default.  This is where an example that
+	// colours by something other than identity puts it - the sensors example reads a flag it set in `update` and
+	// returns a hot colour for a sensor that is currently overlapping something, a calm one for one that is not.
+	entityStyle?(runtime: ExampleRuntime, entity: BaseEntity<Components, Config>): EntityStyle | undefined
 }

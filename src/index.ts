@@ -25,7 +25,7 @@ export type {
 	VelocitySerialization,
 } from './components/velocity-component';
 
-export { default as bodyDefinition, canCollide } from './components/body-component';
+export { default as bodyDefinition, canCollide, isSensor } from './components/body-component';
 export {
 	SHAPE_RECTANGLE,
 	SHAPE_CIRCLE,
@@ -35,6 +35,7 @@ export {
 	BODY_SHAPE_INDEX,
 	BODY_CATEGORY_INDEX,
 	BODY_MASK_INDEX,
+	BODY_SENSOR_INDEX,
 	BODY_SIZE,
 } from './components/body-component';
 export type {
