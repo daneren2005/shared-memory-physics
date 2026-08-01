@@ -1,0 +1,183 @@
+:root {
+	--background: #060B14;
+	--panel: #0F172A;
+	--border: #1E293B;
+	--text: #E2E8F0;
+	--muted: #94A3B8;
+	--accent: #7DD3FC;
+
+	color-scheme: dark;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: var(--background);
+	color: var(--text);
+	font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+	font-size: 14px;
+	line-height: 1.5;
+}
+
+header {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 8px 24px;
+	padding: 16px 24px;
+	border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+	margin: 0;
+	font-size: 16px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+}
+
+nav {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+nav a {
+	padding: 4px 12px;
+	border: 1px solid transparent;
+	border-radius: 999px;
+	color: var(--muted);
+	text-decoration: none;
+}
+
+nav a:hover {
+	color: var(--text);
+}
+
+nav a.active {
+	border-color: var(--border);
+	background: var(--panel);
+	color: var(--accent);
+}
+
+main {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: 24px;
+	padding: 24px;
+}
+
+#game {
+	flex: 1 1 640px;
+	min-width: 320px;
+}
+
+#game canvas {
+	display: block;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+}
+
+#panel {
+	flex: 0 1 320px;
+	min-width: 260px;
+	padding: 16px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--panel);
+}
+
+#panel h2 {
+	margin: 0 0 8px;
+	font-size: 15px;
+}
+
+#panel h3 {
+	margin: 0 0 8px;
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+#panel p {
+	margin: 0 0 16px;
+	color: var(--muted);
+}
+
+#panel section + section {
+	margin-top: 20px;
+	padding-top: 16px;
+	border-top: 1px solid var(--border);
+}
+
+.control + .control {
+	margin-top: 12px;
+}
+
+.control label {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 4px;
+}
+
+.control label.toggle {
+	justify-content: flex-start;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 0;
+}
+
+.control output {
+	color: var(--accent);
+	font-variant-numeric: tabular-nums;
+}
+
+.control input[type="range"] {
+	width: 100%;
+	accent-color: var(--accent);
+}
+
+.control .note {
+	margin: 4px 0 0;
+	color: var(--muted);
+	font-size: 12px;
+}
+
+.control button {
+	width: 100%;
+	padding: 6px 12px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text);
+	font: inherit;
+	cursor: pointer;
+}
+
+.control button:hover {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+#stats {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 2px 16px;
+	margin: 0;
+}
+
+#stats dt {
+	color: var(--muted);
+}
+
+#stats dd {
+	margin: 0;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}

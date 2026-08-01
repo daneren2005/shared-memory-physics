@@ -42,8 +42,31 @@ export type {
 	BodyConfig,
 } from './components/body-component';
 
+export { default as interpolationDefinition, snapEntity } from './components/interpolation-component';
+export {
+	INTERPOLATION_X_INDEX,
+	INTERPOLATION_Y_INDEX,
+	INTERPOLATION_PREV_X_INDEX,
+	INTERPOLATION_PREV_Y_INDEX,
+	INTERPOLATION_PROGRESS_INDEX,
+	INTERPOLATION_SYNCED_TICK_INDEX,
+	INTERPOLATION_DURATION_INDEX,
+	INTERPOLATION_TICK_INDEX,
+	INTERPOLATION_SIZE,
+} from './components/interpolation-component';
+export type {
+	InterpolationComponent,
+	InterpolationConfig,
+	SnappableEntity,
+} from './components/interpolation-component';
+
 export { physicsRegistry } from './components/registry';
-export type { PhysicsComponents, PhysicsUpdateComponents } from './components/registry';
+export type {
+	PhysicsComponents,
+	PhysicsUpdateComponents,
+	InterpolationComponents,
+	InterpolationUpdateComponents,
+} from './components/registry';
 
 export {
 	shapesOverlap,
@@ -67,6 +90,10 @@ export { default as SpatialIndex } from './systems/spatial-index';
 export type { SpatialComponents, SpatialEntity, SpatialFilter } from './systems/spatial-index';
 
 export { default as physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT } from './systems/physics-update';
-export type { PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions } from './systems/physics-update';
-export { default as PhysicsSystem } from './systems/physics-system';
+export type { PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions, PhysicsWorld } from './systems/physics-update';
+export { default as PhysicsSystem, DEFAULT_PHYSICS_STEP_MS } from './systems/physics-system';
 export type { PhysicsSystemConfig } from './systems/physics-system';
+
+export { default as interpolationUpdate } from './systems/interpolation-update';
+export { default as InterpolationSystem } from './systems/interpolation-system';
+export type { InterpolationSystemConfig } from './systems/interpolation-system';
