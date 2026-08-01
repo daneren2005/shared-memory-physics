@@ -40,3 +40,8 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # The examples are what gets published to GitHub Pages on every push to dev, so a pull request that
+      # breaks them should say so here rather than on the way out.
+      - name: Build examples
+        run: npm run build:examples
