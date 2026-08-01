@@ -14,11 +14,12 @@ npm install @daneren2005/shared-memory-physics @daneren2005/shared-memory-ecs @d
 
 ## Components
 
-| Component   | Config                                       | Serialization              | Block                                          |
-| ----------- | -------------------------------------------- | -------------------------- | ---------------------------------------------- |
-| `transform` | `width`, `height`, `angle?` / `radius`       | `x`, `y`                   | `Float32Array` – where, how big, facing        |
-| `velocity`  | –                                            | `velocityX?`, `velocityY?` | `Float32Array` – world units per second        |
-| `body`      | `shape?`, `collideCategory?`, `collideMask?` | –                          | `Uint32Array` – what shape, what collides with |
+| Component       | Config                                       | Serialization              | Block                                          |
+| --------------- | -------------------------------------------- | -------------------------- | ---------------------------------------------- |
+| `transform`     | `width`, `height`, `angle?` / `radius`       | `x`, `y`                   | `Float32Array` – where, how big, facing        |
+| `velocity`      | –                                            | `velocityX?`, `velocityY?` | `Float32Array` – world units per second        |
+| `body`          | `shape?`, `collideCategory?`, `collideMask?` | –                          | `Uint32Array` – what shape, what collides with |
+| `interpolation` | `interpolate`                                | –                          | `Float32Array` – where to *draw* it            |
 
 Entity configs are flat and shared across every component, so velocity is keyed as `velocityX` / `velocityY`
 rather than `x` / `y` (which already belong to the transform). Either velocity axis on its own is enough to
@@ -35,6 +36,10 @@ projects out from it in both directions. `angle` is in **radians** counter-clock
 nothing here writes it - it is yours to set, usually from the heading, and collision reads it. `width` /
 `height` are the unrotated size; a box with no area never overlaps anything, not even another box sharing its
 exact position.
+
+`interpolation` is where to **draw** an entity, which stops being the same thing as where it is the moment
+physics runs less often than the screen refreshes. It is opt-in per entity (`interpolate: true`) and filled in
+by [`InterpolationSystem`](#interpolation) - see that section for what it costs and what it buys.
 
 The `body` is what makes an entity collidable, and a size loads one just as it loads a transform - so
 everything with a place in the world collides with everything else until you say otherwise. All of it is
@@ -121,24 +126,77 @@ world.update(1000); // one second: the entity above is now at x = 10
 `elapsedTime` is in milliseconds (what `BaseWorld#update` is driven with) and velocity is in world units per
 **second**, so a run covering 16ms moves an entity 16/1000ths of its velocity.
 
-An entity that moved is reported back to the main thread as a single `position-updated` event carrying where
-it ended up, so anything you keep keyed off position can follow a move rather than having to poll the block:
+### The step
+
+`PhysicsSystem` runs on a fixed step of **50ms** unless you say otherwise (`DEFAULT_PHYSICS_STEP_MS`). Collision
+is by a distance the whole of it, so running it 20 times a second rather than 60 is two thirds less of the frame
+spent on it for a simulation that is no less correct - only coarser. What that costs is smoothness, which is
+what [`InterpolationSystem`](#interpolation) is for.
+
+```ts
+new PhysicsSystem(world, { deltaBetweenRuns: 0 });   // back to every frame
+```
+
+The step has one real ceiling: a move is swept where it *ends*, so **a longer step is a longer move, and a move
+longer than the thing in its way is thick goes clean through it**. At 50ms an entity crossing 300 units a second
+covers 15 of them per step, so anything it must be stopped by has to be thicker than that. A game with genuinely
+fast entities either keeps the step short or makes its walls thick.
+
+The system accumulates frame time and runs once it has a step's worth, so a 16ms frame runs physics on roughly
+every third one and hands it the whole 50ms. Nothing is lost and nothing is run twice.
+
+`PhysicsSystem` also stamps each run with a `tick`, which is what the interpolation block is published under.
+A game that subclasses the system to attach per-run data of its own **must call `super.addDataToWorld(world)`**:
+
+```ts
+class GamePhysicsSystem extends PhysicsSystem<Components, GameComponents, GameWorld> {
+	addDataToWorld(world: GameWorld): void {
+		super.addDataToWorld(world);   // without this, nothing gets a tick
+		world.bounds = this.bounds;
+	}
+}
+```
+
+`GameWorld` extends `PhysicsWorld` (which is `ComponentSystemWorld` plus that `tick`) rather than
+`ComponentSystemWorld` directly.
+
+A run's moves are reported back to the main thread as a single `position-updated` event **on the system**,
+carrying the ids of everything that moved, so anything you keep keyed off position can follow the moves
+rather than having to poll every block:
 
 ```ts
 import { POSITION_UPDATED_EVENT } from '@daneren2005/shared-memory-physics';
 
-entity.on(POSITION_UPDATED_EVENT, (x, y) => {
-	// 12.5, -3
+const physics = world.addSystem(new PhysicsSystem(world));
+
+physics.on(POSITION_UPDATED_EVENT, (entityIds: Array<number>) => {
+	for(const eid of entityIds) {
+		const transform = world.getEntityByEid(eid)?.components.transform;
+		// transform.x / transform.y are where it ended up
+	}
 });
 ```
 
-Both axes come with it even when only one of them moved, so a listener always has the whole position without
-having to remember the last one it was told - and a diagonal move costs one event across the worker boundary
-rather than the two a `component-property-updated` per property would. The move is not reported as a property
-change as well, so a listener on `component-property-updated` no longer hears about positions at all.
+Nearly every entity moves on nearly every run, so this is the one thing a physics system must not report an
+entity at a time: an event object apiece in the worker, cloned across the boundary, then a lookup and an emit
+apiece on the main thread costs more, at a few thousand entities, than moving them did. One array of ids
+costs one listener call for the whole run.
 
-An entity that did not move says nothing, so a world of still entities stays quiet - and so does one held
-against something it cannot move past.
+No position travels with the id, because there is no need: the transform is a `SharedArrayBuffer` block, so
+the position the worker wrote is already on the main thread by the time the event lands - read it off the
+entity (or straight off the block). The move is not reported as a property change either, so a listener on
+`component-property-updated` never hears about positions.
+
+An entity that did not move is not in the list, so a world of still entities stays quiet - and so does one
+held against something it cannot move past.
+
+**A run only reports at all when something is listening.** The bill for this event is paid in the worker - an id
+per moved entity pushed into the run's event array, and that array structured-cloned back across the boundary -
+so `PhysicsSystem` checks per run whether it has a listener and tells the update not to bother when it does not.
+That matters most for a game rendering from [`interpolation`](#interpolation), which wants nothing to do with an
+event that fires at the physics rate: it is the rate that game is drawing *around*. Nothing has to be
+configured for it, but `reportMoves: true` forces it on for a listener attached somewhere the system cannot see
+it, and `reportMoves: false` turns it off regardless.
 
 The move is written with `addAtomicFloat32` rather than a plain `+=`, so a game system on another thread can
 add to the same position in the same instant without either move being lost.
@@ -167,13 +225,130 @@ world.addSystem(new PhysicsSystem(world, {
 Without a `getWorker` (or where Web Workers / `SharedArrayBuffer` are unavailable) the exact same
 `physicsUpdate` runs in-process on the main thread instead.
 
+## Interpolation
+
+A 50ms physics step against a 16ms frame means the transform only changes on one frame in three, and an entity
+drawn straight off it visibly stutters. `InterpolationSystem` fills in a **render position** that changes every
+frame instead, by blending between the two positions physics published either side of its last step:
+
+```
+render = prev + (current - prev) * alpha
+```
+
+Every position it writes is therefore one the simulation actually produced - somewhere on the segment between
+two real ones, never a guess past the end of one. There is nothing to tune and no case where it draws something
+that did not happen: an entity that stopped against a wall is drawn easing into the wall and stopping, and one
+that turned a corner is drawn turning the corner rather than carrying on into its old heading for a frame and
+being snapped back. The cost is **one step of latency, always** - what is on screen is where the world was a
+step ago.
+
+```ts
+import { InterpolationSystem, PhysicsSystem } from '@daneren2005/shared-memory-physics';
+
+world.addSystem(new PhysicsSystem<Components>(world, { getWorker }));
+world.addSystem(new InterpolationSystem<Components>(world));
+
+world.loadEntity({ x: 0, y: 0, width: 10, height: 10, velocityX: 100, interpolate: true });
+```
+
+It takes no configuration and is not wired to the physics system. Everything it needs - the two positions, how
+much simulated time lies between them, and whether that pair is new - is published into the block by whichever
+run wrote it, so a game that retunes `deltaBetweenRuns` mid-flight is followed with nothing told to this system.
+
+Then draw from `interpolation` instead of `transform`, keeping the size and facing where they have always been:
+
+```ts
+const { x, y } = entity.components.interpolation ?? entity.components.transform!;
+const { width, height, angle } = entity.components.transform!;
+```
+
+Draw from it **every frame**, not from `position-updated`. That event fires once per physics step, which is
+exactly the cadence interpolation exists to hide - a sprite moved by it would be as choppy as one reading the
+transform. Once nothing is listening to it, `PhysicsSystem` stops reporting moves at all and the whole event
+costs nothing; see [the note above](#the-step).
+
+**Only rendering should read it.** Range checks, targeting, AI steering, "can I build here" and anything you
+persist all want `transform` - the real position. The render position is a function of local frame timing, so
+two machines drawing the same simulation at 144Hz and 30Hz hold *different* numbers in it at the same tick;
+anything that branches on it stops being deterministic. Nothing in this library ever reads it back, which is
+what keeps the simulation itself unaffected.
+
+### A slow physics run costs latency and nothing else
+
+This is the property the whole thing is for, and it is worth being explicit about because it is easy to build
+something that looks right and does not have it. **If a physics run takes longer than a frame, nothing about the
+motion changes** - it is drawn a little further behind, at exactly the same speed. A worker that consistently
+takes 30ms to come back costs 30ms of latency, which is not something an eye can see; only *variance* in how
+late it is can be seen at all.
+
+That works because the pacing is driven by the steps that have **landed** in the block, not by the physics
+system's own accumulator. The accumulator resets when a run is *posted*, and on a worker thread that is not when
+its results arrive - a run posted with 14ms of leftover and taking 30ms to come back leaves a whole frame where
+the accumulator says "0.3 of the way into the new step" while the block still holds the one before it, so the
+entity is drawn 0.3 along a segment it was drawn 0.96 along last frame. Backwards, then a lurch forward, on
+every step.
+
+For the same reason each run publishes **how much simulated time it covered** rather than that being assumed to
+be the step: a run that comes back late leaves more than a step's worth banked, and the next one covers two at
+once. Dividing that segment by the step would draw it at double speed.
+
+Ordering against the physics system is only a preference - after it means a step is picked up on the frame it
+happened rather than the one after, which is one frame of latency and nothing else.
+
+### What it does not need
+
+- **Pause and `timeScale`** are free. `BaseWorld#runUpdate` skips every system while paused and scales the
+  elapsed time it hands them, so the pacing stops and slows with the simulation on its own.
+- **Spawns** are free. The block is seeded from the entity's config, so something added between steps is drawn
+  standing where it was put rather than sliding in from the origin.
+- **Velocity changes, collisions and coming to rest** are all just steps the simulation took, and are drawn as
+  they happened.
+
+### What it does need: `snapEntity`
+
+A teleport and a long move are the same two numbers, so this is the one thing blending cannot work out for
+itself. Write a transform directly and the entity is drawn sliding the whole way there over the next step:
+
+```ts
+import { snapEntity } from '@daneren2005/shared-memory-physics';
+
+entity.components.transform!.x = 500;
+snapEntity(entity);   // drawn at 500 on the very next frame
+```
+
+### The cost
+
+32 bytes per interpolated entity, three extra writes per entity per physics step, and a per-frame pass of one
+lerp per entity on the main thread - order 0.2ms at 10,000 entities. An entity without the component pays
+nothing at all. `forceMainThread: false` plus a `getWorker` moves the pass to a worker for worlds large enough
+that it shows up in a profile, at the price of the render position being one frame stale; because consumers only
+ever read `interpolation.x`, that is a constructor flag rather than a migration.
+
+Physics writes `prev` and then the transform on the worker thread while the main thread reads both, so the block
+carries a tick stamp that is written **last**, with a release store. The update reads it on either side of its
+own reads and drops the frame if it changed, rather than blending a `prev` from one step against a transform
+from another - which is the one mismatch that would draw an entity moving backwards.
+
 ## Collisions
 
-`createPhysicsUpdate` builds an update that, right after moving each entity, tells a callback of yours what
-that entity has moved into. The callback runs wherever the update runs - on the worker thread, in the same
-pass as the movement - so it cannot be handed to `PhysicsSystem` at construction time: functions do not
-survive `postMessage`. It reaches the worker by being baked into a module that both the worker file and the
-main thread import.
+`createPhysicsUpdate` builds an update whose entities notice each other: every move is swept against whatever
+is in front of it, so nothing is ever moved into anything else, and a callback of yours is told what each
+entity ran into. The callback runs wherever the update runs - on the worker thread, in the same pass as the
+movement - so it cannot be handed to `PhysicsSystem` at construction time: functions do not survive
+`postMessage`. It reaches the worker by being baked into a module that both the worker file and the main
+thread import.
+
+The callback is optional and the [sweep](#stopping-at-the-edge) is not. `createPhysicsUpdate()` with nothing
+asked of it at all is movement that comes to rest against walls, terrain and other units and says nothing
+about any of it:
+
+```ts
+// Stopped by everything, responds to nothing.
+export const gamePhysicsUpdate = createPhysicsUpdate<Components>();
+```
+
+Movement that walks straight through the world is the bare [`physicsUpdate`](#using-physicsupdate-in-your-own-system)
+instead, which is also the only one that costs nothing per entity for the collidable query.
 
 ```ts
 // game-physics-update.ts - imported by *both* the worker file and the system below
@@ -246,6 +421,9 @@ overlapping, and one with no area never collides at all.
 An entity is never moved into another one. Before anything is written to the transform, the move is swept
 against everything along its path, and the entity is put down on the edge of whatever is in the way - then
 `onCollision` runs for it, exactly as it would if the two had ended up overlapping.
+
+This is every update `createPhysicsUpdate` builds, with or without a callback: where an entity is allowed to
+end up is physics' decision, and what the game does about the contact is a separate one.
 
 ```ts
 // A ship at x = 0 and a station at x = 30, both 10 wide, with a velocity that asks for 25 in this run.
@@ -410,11 +588,48 @@ ask it directly rather than building the sort yourself - it settles as soon as t
 measured to an entity's **box**, not to its centre, so a large target is as near as its nearest edge and
 `maxDistance` reads as a range past the hull.
 
+## Examples
+
+Three runnable examples live in [`examples/`](./examples), rendered with [Phaser](https://phaser.io) (a dev
+dependency - it is not part of the library) and driven by plain HTML controls beside the canvas:
+
+```sh
+npm start          # http://127.0.0.1:8080
+```
+
+- **Bouncing circles** - circles with a random position and heading, reflected off each other and off the
+  walls by an `onCollision` that mirrors the velocity about the contact normal.
+- **Bouncing rectangles** - the same, on boxes of random width and height, where the normal is the axis the
+  two are least through each other on rather than the line between their centres.
+- **Walking into a wall** - one unit between two boxes, turned around on a timer so it presses into each of
+  them in turn. It starts on a deliberately long 100ms physics step, so turning **interpolate rendering** off is
+  a direct before-and-after on the same running scene: the same simulation, drawn six frames at a time instead
+  of one.
+
+Every page has a **physics step** slider (starting at the library's own 50ms) and an **interpolate rendering**
+toggle, so the trade the [interpolation section](#interpolation) describes can be looked at rather than
+reasoned about.
+
+The examples import the library as `@daneren2005/shared-memory-physics`, aliased at the source next door, so
+the code reads the way a game's would and editing a system hot-reloads the running page. `npm start` also
+serves the two [cross-origin isolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated)
+headers `SharedArrayBuffer` needs, so physics genuinely runs on a worker there; where a browser will not hand
+one out, the ECS runs the same update in-process instead and the **Run physics in a worker** toggle says so.
+
+The walls the examples bounce off are ordinary entities - a transform and a body, no velocity - so they are
+stopped against by the same sweep that stops anything against anything.
+
+Every push to `dev` or `production` publishes them to GitHub Pages, both to the same place - so the site shows
+whichever branch pushed last, which is what you want while the examples are changing faster than releases are
+cut. See [`.github/workflows/pages.yml`](./.github/workflows/pages.yml) for the one-time repository setting it
+needs, and for the one line to drop when it should go back to publishing releases only.
+
 ## Building
 
 ```sh
 npm install
-npm run build      # emits dist/ (js + d.ts)
+npm run build            # emits dist/ (js + d.ts)
+npm run build:examples   # emits examples/dist/
 npm run type-check
 npm test
 ```

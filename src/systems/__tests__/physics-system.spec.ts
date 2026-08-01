@@ -1,5 +1,5 @@
 import PhysicsSystem, { type PhysicsSystemConfig } from '../physics-system';
-import { POSITION_UPDATED_EVENT } from '../physics-update';
+import { POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import { createTestWorld, type Components, type Config, type TestWorld } from '../../__tests__/fixtures/world';
 import { SHAPE_CAPSULE } from '../../components/body-component';
@@ -44,7 +44,7 @@ describe('physics-system', () => {
 		let noVelocity = world.loadEntity({ x: 0, y: 0, width: 1, height: 1 });
 		let noTransform = world.loadEntity({ velocityX: 1, velocityY: 1 });
 
-		expect(system.entities.map(entity => entity.eid)).toEqual([moving.eid]);
+		expect(Array.from(system.entities.values(), entity => entity.eid)).toEqual([moving.eid]);
 		expect(system.isEntityInSystem(noVelocity)).toEqual(false);
 		expect(system.isEntityInSystem(noTransform)).toEqual(false);
 	});
@@ -195,6 +195,17 @@ describe.each(MODES)('physics-system velocity movement (%s)', (mode) => {
 	});
 });
 
+function noop(): void {}
+
+// What a system would tell this run's update to do about reporting, which is the only place the answer exists:
+// with nothing listening there is by definition no event to assert the absence of.
+function reportsMoves(system: PhysicsSystem<Components, CollisionUpdateComponents>): boolean | undefined {
+	const world: PhysicsWorld = { gameTime: 0, elapsedTime: 1000, tick: 0 };
+	system.addDataToWorld(world);
+
+	return world.reportMoves;
+}
+
 // How a system is put together from an update function that detects collisions.  None of this depends on where
 // the update runs, so it stays on the in-process backend.
 describe('physics-system collision setup', () => {
@@ -225,8 +236,9 @@ describe('physics-system collision setup', () => {
 		const system = createSystem({ updateFunction: collisionUpdate });
 
 		// The body joins what travels with the entities this system moves, because an entity reads its own
-		// category and mask before it searches for what it hit.
-		expect(system.options.optional).toEqual(['body', 'health']);
+		// category and mask before it searches for what it hit - and the interpolation block joins it because
+		// the update publishes the step into it for any entity that has one.
+		expect(system.options.optional).toEqual(['body', 'interpolation', 'health']);
 		expect(system.options.queries?.collidable).toEqual({
 			required: ['transform', 'body'],
 			optional: ['velocity', 'health'],
@@ -234,8 +246,45 @@ describe('physics-system collision setup', () => {
 	});
 
 	it('leaves the body out of a system that only moves things', () => {
-		// Nothing is going to read a category, so shipping a block per moving entity for it would be waste.
-		expect(createSystem({ optional: ['health'] }).options.optional).toEqual(['health']);
+		// Nothing is going to read a category, so shipping a block per moving entity for it would be waste.  The
+		// interpolation block stays, since publishing a step into it is not something collision turns on.
+		expect(createSystem({ optional: ['health'] }).options.optional).toEqual(['interpolation', 'health']);
+	});
+
+	// Reporting a run's moves costs an id per moved entity in the worker plus the clone of the whole array back
+	// across the boundary, and nearly every entity moves on nearly every run - so a game reading positions
+	// through the interpolation component instead should not be paying for it.  The decision is made per run
+	// off whether anything is listening, and lands on the world object the update reads.
+	describe('reporting moves', () => {
+		it('says nothing when nothing is listening', () => {
+			expect(reportsMoves(createSystem())).toEqual(false);
+		});
+
+		it('starts reporting as soon as something listens', () => {
+			const system = createSystem();
+			system.on(POSITION_UPDATED_EVENT, noop);
+
+			expect(reportsMoves(system)).toEqual(true);
+		});
+
+		it('stops again when the listener goes away', () => {
+			// Asked per run rather than once at construction, so a scene that tears its listener down is not left
+			// paying for it.
+			const system = createSystem();
+			system.on(POSITION_UPDATED_EVENT, noop);
+			system.off(POSITION_UPDATED_EVENT, noop);
+
+			expect(reportsMoves(system)).toEqual(false);
+		});
+
+		it('can be forced either way', () => {
+			// For a listener somewhere this system cannot see it, and for turning the whole thing off regardless.
+			expect(reportsMoves(createSystem({ reportMoves: true }))).toEqual(true);
+
+			const silenced = createSystem({ reportMoves: false });
+			silenced.on(POSITION_UPDATED_EVENT, noop);
+			expect(reportsMoves(silenced)).toEqual(false);
+		});
 	});
 
 	it('collides with entities the system does not move', () => {
@@ -245,7 +294,7 @@ describe('physics-system collision setup', () => {
 		const moving = world.loadEntity({ x: 0, y: 0, width: 10, height: 10, velocityX: 1, velocityY: 0, health: 3 });
 		const still = world.loadEntity({ x: 100, y: 0, width: 10, height: 10, health: 3 });
 
-		expect(system.entities.map(entity => entity.eid)).toEqual([moving.eid]);
+		expect(Array.from(system.entities.values(), entity => entity.eid)).toEqual([moving.eid]);
 		expect(system.isEntityInSystem(still)).toEqual(false);
 		expect(system.options.queries?.collidable).toBeDefined();
 	});
@@ -549,18 +598,22 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 		expect(ship.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE * 2);
 	});
 
-	it('reports where an entity ended up as it moves', async () => {
+	it('reports the entities that moved on the system, once for the run', async () => {
 		let ship = createShip({ x: 0, y: 0, velocityX: 3, velocityY: -4 });
-		let reported: Array<[number, number]> = [];
-		ship.on(POSITION_UPDATED_EVENT, (x: number, y: number) => {
-			reported.push([x, y]);
+		let reported: Array<Array<number>> = [];
+		system.on(POSITION_UPDATED_EVENT, (entityIds: Array<number>) => {
+			reported.push(entityIds);
 		});
 
 		await run(ONE_SECOND);
 
-		// Both axes in the one event rather than an event each: the whole point of the move having an event of its
-		// own is that a diagonal move is one thing to send back to the main thread rather than two.
-		expect(reported).toEqual([[3, -4]]);
+		// One call for the whole run carrying the ids, rather than an event apiece on the entities - which is the
+		// whole point of the move being reported this way.
+		expect(reported).toEqual([[ship.eid]]);
+		// Nothing came with the id because nothing had to: the transform is shared memory, so where the ship
+		// ended up is already readable off the entity by the time the event lands.
+		expect(ship.components.transform?.x).toBeCloseTo(3, 3);
+		expect(ship.components.transform?.y).toBeCloseTo(-4, 3);
 	});
 
 	it('does not report the move as component property changes as well', async () => {
@@ -578,16 +631,18 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 	it('reports the position it came to rest at, not the one it was heading for', async () => {
 		let ship = createShip({ x: 0, y: 0, velocityX: 25 });
 		createStation({ x: 30, y: 0 });
+		// Where the ship stood each time its move was reported, read off the block the way a listener does.
 		let reported: Array<number> = [];
-		ship.on(POSITION_UPDATED_EVENT, (x: number) => {
-			reported.push(x);
+		system.on(POSITION_UPDATED_EVENT, (entityIds: Array<number>) => {
+			expect(entityIds).toEqual([ship.eid]);
+			reported.push(ship.components.transform!.x);
 		});
 
 		await run(ONE_SECOND);
 
 		// One report rather than one for the move and another for being pushed back out of it: the block is only
 		// written once the sweep has settled where the entity may go.
-		expect(reported.length).toEqual(1);
+		expect(reported).toHaveLength(1);
 		expect(reported[0]).toBeCloseTo(20, 3);
 	});
 

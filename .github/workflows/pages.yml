@@ -1,0 +1,64 @@
+name: Examples
+
+# Publishes the examples to GitHub Pages.  Both branches deploy to the same one place, so whichever pushed
+# last is what the site is showing - deliberately, while the examples are changing often enough that waiting
+# for a release to see them is the wrong trade.  Dropping `dev` from the list below is all it takes to make
+# this production-only later.
+#
+# One-time repository setup: Settings -> Pages -> Source -> "GitHub Actions".
+on:
+  push:
+    branches: [dev, production]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and a newer push does not cancel the one already running: it waits and then replaces
+# it, so the site ends up showing the newest commit either way.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Pages serves the site under the repository name rather than at the root of the domain, so every asset
+      # url has to be built with that prefix in it.
+      - name: Build examples
+        run: |
+          EXAMPLES_BASE="/${GITHUB_REPOSITORY#*/}/" npm run build:examples
+
+      - name: Upload
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./examples/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - name: Deploy
+        id: deploy
+        uses: actions/deploy-pages@v4
