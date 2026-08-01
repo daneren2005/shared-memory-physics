@@ -10,6 +10,7 @@ import {
 import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import CollisionBroadphase, { COLLIDABLE_QUERY, type CollisionFunction, type MovingEntity } from './collision';
+import { bounce } from './bounce';
 
 // The per-run data object every physics update is handed, which is the base one plus the step counter the
 // interpolation component is stamped with.  PhysicsSystem fills `tick` in from `addDataToWorld`, so a game that
@@ -151,23 +152,38 @@ export function createPhysicsUpdate<
 			// this step did, and it is blended towards on the next frame the same way a teleport is.
 			finishInterpolationStep(interpolation, world.tick);
 
-			if(!onCollision) {
+			// A bounce off what it hit is native, so an entity turns around on contact without the game writing a
+			// callback for it: whether it bounces, and how much speed it keeps, is the bounciness component it
+			// carries (or does not).  `bounce` is a no-op for an entity without one, which is what keeps a world of
+			// walls and terrain paying nothing for it.
+			const bouncing = components.bounciness !== undefined;
+			if(!bouncing && !onCollision) {
 				return;
 			}
 
-			// Collisions are reported here, straight after the entity has been put down, so a callback acts on
-			// where it has actually ended up rather than where it was - and a bounce that flips its velocity is
-			// applied by the next run's move.  Only the entity that moved gets the call; whatever it hit gets its
-			// own when its turn comes, or never, if it is something the system does not move.
+			// Collisions are handled here, straight after the entity has been put down, so both the bounce and any
+			// callback act on where it has actually ended up rather than where it was - and the flipped velocity is
+			// applied by the next run's move.  Only the entity that moved is touched; whatever it hit gets its own
+			// turn when it moves, or never, if it is something the system does not move.
 			broadphase.forEachOverlapping(self, other => {
-				onCollision(world, self, other, queries, callbacks);
+				if(bouncing) {
+					bounce(self, other);
+				}
+				if(onCollision) {
+					onCollision(world, self, other, queries, callbacks);
+				}
 			});
 
 			// Then whatever the move was stopped *against*, which the overlap check above cannot find by design:
 			// the entity was put down touching it rather than through it.  The two lists never share an entry, so
-			// nothing here has already had its callback.
+			// nothing here has already bounced or had its callback.
 			for(const other of sweep.blocking) {
-				onCollision(world, self, other, queries, callbacks);
+				if(bouncing) {
+					bounce(self, other);
+				}
+				if(onCollision) {
+					onCollision(world, self, other, queries, callbacks);
+				}
 			}
 		},
 		{

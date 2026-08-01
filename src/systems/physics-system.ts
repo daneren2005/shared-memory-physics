@@ -86,12 +86,20 @@ export default class PhysicsSystem<
 		// with the entities this system moves as well as with the ones they can run into - but only when there is
 		// collision detection to read it, since otherwise it is a block per moving entity for nothing.
 		//
+		// Bounciness rides along on the same condition: it is only ever read for a moving entity that has run into
+		// something, which is the collision path, and it turns that entity around off what it hit.  It costs
+		// nothing for the entities that do not bounce - the ECS only puts a component in the message when the
+		// entity actually holds it - so this only widens what *may* be read, not what every entity carries.
+		//
 		// The interpolation block goes along unconditionally, because the update has to publish into it for any
 		// entity that has one and there is no flag that says which entities those are.  It costs nothing for the
 		// ones that do not: the ECS only puts a component in the message when the entity actually holds it.
 		const extraOptional: Array<keyof C & string> = [];
 		if(collision && !optional.includes('body')) {
 			extraOptional.push('body');
+		}
+		if(collision && !optional.includes('bounciness')) {
+			extraOptional.push('bounciness');
 		}
 		if(!optional.includes('interpolation')) {
 			extraOptional.push('interpolation');

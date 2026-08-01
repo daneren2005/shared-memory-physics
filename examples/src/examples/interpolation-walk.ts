@@ -27,13 +27,14 @@ export const interpolationWalk: Example = {
 	id: 'walk',
 	title: 'Walking into a wall',
 	description: 'One unit between two boxes, turned around every couple of seconds so it walks into the box on '
-		+ 'the other side and presses against it until its turn comes round again. Nothing bounces here: physics '
-		+ 'stops it on the face of the box and leaves it there. This one starts on a deliberately long 100ms '
+		+ 'the other side and presses against it until its turn comes round again. Nothing bounces here: the unit '
+		+ 'carries no bounciness, so physics stops it on the face of the box and leaves it there. This one starts '
+		+ 'on a deliberately long 100ms '
 		+ 'physics step - ten steps a second against sixty frames - so turning "interpolate rendering" off shows '
 		+ 'exactly what the interpolation is doing: the same simulation, drawn six frames at a time instead of '
 		+ 'one. Watch the moment it turns around and the moment it presses into a box, which are the two places '
 		+ 'a renderer guessing forward from the velocity would overshoot and snap back.',
-	backend: 'stop',
+	backend: 'sweep',
 	// Long enough that the choppiness is unmistakable rather than something to squint at.
 	physicsStep: 100,
 

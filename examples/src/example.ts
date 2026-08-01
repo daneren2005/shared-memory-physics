@@ -30,8 +30,8 @@ export interface Example {
 	id: string
 	title: string
 	description: string
-	// Which physics update this example's world runs.  Both are movement with collision detection; they differ
-	// in what they do about a collision once they have one.
+	// Which physics update this example's world runs.  There is one now - movement with collision detection that
+	// sweeps - and an example bounces or not by whether the entities it loads carry a bounciness component.
 	backend: PhysicsBackendName
 	// Where the page's physics step slider starts for this example, in milliseconds, defaulting to the library's
 	// own 50.  An example whose point is what a long step looks like asks for a longer one.

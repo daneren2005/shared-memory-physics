@@ -205,4 +205,36 @@ describe('components', () => {
 			expect(entity.save()).not.toHaveProperty('shape');
 		});
 	});
+
+	describe('bounciness', () => {
+		it('loads from a bounciness config', () => {
+			const entity = world.loadEntity({ x: 0, y: 0, width: 1, height: 1, bounciness: 0.5 });
+
+			expect(entity.components.bounciness?.bounciness).toEqual(0.5);
+		});
+
+		it('is only loaded for a config that names bounciness, so a non-bouncing entity pays nothing for it', () => {
+			// The whole reason it is its own component: a world of walls and terrain never allocates the block.
+			expect(world.loadEntity({ x: 0, y: 0, width: 1, height: 1 }).components.bounciness).toBeUndefined();
+			expect(world.loadEntity({ x: 0, y: 0, width: 1, height: 1, bounciness: 1 }).components.bounciness).toBeDefined();
+		});
+
+		it('writes through to the shared memory block', () => {
+			const entity = world.loadEntity({ x: 0, y: 0, width: 1, height: 1, bounciness: 1 });
+			const bounciness = entity.components.bounciness!;
+			const block = world.registry.bounciness.memoryComponent.getBlock(bounciness.index);
+
+			bounciness.bounciness = 0.25;
+			expect(block[0]).toEqual(0.25);
+
+			block[0] = 0.75;
+			expect(bounciness.bounciness).toEqual(0.75);
+		});
+
+		it('saves nothing, since it is defining config that comes back from the game\'s own template', () => {
+			const entity = world.loadEntity({ x: 1, y: 2, width: 3, height: 4, bounciness: 1 });
+
+			expect(entity.save()).not.toHaveProperty('bounciness');
+		});
+	});
 });

@@ -1,4 +1,5 @@
 import bodyDefinition, { type BodyComponent } from './body-component';
+import bouncinessDefinition, { type BouncinessComponent } from './bounciness-component';
 import interpolationDefinition, { type InterpolationComponent } from './interpolation-component';
 import transformDefinition, { type TransformComponent } from './transform-component';
 import velocityDefinition, { type VelocityComponent } from './velocity-component';
@@ -14,6 +15,7 @@ export const physicsRegistry = {
 	transform: transformDefinition,
 	velocity: velocityDefinition,
 	body: bodyDefinition,
+	bounciness: bouncinessDefinition,
 	interpolation: interpolationDefinition,
 };
 
@@ -24,6 +26,7 @@ export type PhysicsComponents = {
 	transform: TransformComponent
 	velocity: VelocityComponent
 	body: BodyComponent
+	bounciness: BouncinessComponent
 	interpolation: InterpolationComponent
 };
 
@@ -47,6 +50,9 @@ export type PhysicsUpdateComponents = {
 	transform: Float32Array
 	velocity: Float32Array
 	body?: Uint32Array
+	// Optional in the same way and for the same reason: an entity that does not bounce does not have the
+	// component, and it is only ever read for the moving entity itself, which the sweep bounces on collision.
+	bounciness?: Float32Array
 	// Optional in the same way and for the same reason: an entity a game never draws interpolated does not have
 	// the component, and the update writes nothing for it.
 	interpolation?: Float32Array

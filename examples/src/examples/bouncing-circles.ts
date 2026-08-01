@@ -20,9 +20,9 @@ export const bouncingCircles: Example = {
 	id: 'circles',
 	title: 'Bouncing circles',
 	description: 'Circles with a random starting position and heading. Every bounce - off another circle or off '
-		+ 'the walls around the level - is the collision callback reflecting that entity\'s velocity about the '
-		+ 'contact normal, on whichever thread physics is running on.',
-	backend: 'bounce',
+		+ 'the walls around the level - is native: each one carries a bounciness of 1, so physics reflects its '
+		+ 'velocity about the contact normal on contact, with no collision callback in the example at all.',
+	backend: 'sweep',
 
 	controls(host): Array<Control> {
 		return [
@@ -91,6 +91,10 @@ export const bouncingCircles: Example = {
 				radius,
 				velocityX: Math.cos(heading) * settings.speed,
 				velocityY: Math.sin(heading) * settings.speed,
+				// A perfect bounce: the speed into whatever it hits comes straight back out, so the scene runs
+				// forever without winding down.  This one property is the whole of what makes it bounce - physics
+				// turns it around off other circles and off the walls with no callback in the example.
+				bounciness: 1,
 				// Gives it a render position for the canvas to draw, blended between the two positions physics
 				// published either side of its last step.
 				interpolate: true,

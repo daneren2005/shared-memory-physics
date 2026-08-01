@@ -236,9 +236,10 @@ describe('physics-system collision setup', () => {
 		const system = createSystem({ updateFunction: collisionUpdate });
 
 		// The body joins what travels with the entities this system moves, because an entity reads its own
-		// category and mask before it searches for what it hit - and the interpolation block joins it because
-		// the update publishes the step into it for any entity that has one.
-		expect(system.options.optional).toEqual(['body', 'interpolation', 'health']);
+		// category and mask before it searches for what it hit; bounciness joins it because a moving entity turns
+		// around off what it hit; and the interpolation block joins it because the update publishes the step into
+		// it for any entity that has one.
+		expect(system.options.optional).toEqual(['body', 'bounciness', 'interpolation', 'health']);
 		expect(system.options.queries?.collidable).toEqual({
 			required: ['transform', 'body'],
 			optional: ['velocity', 'health'],
