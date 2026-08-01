@@ -1,5 +1,5 @@
-import { AUTO, Game, Scale, Scene } from 'phaser';
-import { SHAPE_CIRCLE, SHAPE_RECTANGLE } from '@daneren2005/shared-memory-physics';
+import { AUTO, Game, Math as PhaserMath, Scale, Scene } from 'phaser';
+import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '@daneren2005/shared-memory-physics';
 import type { TransformComponent } from '@daneren2005/shared-memory-physics';
 import type { ExampleRuntime } from './example';
 import { LEVEL } from './level';
@@ -13,6 +13,9 @@ export interface Renderable {
 	// Whether to draw from the render position or straight off the transform, so the two can be compared on the
 	// same running scene.
 	readonly interpolate: boolean
+	// The canvas was clicked, at this point in world units.  The page forwards it to whichever example is up, so
+	// the scene does not have to know which examples care about a click.
+	pointerDown(x: number, y: number): void
 }
 
 // A frame after the tab has been in the background for a minute arrives with a delta of however long that was.
@@ -49,6 +52,12 @@ class ExampleScene extends Scene {
 
 	create(): void {
 		this.graphics = this.add.graphics();
+
+		// The level is drawn at its own size, so a pointer read off the scene is already in world units and needs
+		// no unproject - the click and the entity it is steering share one coordinate space.
+		this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+			this.host.pointerDown(pointer.worldX, pointer.worldY);
+		});
 	}
 
 	update(time: number, delta: number): void {
@@ -103,6 +112,14 @@ function drawShape(graphics: Phaser.GameObjects.Graphics, position: Position, tr
 		return;
 	}
 
+	// A capsule is `width` end to end and `height` thick, lying along `angle`: a rectangle with a semicircle
+	// cap on each end, which is the outline the library actually collides it as.
+	if(shape === SHAPE_CAPSULE) {
+		drawCapsule(graphics, x, y, width, height, angle);
+
+		return;
+	}
+
 	// x/y is the *centre* of the box, and Phaser draws from a corner, so the box is drawn around the origin and
 	// the origin is moved to the entity.  Nothing in these examples turns anything, but the rotation is honoured
 	// so that anything drawn here matches what the library would collide it as.
@@ -113,6 +130,39 @@ function drawShape(graphics: Phaser.GameObjects.Graphics, position: Position, tr
 	}
 	graphics.fillRect(-width / 2, -height / 2, width, height);
 	graphics.strokeRect(-width / 2, -height / 2, width, height);
+	graphics.restore();
+}
+
+// Builds the stadium outline once as a ring of points and fills it as a single polygon, so the fill alpha does
+// not double up where a rectangle and two circles would otherwise overlap.  Drawn in the capsule's own frame -
+// origin at its centre, +x along its length - which is why the points are the unrotated shape and the canvas
+// carries the position and angle.
+function drawCapsule(graphics: Phaser.GameObjects.Graphics, x: number, y: number, width: number, height: number, angle: number): void {
+	const radius = height / 2;
+	// How far each cap's centre sits from the middle.  Clamped at 0 so a capsule drawn shorter than it is thick
+	// degrades to a circle rather than turning itself inside out.
+	const capOffset = Math.max(0, width / 2 - radius);
+	const SEGMENTS = 12;
+
+	const points: Array<PhaserMath.Vector2> = [];
+	// Right cap, swept from the top of the shape round through +x to the bottom.
+	for(let i = 0; i <= SEGMENTS; i++) {
+		const a = -Math.PI / 2 + (Math.PI * i) / SEGMENTS;
+		points.push(new PhaserMath.Vector2(capOffset + Math.cos(a) * radius, Math.sin(a) * radius));
+	}
+	// Left cap, carrying on from the bottom round through -x back to the top, so the two caps close into one ring.
+	for(let i = 0; i <= SEGMENTS; i++) {
+		const a = Math.PI / 2 + (Math.PI * i) / SEGMENTS;
+		points.push(new PhaserMath.Vector2(-capOffset + Math.cos(a) * radius, Math.sin(a) * radius));
+	}
+
+	graphics.save();
+	graphics.translateCanvas(x, y);
+	if(angle !== 0) {
+		graphics.rotateCanvas(angle);
+	}
+	graphics.fillPoints(points, true);
+	graphics.strokePoints(points, true);
 	graphics.restore();
 }
 
