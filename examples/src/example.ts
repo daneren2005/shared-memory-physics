@@ -50,4 +50,9 @@ export interface Example {
 	// puts the game logic that is not physics - the walk example's turn-around timer - and it runs on the main
 	// thread, unlike the collision callbacks, so it has entities and components rather than raw blocks.
 	update?(runtime: ExampleRuntime, elapsedTime: number): void
+
+	// Called when the canvas is clicked, with the point in world units - one unit is one pixel and the level is
+	// drawn at its own size, so these are the same coordinates entities live in.  Only an example that is steered
+	// by clicking needs this; the rest leave it off and the click does nothing.
+	pointerDown?(runtime: ExampleRuntime, x: number, y: number): void
 }

@@ -73,6 +73,14 @@ class ExamplesPage implements ExampleHost, Renderable {
 		this.rebuild();
 	}
 
+	// Handed a click in world units by the scene and passed straight on to the current example, if it is one that
+	// listens for clicks - the page itself has nothing to do with where the pointer went.
+	pointerDown(x: number, y: number): void {
+		if(this.runtime) {
+			this.example.pointerDown?.(this.runtime, x, y);
+		}
+	}
+
 	// Called once per rendered frame by the scene, with however long the frame took.
 	step(elapsedTime: number): void {
 		const runtime = this.runtime;
