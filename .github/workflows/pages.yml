@@ -8,7 +8,7 @@ name: Examples
 # One-time repository setup: Settings -> Pages -> Source -> "GitHub Actions".
 on:
   push:
-    branches: [dev, production]
+    branches: [production]
   workflow_dispatch:
 
 permissions:
