@@ -7,8 +7,8 @@ export interface Level {
 }
 
 export const LEVEL: Level = {
-	width: 900,
-	height: 600,
+	width: 1200,
+	height: 800,
 };
 
 // The edges of the level are ordinary entities: four rectangles with a transform and a body but no velocity,

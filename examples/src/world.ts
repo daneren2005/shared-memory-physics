@@ -19,6 +19,10 @@ export type ExampleWorld = BaseWorld<typeof registry>;
 // because that is where a game would widen it: `& { health?: Float32Array }`.
 export type ExampleUpdateComponents = PhysicsUpdateComponents & EntityUpdateComponents<Components>;
 
+// The shared buffer the components live in is capped at 1 MB per buffer - a pointer into it is only so wide - and
+// the heap grows by chaining more of them as entities are loaded, so there is nothing to size up front: even the
+// boids stress test at fifty thousand just grows itself a handful of buffers while it is being filled, before the
+// workers are started.
 export function createExampleWorld(): ExampleWorld {
 	return new BaseWorld(registry);
 }

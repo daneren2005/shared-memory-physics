@@ -4,6 +4,7 @@ import type { TransformComponent } from '@daneren2005/shared-memory-physics';
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import type { EntityStyle, HudText, ExampleRuntime } from './example';
 import { LEVEL } from './level';
+import type { Level } from './level';
 import type { Components, Config } from './world';
 
 // What the scene needs from the page: somewhere to send the frame, and whatever world is currently up.
@@ -21,6 +22,10 @@ export interface Renderable {
 	// The current example's own colour for this entity, or undefined to fall back to the renderer's default.  The
 	// scene asks per entity per frame; the page routes it to whichever example is up - see Example#entityStyle.
 	entityStyle(entity: BaseEntity<Components, Config>): EntityStyle | undefined
+	// Whether the current example is a swarm - thousands of tiny movers to be drawn as heading-pointed darts in
+	// one cheap pass, rather than as the handful of outlined shapes the default loop draws.  Set for boids and
+	// nothing else; see the swarm path in `draw`.
+	readonly swarm: boolean
 	// The score, lives and banner the current example wants drawn over the canvas, or undefined for one that has
 	// none.  Routed to whichever example is up the same way a colour is - see Example#hud.
 	hud(): HudText | undefined
@@ -58,6 +63,10 @@ class ExampleScene extends Scene {
 	// the shapes, and left empty for every example that returns no `hud` at all.
 	private statusText!: Phaser.GameObjects.Text;
 	private bannerText!: Phaser.GameObjects.Text;
+	// The world size the camera zoom was last set for, so it is only redone when an example with a different one
+	// comes up rather than every frame.  Zero until the first world is drawn.
+	private cameraWidth = 0;
+	private cameraHeight = 0;
 
 	constructor(private readonly host: Renderable) {
 		super('example');
@@ -87,19 +96,52 @@ class ExampleScene extends Scene {
 
 	update(time: number, delta: number): void {
 		this.host.step(Math.min(delta, MAX_FRAME_MS));
+		// An example that simulates in a bigger world than the canvas is sized to (boids) is fitted by zooming the
+		// camera out rather than by growing the canvas, so the whole world lands in the same space just smaller.
+		const level = this.host.runtime?.level;
+		if(level) {
+			this.applyCamera(level);
+		}
 		this.draw();
 		this.drawHud();
+	}
+
+	// Zooms the camera so `level` fills the canvas, and recentres on it.  Only touched when the world's size
+	// actually changes - switching examples, or the first build - since setting it every frame is needless.  The
+	// zoom is uniform (the worlds share the canvas' aspect ratio) so nothing is stretched or letterboxed.
+	private applyCamera(level: Level): void {
+		if(level.width === this.cameraWidth && level.height === this.cameraHeight) {
+			return;
+		}
+
+		const zoom = Math.min(LEVEL.width / level.width, LEVEL.height / level.height);
+		const camera = this.cameras.main;
+		camera.setZoom(zoom);
+		camera.centerOn(level.width / 2, level.height / 2);
+		this.cameraWidth = level.width;
+		this.cameraHeight = level.height;
 	}
 
 	private draw(): void {
 		const graphics = this.graphics;
 		graphics.clear();
 
+		const level = this.host.runtime?.level ?? LEVEL;
 		graphics.lineStyle(2, LEVEL_BORDER_COLOR, 1);
-		graphics.strokeRect(0, 0, LEVEL.width, LEVEL.height);
+		graphics.strokeRect(0, 0, level.width, level.height);
 
 		const runtime = this.host.runtime;
 		if(!runtime) {
+			return;
+		}
+
+		// A swarm - thousands of boids - is drawn its own way: the default loop's outlined, filled circle is a
+		// triangulated arc plus a stroke plus a matrix save/restore *per entity*, which is fine for a scene of a
+		// few dozen and falls over at ten thousand.  The swarm path draws each as a single flat triangle instead,
+		// so a whole flock is one cheap pass with no strokes and no arcs.
+		if(this.host.swarm) {
+			this.drawSwarm(runtime.world.entities.values());
+
 			return;
 		}
 
@@ -123,6 +165,34 @@ class ExampleScene extends Scene {
 			// place a position always exists.
 			const interpolation = this.host.interpolate ? entity.components.interpolation : undefined;
 			drawShape(graphics, interpolation ?? transform, transform, entity.components.body?.shape ?? SHAPE_RECTANGLE);
+		}
+	}
+
+	// Draws a swarm the cheap way: one flat, unstroked triangle per mover, pointed the way it is going.  This is
+	// what lets the boids example carry ten thousand entities - the per-entity work is a colour, three points and
+	// a single `fillTriangle`, with none of the arc triangulation, stroking or per-shape canvas save/restore the
+	// default loop does.  Everything without a velocity (the level's walls) is skipped, since a swarm is all
+	// movers and scenery has no heading to point.
+	private drawSwarm(entities: Iterable<BaseEntity<Components, Config>>): void {
+		const graphics = this.graphics;
+
+		for(const entity of entities) {
+			const velocity = entity.components.velocity;
+			const transform = entity.components.transform;
+			if(!velocity || !transform) {
+				continue;
+			}
+
+			// The example still gets first say on the colour - the boids example returns a hue taken from the
+			// heading - and only where it declines does the id palette stand in.
+			const style = this.host.entityStyle(entity);
+			const color = style ? style.color : PALETTE[entity.eid % PALETTE.length];
+			graphics.fillStyle(color, style?.alpha ?? 0.9);
+
+			// Drawn at the render position when interpolating, the transform otherwise - the same choice the
+			// default loop makes - and pointed along its velocity, with its size taken from the transform.
+			const position = (this.host.interpolate ? entity.components.interpolation : undefined) ?? transform;
+			drawDart(graphics, position.x, position.y, velocity.velocityX, velocity.velocityY, transform.width);
 		}
 	}
 
@@ -170,6 +240,39 @@ function drawShape(graphics: Phaser.GameObjects.Graphics, position: Position, tr
 	graphics.fillRect(-width / 2, -height / 2, width, height);
 	graphics.strokeRect(-width / 2, -height / 2, width, height);
 	graphics.restore();
+}
+
+// One boid: a small three-point dart pointed along its velocity, filled flat with whatever colour is already
+// set.  The tip leads the way it is going and the two tail corners trail behind, worked out from the heading and
+// the vector square to it - no rotation matrix, so this is a handful of multiplies and one `fillTriangle`, which
+// is the whole reason a flock of ten thousand of them draws.  A boid that has been stopped dead points up rather
+// than collapsing to a line.
+function drawDart(graphics: Phaser.GameObjects.Graphics, x: number, y: number, velocityX: number, velocityY: number, size: number): void {
+	const speed = Math.hypot(velocityX, velocityY);
+	let headingX = 0;
+	let headingY = -1;
+	if(speed > 0) {
+		headingX = velocityX / speed;
+		headingY = velocityY / speed;
+	}
+
+	// Along the heading, and square to it.  The dart is a little longer than it is wide so the direction reads.
+	const length = size * 1.6;
+	const halfWidth = size * 0.7;
+	const perpX = -headingY;
+	const perpY = headingX;
+
+	// The tip leads by more than the tail trails, so the point of the dart sits ahead of the boid's centre.
+	const tipX = x + headingX * length * 0.6;
+	const tipY = y + headingY * length * 0.6;
+	const backX = x - headingX * length * 0.4;
+	const backY = y - headingY * length * 0.4;
+
+	graphics.fillTriangle(
+		tipX, tipY,
+		backX + perpX * halfWidth, backY + perpY * halfWidth,
+		backX - perpX * halfWidth, backY - perpY * halfWidth,
+	);
 }
 
 // Builds the stadium outline once as a ring of points and fills it as a single polygon, so the fill alpha does

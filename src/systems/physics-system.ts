@@ -1,5 +1,5 @@
 import { ComponentSystem } from '@daneren2005/shared-memory-ecs';
-import type { BaseWorld, ComponentDefinitionMap, ComponentMap, EntityUpdateComponents, EntityUpdateFunction, SystemConfig } from '@daneren2005/shared-memory-ecs';
+import type { BaseEntity, BaseWorld, ComponentDefinitionMap, ComponentMap, ComponentSystemQuery, EntityUpdateComponents, EntityUpdateFunction, SystemConfig } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
 import physicsUpdate, { POSITION_UPDATED_EVENT, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
 import { COLLIDABLE_QUERY } from './collision';
@@ -57,6 +57,20 @@ export interface PhysicsSystemConfig<
 	// moves on nearly every run, so at a few thousand entities that is a few thousand ids a step for a listener
 	// that may not exist.  Force it `true` only for a listener attached somewhere this system cannot see.
 	reportMoves?: boolean
+	// Narrows which of the entities this system *moves* to a subset, run on the main thread as the entity list
+	// for the worker is built.  Every entity with a transform and a velocity is moved by default; a game that
+	// wants to spread one simulation across several workers gives each system the same update but a filter that
+	// picks a different shard - `entity => entity.eid % workers === n` - so each worker moves its own slice.  The
+	// collidable query below is *not* filtered, so every shard still sweeps against the whole world; likewise an
+	// extra query in `queries` is gathered whole, so a shard that only moves a slice can still read all of its
+	// neighbours out of shared memory.
+	filter?: (entity: BaseEntity<C>) => boolean
+	// Extra queries to gather and send to the worker alongside the collidable one, for an update that needs to
+	// see more of the world than the entity it is moving - a flocking update reading every boid's position to
+	// steer one, say.  Each is a list the update reads by name off its `queries` argument, and it is gathered
+	// whole regardless of the `filter` above, so a sharded system still sees every entity the query matches.
+	// Merged with the collidable query rather than replacing it, so a collision update can ask for both.
+	queries?: { [key: string]: ComponentSystemQuery<C> }
 }
 
 // Moves every entity that has both a transform and a velocity, and (when the update function detects
@@ -106,6 +120,20 @@ export default class PhysicsSystem<
 		}
 		const movingOptional = extraOptional.length ? [...extraOptional, ...optional] : optional;
 
+		// Collision is between anything with a transform and a body, not only the entities this system moves, so
+		// that a ship can hit a station that has no velocity of its own.  It is only gathered when something is
+		// actually going to look at it, since it means shipping a block for every entity in the world.  A game's
+		// own extra queries (see `queries` above) are merged on top rather than instead, so an update can ask for
+		// both the collidable set and one of its own - and neither is narrowed by the shard `filter`, so every
+		// worker still sees the whole world it is searching even when it only moves a slice of it.
+		const collidableQuery = collision ? {
+			[COLLIDABLE_QUERY]: {
+				required: ['transform', 'body'] as Array<keyof C>,
+				optional: ['velocity', ...optional] as Array<keyof C>,
+			},
+		} : undefined;
+		const queries = collidableQuery || options.queries ? { ...collidableQuery, ...options.queries } : undefined;
+
 		super(world, {
 			name: options.name ?? 'PhysicsSystem',
 			// A fixed step by default rather than every frame - see DEFAULT_PHYSICS_STEP_MS.
@@ -113,19 +141,14 @@ export default class PhysicsSystem<
 			firstRun: options.firstRun,
 
 			// Movement needs both, so an entity with only one of them is not in the system at all - though it can
-			// still be collided with through the query below.
+			// still be collided with through the query above.
 			required: ['transform', 'velocity'],
 			optional: movingOptional,
+			// Narrows the moved entities to a shard when a game spreads one simulation across several workers; left
+			// off, every entity with a transform and a velocity is moved.
+			filter: options.filter,
 			updateFunction,
-			// Collision is between anything with a transform and a body, not only the entities this system moves,
-			// so that a ship can hit a station that has no velocity of its own.  It is only gathered when something
-			// is actually going to look at it, since it means shipping a block for every entity in the world.
-			queries: collision ? {
-				[COLLIDABLE_QUERY]: {
-					required: ['transform', 'body'],
-					optional: ['velocity', ...optional],
-				},
-			} : undefined,
+			queries,
 
 			forceMainThread: options.forceMainThread ?? !options.getWorker,
 			// Only ever reached when a getWorker was supplied: without one forceMainThread defaults to true, so
