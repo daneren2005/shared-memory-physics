@@ -1,4 +1,4 @@
-import { storeFloat32 } from '@daneren2005/shared-memory-objects';
+import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
 import type { ComponentSystemCallbacks, ComponentSystemWorld } from '@daneren2005/shared-memory-ecs';
 import interpolationUpdate from '../interpolation-update';
 import {

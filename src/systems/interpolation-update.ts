@@ -1,4 +1,4 @@
-import { loadFloat32 } from '@daneren2005/shared-memory-objects';
+import { loadFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
 import type { EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { InterpolationComponents, InterpolationUpdateComponents } from '../components/registry';
 import {

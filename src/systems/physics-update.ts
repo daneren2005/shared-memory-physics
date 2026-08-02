@@ -1,4 +1,5 @@
-import { addAtomicFloat32, storeFloat32 } from '@daneren2005/shared-memory-objects';
+import { addAtomicFloat32 } from '@daneren2005/shared-memory-objects/utils/atomic-math';
+import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
 import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents, EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
 import {

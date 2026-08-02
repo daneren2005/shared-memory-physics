@@ -4,6 +4,7 @@
 	"author": "Scott Jackson",
 	"version": "1.2.0",
 	"type": "module",
+	"sideEffects": false,
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/daneren2005/shared-memory-physics.git"
@@ -56,8 +57,8 @@
 		"vitest": "^4.1.10"
 	},
 	"peerDependencies": {
-		"@daneren2005/shared-memory-ecs": "^1.1.1",
-		"@daneren2005/shared-memory-objects": "^1.0.0"
+		"@daneren2005/shared-memory-ecs": "^1.2.2",
+		"@daneren2005/shared-memory-objects": "^1.1.0"
 	},
 	"dependencies": {
 		"flatbush": "^4.6.2"
