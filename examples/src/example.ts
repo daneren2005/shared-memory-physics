@@ -1,4 +1,4 @@
-import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
+import type { BaseEntity, System } from '@daneren2005/shared-memory-ecs';
 import type { InterpolationSystem, PhysicsSystem } from '@daneren2005/shared-memory-physics';
 import type { Control } from './controls';
 import type { Level } from './level';
@@ -39,6 +39,21 @@ export interface ExampleRuntime {
 	level: Level
 }
 
+// What an example is told when it is asked for its own systems - everything the page has already settled for the
+// physics system, so an example's system runs on the same terms as the one beside it.
+export interface ExampleSystemsConfig {
+	// The world being built, to hand the system's constructor.
+	world: ExampleWorld
+	// The bounds this example is laying its entities out in, which is what a system that steers off the edges of
+	// the field needs.
+	level: Level
+	// The state of the page's "Run physics in a worker" toggle, inverted: true means run in-process.  Passed on
+	// so a system started here goes to the same backend physics did rather than quietly staying on a worker.
+	forceMainThread: boolean
+	// The step the page's slider is currently on, in milliseconds.
+	deltaBetweenRuns: number
+}
+
 // What an example can ask the page for from inside a control handler.
 export interface ExampleHost {
 	// The running world, or undefined for the moment between a rebuild starting and the new world being ready
@@ -60,6 +75,31 @@ export interface Example {
 	// Where the page's physics step slider starts for this example, in milliseconds, defaulting to the library's
 	// own 50.  An example whose point is what a long step looks like asks for a longer one.
 	physicsStep?: number
+	// The world this example simulates in, defaulting to the shared LEVEL the canvas is sized to.  An example that
+	// wants more room than that - boids, so the flock is not packed tight - sets a bigger one here, and the camera
+	// zooms out to fit it in the same canvas rather than the canvas growing.  Kept to the canvas' aspect ratio so
+	// the zoom is uniform and nothing is letterboxed.  This is the `level` an example is handed in its runtime, so
+	// it lays its entities out (and reads its edges) in these units.
+	world?: Level
+
+	// Whether this example is a swarm - thousands of tiny movers the renderer should draw as heading-pointed
+	// darts in one cheap pass rather than as outlined shapes one at a time.  Set by boids; left off (drawn the
+	// normal way) by every other example.  See the swarm path in the renderer.
+	swarm?: boolean
+	// Whether to measure and show, in the stats panel, how long the world's update is taking - the main thread and
+	// each physics system.  Worth the handful of timers only for a stress test whose whole point is how it scales,
+	// which is boids; every other example leaves it off.  See PerformanceTiming and the page's stats.
+	timing?: boolean
+
+	// Systems this example runs *besides* the standard physics one - the boids steering, which writes the
+	// velocities physics then integrates.  They are added to the world in front of the physics system, so a
+	// velocity written on a frame is moved on that same frame, and the page's step slider retunes them alongside
+	// it: they are all one simulation running at one rate.
+	//
+	// Handed the bare world rather than the runtime because the runtime is not finished until the physics system
+	// it carries exists, and this runs before that.  Called once per world, so a system built here is thrown away
+	// and rebuilt with everything else on a restart.
+	systems?(config: ExampleSystemsConfig): Array<System<Components>>
 
 	// The sliders and buttons to show beside the canvas.  Built once when the example is selected, and outliving
 	// any number of rebuilds, so a control handler reaches the live world through `host` rather than closing

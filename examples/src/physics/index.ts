@@ -1,4 +1,6 @@
-import type { PhysicsUpdateFunction } from '@daneren2005/shared-memory-physics';
+import { physicsUpdate } from '@daneren2005/shared-memory-physics';
+import type { PhysicsUpdateMetadata, PhysicsWorld } from '@daneren2005/shared-memory-physics';
+import type { EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { Components, ExampleUpdateComponents } from '../world';
 import { breakoutUpdate } from './breakout-update';
 import { sweepUpdate } from './sweep-update';
@@ -7,7 +9,10 @@ import { sweepUpdate } from './sweep-update';
 // hands `PhysicsSystem` as its `updateFunction` for the in-process fallback must be the same function its
 // worker file handed `createComponentWorker`, or the two backends behave differently.
 export interface PhysicsBackend {
-	updateFunction: PhysicsUpdateFunction<Components, ExampleUpdateComponents>
+	// The bare EntityUpdateFunction rather than PhysicsUpdateFunction, because not every backend sweeps: plain
+	// movement carries no collision metadata at all, so its `physics` stamp is absent.  The two that do sweep
+	// still satisfy this - their metadata is the optional field.
+	updateFunction: EntityUpdateFunction<Components, ExampleUpdateComponents, PhysicsWorld> & { physics?: PhysicsUpdateMetadata<Components> }
 	getWorker(): Worker
 }
 
@@ -18,6 +23,9 @@ export interface PhysicsBackend {
 //     entity turns around off what it hits only through the `bounciness` component it carries - see ./sweep-update.ts.
 //   - `breakout` is the same movement plus one callback that kills a brick the ball has bounced off, run in the
 //     physics thread rather than on the main thread - see ./breakout-update.ts.
+//   - `movement` is the library's own `physicsUpdate` with nothing on top: it integrates the velocity, publishes
+//     the interpolation step, and notices nothing around it.  Boids run on this - what turns them is a steering
+//     system of the example's own (see ../systems/steering-system.ts), so the physics half is the plain one.
 export const PHYSICS_BACKENDS = {
 	sweep: {
 		updateFunction: sweepUpdate,
@@ -26,6 +34,10 @@ export const PHYSICS_BACKENDS = {
 	breakout: {
 		updateFunction: breakoutUpdate,
 		getWorker: () => new Worker(new URL('./breakout.worker.ts', import.meta.url), { type: 'module' }),
+	},
+	movement: {
+		updateFunction: physicsUpdate,
+		getWorker: () => new Worker(new URL('./movement.worker.ts', import.meta.url), { type: 'module' }),
 	},
 } satisfies Record<string, PhysicsBackend>;
 
