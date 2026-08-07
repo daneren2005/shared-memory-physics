@@ -1,4 +1,5 @@
 import Flatbush from 'flatbush';
+import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsUpdateComponents } from '../components/registry';
 import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX } from '../components/body-component';
@@ -26,6 +27,7 @@ export const COLLIDABLE_QUERY = 'collidable';
 export type CollisionComponents<T extends PhysicsUpdateComponents> = Partial<T> & {
 	transform: Float32Array
 	body: Uint32Array
+	entity?: Uint32Array
 };
 
 // The entity that did the running into: the one being updated, so everything the system asked for is there.
@@ -435,6 +437,11 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 				// The other half of canCollide, which does have to be per candidate: a bucket shares one category
 				// but every entity in it carries its own mask.
 				if((other.components.body[BODY_MASK_INDEX] & searcher.category) === 0) {
+					continue;
+				}
+
+				// Already killed - in an earlier collision this run, or by another worker sharing this block
+				if(other.components.entity?.[DEAD_INDEX] === 1) {
 					continue;
 				}
 

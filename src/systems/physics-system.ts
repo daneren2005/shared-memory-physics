@@ -118,6 +118,9 @@ export default class PhysicsSystem<
 		if(!optional.includes('interpolation')) {
 			extraOptional.push('interpolation');
 		}
+		if(collision) {
+			extraOptional.push('entity');
+		}
 		const movingOptional = extraOptional.length ? [...extraOptional, ...optional] : optional;
 
 		// Collision is between anything with a transform and a body, not only the entities this system moves, so
@@ -129,7 +132,7 @@ export default class PhysicsSystem<
 		const collidableQuery = collision ? {
 			[COLLIDABLE_QUERY]: {
 				required: ['transform', 'body'] as Array<keyof C>,
-				optional: ['velocity', ...optional] as Array<keyof C>,
+				optional: ['velocity', 'entity', ...optional] as Array<keyof C>,
 			},
 		} : undefined;
 		const queries = collidableQuery || options.queries ? { ...collidableQuery, ...options.queries } : undefined;

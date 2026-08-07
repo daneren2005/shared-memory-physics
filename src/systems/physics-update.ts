@@ -1,5 +1,6 @@
 import { addAtomicFloat32 } from '@daneren2005/shared-memory-objects/utils/atomic-math';
 import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
+import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents, EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
 import {
@@ -118,6 +119,11 @@ export function createPhysicsUpdate<
 
 	const update: PhysicsUpdateFunction<C, T, W> = Object.assign(
 		(world: W, entityId: number, components: T, queries: EntityQueryComponents<C>, callbacks: ComponentSystemCallbacks<C>) => {
+			// Killed earlier this run
+			if(components.entity?.[DEAD_INDEX] === 1) {
+				return;
+			}
+
 			const self: MovingEntity<T> = { entityId, components };
 			const interpolation = components.interpolation;
 			const seconds = world.elapsedTime / 1000;

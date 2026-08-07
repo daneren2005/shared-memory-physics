@@ -56,6 +56,8 @@ export type PhysicsUpdateComponents = {
 	// Optional in the same way and for the same reason: an entity a game never draws interpolated does not have
 	// the component, and the update writes nothing for it.
 	interpolation?: Float32Array
+	// For checking if entity is dead during run
+	entity?: Uint32Array
 };
 
 // The blocks the interpolation update works on.  Both are required - the system's query asks for both - which

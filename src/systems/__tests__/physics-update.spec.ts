@@ -1,4 +1,5 @@
 import physicsUpdate, { createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
+import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentSystemCallbacks } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
 import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
@@ -167,6 +168,7 @@ interface Unit {
 	// A sensor is detected and reported but stops nothing: a mover passes through it rather than coming to rest
 	// against it, and a bouncing one does not turn around off it.
 	sensor?: boolean
+	dead?: boolean
 }
 
 // The blocks one entity would arrive at the worker with.  Units are 10x10, still, and collide with everything
@@ -188,7 +190,10 @@ function createUnit(unit: Unit, entityId: number): MovingEntity<PhysicsUpdateCom
 	body[BODY_MASK_INDEX] = DEFAULT_COLLIDE_MASK;
 	body[BODY_SENSOR_INDEX] = unit.sensor ? 1 : 0;
 
-	const components: PhysicsUpdateComponents = { transform, velocity, body };
+	const entity = new Uint32Array(2);
+	entity[DEAD_INDEX] = unit.dead ? 1 : 0;
+
+	const components: PhysicsUpdateComponents & { entity: Uint32Array } = { transform, velocity, body, entity };
 	// Only a unit that names a bounciness carries the block, the same way only such an entity would at runtime.
 	if(unit.bounciness !== undefined) {
 		const bounciness = new Float32Array(BOUNCINESS_SIZE);
@@ -442,6 +447,54 @@ describe('createPhysicsUpdate', () => {
 			// PhysicsSystem reads this off the function to decide whether to gather the query at all, so an update
 			// that sweeps but says it does not collide would be swept against an empty world.
 			expect(createPhysicsUpdate().physics.collision).toEqual(true);
+		});
+	});
+
+	// An entity can be killed by earlier onCollision callback or another worker
+	describe('with something already dead in the way', () => {
+		it('does not stop against a dead entity', () => {
+			// The same wall that would stop the mover at 20, but dead: the mover sails its whole 25 through where the
+			// corpse is rather than coming to rest against it.
+			const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0, dead: true }]);
+
+			expect(result.x(1)).toEqual(25);
+		});
+
+		it('runs no collision callback for a dead entity it moves over', () => {
+			const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0, dead: true }]);
+
+			expect(result.hits()).toEqual([]);
+		});
+
+		it('still stops against a live entity beyond a dead one', () => {
+			// A dead one where the mover would otherwise stop, and a live one just past it: the mover passes through
+			// the corpse and comes to rest against the live wall instead of the dead one.
+			const result = run([{ x: 0, y: 0, velocityX: 45 }, { x: 30, y: 0, dead: true }, { x: 50, y: 0 }]);
+
+			expect(result.x(1)).toBeCloseTo(40, 3);
+			expect(result.hits()).toEqual([3]);
+		});
+
+		it('does not report a dead entity a still one is sitting on top of', () => {
+			// Neither moves, so this is the overlap check rather than the sweep.  The live one skips the dead one it
+			// overlaps, and the dead one does not run at all, so no pair is reported either way.
+			const result = run([{ x: 0, y: 0 }, { x: 5, y: 0, dead: true }]);
+
+			expect(result.pairs()).toEqual([]);
+		});
+
+		// The other half of it: a dead entity that is itself a mover.  Killed by an earlier callback this run (or in
+		// another worker) but not yet dropped from the system, it must not take its move or run its own callbacks -
+		// which is where it would be killed a second time.
+		it('does not move a dead entity or run its callbacks', () => {
+			// A dead mover with a live one sitting on top of it: it stays exactly where it is and reports nothing,
+			// rather than taking its 25 of velocity and colliding along the way.
+			const result = run([{ x: 0, y: 0, velocityX: 25, dead: true }, { x: 5, y: 0 }]);
+
+			expect(result.x(1)).toEqual(0);
+			expect(result.hits()).toEqual([]);
+			// And the live one, running its own update, skips the dead mover it overlaps - so no pair at all.
+			expect(result.pairs()).toEqual([]);
 		});
 	});
 
