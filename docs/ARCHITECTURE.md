@@ -48,7 +48,7 @@ main thread                              worker thread (optional)
 | `systems/spatial-index.ts` | Same R-tree without collide categories — targeting / range / nearest queries. Snapshot per run. | `SpatialIndex`, `SpatialFilter` |
 | `systems/interpolation-system.ts` | Main-thread system that runs the per-frame render-position lerp. | `InterpolationSystem`, `InterpolationSystemConfig` |
 | `systems/interpolation-update.ts` | The lerp itself (`render = prev + (current-prev)*alpha`), runnable in a worker too. | `interpolationUpdate` |
-| `math/shapes.ts` | Shape overlap + distance primitives. All 3 shapes = an oriented core grown by a radius. | `shapesOverlap`, `orientedBoxesOverlap`, `segment*DistanceSquared`, `shapeHalfWidth/Height`, `shapeRadius` |
+| `math/shapes.ts` | Shape overlap, contact direction + distance primitives. All 3 shapes = an oriented core grown by a radius. | `shapesOverlap`, `contactNormal`, `orientedBoxesOverlap`, `segment*DistanceSquared`, `shapeHalfWidth/Height`, `shapeRadius`, `Vector` |
 
 Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures live in
 `src/__tests__/fixtures/`. `examples/` is a Phaser-rendered playground (Phaser is a dev dep only).
@@ -85,6 +85,11 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
   targeting, saves) must read `transform`; the render position depends on local frame timing.
 - **Only capsules must name their `shape`**; circle vs rectangle is inferred from `radius` vs
   `width/height`. Touching exactly = not overlapping; zero-area = never overlaps.
+- **The bounce normal comes off the same geometry detection used** (`contactNormal`), not off the
+  bounding boxes: boxes part along the shallowest of their own four face directions, rounds along the
+  gap between their cores. A bounding-box normal is only ever one of the world axes, so a pair meeting
+  at an angle reflected the wrong component of its velocity - or, when nothing pointed along that axis,
+  the `into >= 0` guard skipped the bounce and the mover carried straight on through.
 
 ## Thread / dependency notes
 

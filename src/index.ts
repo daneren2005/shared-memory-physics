@@ -81,6 +81,7 @@ export type {
 
 export {
 	shapesOverlap,
+	contactNormal,
 	shapeHalfWidth,
 	shapeHalfHeight,
 	shapeIsEmpty,
@@ -93,6 +94,7 @@ export {
 	segmentBoxDistanceSquared,
 	pointSegmentDistanceSquared,
 } from './math/shapes';
+export type { Vector } from './math/shapes';
 
 export { default as CollisionBroadphase, COLLIDABLE_QUERY } from './systems/collision';
 export type { CollisionComponents, CollisionEntity, CollisionFunction, MoveResult, MovingEntity, SweepResult } from './systems/collision';

@@ -85,10 +85,17 @@ exactly still counts as **not** overlapping, whichever pair it is, and a shape w
 anything. Which of the two sizes decides that depends on the shape: a circle with no height is a perfectly
 good circle, while a rectangle with no height is nothing at all.
 
+`contactNormal` answers the other half of a contact: the unit direction one shape is pushed off the other,
+written into a `{ x, y }` you pass in, and `false` when the two are exactly on top of each other and there is no
+such direction. It splits the same three ways off the same geometry, so the direction is the face that was
+actually hit at the angle the pair is turned to - not the nearest world axis. This is what the native bounce
+reflects around; a game reaching for its own response can use it the same way.
+
 `shapesOverlap` is exported, along with `shapeHalfWidth` / `shapeHalfHeight` (the axis-aligned box a shape is
 indexed under), `shapeRadius`, `shapeIsEmpty`, `capsuleHalfLength`, and the distance primitives underneath -
-`segmentSegmentDistanceSquared`, `segmentBoxDistanceSquared` and `pointSegmentDistanceSquared`.
-`orientedBoxesOverlap`, `boundsHalfWidth` and `boundsHalfHeight` are still there and still rectangle-only.
+`segmentSegmentDistanceSquared`, `segmentBoxDistanceSquared` and `pointSegmentDistanceSquared`, each of which
+takes an optional `out` vector and fills it with the gap it measured. `orientedBoxesOverlap`, `boundsHalfWidth`
+and `boundsHalfHeight` are still there and still rectangle-only.
 
 ## Registering
 
@@ -602,8 +609,8 @@ npm start          # http://127.0.0.1:8080
 ```
 
 - **Bouncing circles** - circles with a random position and heading, reflected off each other and off the
-  walls by an `onCollision` that mirrors the velocity about the contact normal.
-- **Bouncing rectangles** - the same, on boxes of random width and height, where the normal is the axis the
+  walls by the native bounce, which mirrors the velocity about the contact normal.
+- **Bouncing rectangles** - the same, on boxes of random width and height, where the normal is the face the
   two are least through each other on rather than the line between their centres.
 - **Walking into a wall** - one unit between two boxes, turned around on a timer so it presses into each of
   them in turn. It starts on a deliberately long 100ms physics step, so turning **interpolate rendering** off is

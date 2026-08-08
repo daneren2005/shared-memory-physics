@@ -1,12 +1,14 @@
 import {
-	boundsHalfHeight, boundsHalfWidth, orientedBoxesOverlap,
+	boundsHalfHeight, boundsHalfWidth, contactNormal, orientedBoxesOverlap,
 	capsuleHalfLength, shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap,
 	pointSegmentDistanceSquared, segmentBoxDistanceSquared, segmentSegmentDistanceSquared,
 } from '../shapes';
+import type { Vector } from '../shapes';
 import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../../components/body-component';
 
 const QUARTER_TURN = Math.PI / 2;
 const EIGHTH_TURN = Math.PI / 4;
+const HALF_ROOT_TWO = Math.SQRT1_2;
 
 // Checks each pair from both sides: overlap is symmetric, so swapping the arguments must agree.
 function overlaps(
@@ -16,6 +18,23 @@ function overlaps(
 	const forwards = shapesOverlap(aShape, aX, aY, aWidth, aHeight, aAngle, bShape, bX, bY, bWidth, bHeight, bAngle);
 	const backwards = shapesOverlap(bShape, bX, bY, bWidth, bHeight, bAngle, aShape, aX, aY, aWidth, aHeight, aAngle);
 	expect(forwards).toEqual(backwards);
+
+	return forwards;
+}
+
+// Checks each pair from both sides: the normal is the way a is pushed off b, so swapping the arguments must give
+// the same direction turned round.
+function normalOf(
+	aShape: number, aX: number, aY: number, aWidth: number, aHeight: number, aAngle: number,
+	bShape: number, bX: number, bY: number, bWidth: number, bHeight: number, bAngle: number,
+): Vector {
+	const forwards: Vector = { x: 0, y: 0 };
+	const backwards: Vector = { x: 0, y: 0 };
+	expect(contactNormal(aShape, aX, aY, aWidth, aHeight, aAngle, bShape, bX, bY, bWidth, bHeight, bAngle, forwards)).toEqual(true);
+	expect(contactNormal(bShape, bX, bY, bWidth, bHeight, bAngle, aShape, aX, aY, aWidth, aHeight, aAngle, backwards)).toEqual(true);
+	expect(backwards.x).toBeCloseTo(-forwards.x);
+	expect(backwards.y).toBeCloseTo(-forwards.y);
+	expect(forwards.x * forwards.x + forwards.y * forwards.y).toBeCloseTo(1);
 
 	return forwards;
 }
@@ -397,6 +416,98 @@ describe('shapes', () => {
 			it('still overlaps a circle whose height was never set', () => {
 				// A circle is its width, so a height of 0 says nothing; a shape-blind check would drop this one.
 				expect(overlaps(SHAPE_CIRCLE, 0, 0, 10, 0, 0, SHAPE_RECTANGLE, 0, 0, 10, 10, 0)).toEqual(true);
+			});
+		});
+	});
+
+	describe('contact normal', () => {
+		describe('rectangle to rectangle', () => {
+			it('leaves along the face that was hit', () => {
+				const normal = normalOf(SHAPE_RECTANGLE, 0, 0, 10, 10, 0, SHAPE_RECTANGLE, 9, 0, 10, 10, 0);
+				expect(normal.x).toBeCloseTo(-1);
+				expect(normal.y).toBeCloseTo(0);
+			});
+
+			it('follows a turned face rather than the nearest world axis', () => {
+				// A wall laid along the diagonal with a small box resting on its upper face: the way out is square
+				// to that face. Going by the boxes' axis-aligned bounds, which is what a turned wall fills a lot of,
+				// this comes out straight up instead and a box travelling along the wall never bounces at all.
+				const normal = normalOf(
+					SHAPE_RECTANGLE, -2.4, 2.4, 2, 2, 0,
+					SHAPE_RECTANGLE, 0, 0, 100, 4, EIGHTH_TURN,
+				);
+				expect(normal.x).toBeCloseTo(-HALF_ROOT_TWO, 2);
+				expect(normal.y).toBeCloseTo(HALF_ROOT_TWO, 2);
+			});
+
+			it('takes the shallower of two faces it is over', () => {
+				// 3 deep in x against 2 in y: the pair parts sooner upwards, so that is the face.
+				const normal = normalOf(SHAPE_RECTANGLE, 0, 0, 10, 5, 0, SHAPE_RECTANGLE, 7, 3, 10, 5, 0);
+				expect(normal.x).toBeCloseTo(0);
+				expect(normal.y).toBeCloseTo(-1);
+			});
+		});
+
+		describe('round to round', () => {
+			it('is the line between two circles\' centres', () => {
+				const normal = normalOf(SHAPE_CIRCLE, 0, 0, 10, 10, 0, SHAPE_CIRCLE, 6, 8, 10, 10, 0);
+				expect(normal.x).toBeCloseTo(-0.6);
+				expect(normal.y).toBeCloseTo(-0.8);
+			});
+
+			it('is across the gap between two capsules\' cores, not their centres', () => {
+				// Laid side by side but offset along their length: the cores are still parallel, so they part
+				// straight across however far apart the centres have slid.
+				const normal = normalOf(SHAPE_CAPSULE, 0, 0, 40, 10, 0, SHAPE_CAPSULE, 12, 9, 40, 10, 0);
+				expect(normal.x).toBeCloseTo(0);
+				expect(normal.y).toBeCloseTo(-1);
+			});
+
+			it('leaves two circles on top of each other with no direction at all', () => {
+				const out: Vector = { x: 0, y: 0 };
+				expect(contactNormal(SHAPE_CIRCLE, 0, 0, 10, 10, 0, SHAPE_CIRCLE, 0, 0, 10, 10, 0, out)).toEqual(false);
+			});
+		});
+
+		describe('rectangle to round', () => {
+			it('comes straight out of the face a circle rests on', () => {
+				const normal = normalOf(SHAPE_CIRCLE, 7, 1, 4, 4, 0, SHAPE_RECTANGLE, 0, 0, 10, 10, 0);
+				expect(normal.x).toBeCloseTo(1);
+				expect(normal.y).toBeCloseTo(0);
+			});
+
+			it('points off the corner a circle caught', () => {
+				const normal = normalOf(SHAPE_CIRCLE, 8, 8, 4, 4, 0, SHAPE_RECTANGLE, 0, 0, 10, 10, 0);
+				expect(normal.x).toBeCloseTo(HALF_ROOT_TWO);
+				expect(normal.y).toBeCloseTo(HALF_ROOT_TWO);
+			});
+
+			it('is the face of a long wall, not the line to its far-off centre', () => {
+				const normal = normalOf(SHAPE_CIRCLE, 300, 6, 4, 4, 0, SHAPE_RECTANGLE, 0, 0, 1000, 10, 0);
+				expect(normal.x).toBeCloseTo(0);
+				expect(normal.y).toBeCloseTo(1);
+			});
+
+			it('follows the wall round as it turns', () => {
+				const normal = normalOf(
+					SHAPE_CIRCLE, -4, 4, 4, 4, 0,
+					SHAPE_RECTANGLE, 0, 0, 1000, 4, EIGHTH_TURN,
+				);
+				expect(normal.x).toBeCloseTo(-HALF_ROOT_TWO, 2);
+				expect(normal.y).toBeCloseTo(HALF_ROOT_TWO, 2);
+			});
+
+			it('pushes a circle sunk inside a box out of its nearest face', () => {
+				// No gap left to point along: the shallowest way out wins, which is up through the low, wide box.
+				const normal = normalOf(SHAPE_CIRCLE, 1, 1, 2, 2, 0, SHAPE_RECTANGLE, 0, 0, 10, 4, 0);
+				expect(normal.x).toBeCloseTo(0);
+				expect(normal.y).toBeCloseTo(1);
+			});
+
+			it('pushes a capsule run straight through a box out across its core', () => {
+				const normal = normalOf(SHAPE_CAPSULE, 0, 0, 100, 2, 0, SHAPE_RECTANGLE, 0, 0, 10, 10, 0);
+				expect(normal.x).toBeCloseTo(0);
+				expect(Math.abs(normal.y)).toBeCloseTo(1);
 			});
 		});
 	});
