@@ -401,11 +401,13 @@ world.addSystem(new PhysicsSystem<Components, GameUpdateComponents>(world, {
 `createPhysicsUpdate` stamps what it needs onto the function it returns, so `optional` and the collidable
 query come across with `updateFunction` and never have to be repeated on the system.
 
-**Per entity, not per pair.** The callback fires for the entity that *moved*, once for each thing it ended up
-on top of. `self` is that entity, with every block the system asked for; `other` is what it hit, where only
-`transform` is guaranteed. Two moving entities that run into each other therefore get one call each with the
-roles swapped - which is what lets a callback act on itself and leave the other side to its own call. An
-entity with no velocity is never `self`, because the system never moves it, but it is still found as `other`.
+**Once per pair, per run.** Both sides of a contact find it - one by sweeping into it, the other by overlapping
+it on its own turn - and the callback fires once, for whichever got there first. `self` is that entity, with
+every block the system asked for; `other` is the one it hit, where only `transform` is guaranteed. **The other
+side gets no call of its own**, so a callback that only touches `self` leaves it untouched: apply damage, tag a
+kill, or raise an event for *both* entities in the one call. Which of the two is `self` follows update order
+and is not something to depend on. An entity with no velocity is never `self`, because the system never moves
+it, but it is still found as `other`.
 
 Writes go straight into shared memory, so a callback can bounce an entity by flipping its velocity, or push a
 value another thread also touches with the atomics from `@daneren2005/shared-memory-objects`. To reach past

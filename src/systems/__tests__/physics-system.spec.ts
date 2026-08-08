@@ -316,9 +316,10 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 		await run(ONE_SECOND);
 
-		// Both moved, so both got their own call: self damage plus the other damage from the entity that hit them.
-		expect(first.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
-		expect(second.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
+		// One call for the pair, whichever side reached the contact first: it takes the self damage, the other side
+		// the other damage. The pair is not reported again from the second entity's turn.
+		expect(first.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE);
+		expect(second.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
 	});
 
 	it('leaves entities that are not touching alone', async () => {
@@ -437,10 +438,11 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 		await run(ONE_SECOND);
 
-		// The attack landed on both, taking self damage once for each.
-		expect(attack.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE * 2 - OTHER_DAMAGE * 2);
-		expect(ground.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
-		expect(air.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
+		// Two contacts, one call each, both claimed by the attack: it takes the self damage twice and deals the
+		// other damage to each of the two it landed on.
+		expect(attack.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE * 2);
+		expect(ground.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
+		expect(air.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
 	});
 
 	it('leaves an entity with a category of 0 out of collisions entirely', async () => {
@@ -465,8 +467,8 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 		ground.components.body!.collideMask = AIR | PROJECTILE;
 		await run(ONE_SECOND);
 
-		expect(ground.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
-		expect(air.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
+		expect(ground.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE);
+		expect(air.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
 	});
 
 	it('takes the entity\'s rotation into account', async () => {
@@ -480,8 +482,8 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 		second.components.transform!.angle = Math.PI / 2;
 		await run(ONE_SECOND);
 
-		expect(first.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
-		expect(second.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
+		expect(first.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE);
+		expect(second.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
 	});
 
 	it('collides an entity in the same run its movement drove it in', async () => {

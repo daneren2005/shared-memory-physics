@@ -11,8 +11,8 @@ import {
 } from '../components/interpolation-component';
 import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
-import CollisionBroadphase, { COLLIDABLE_QUERY, type CollisionFunction, type MovingEntity } from './collision';
-import { bounce } from './bounce';
+import CollisionBroadphase, { COLLIDABLE_QUERY, type CollisionEntity, type CollisionFunction, type MovingEntity } from './collision';
+import { bouncePair } from './bounce';
 
 // The per-run data object every physics update is handed: the base one plus the step counter the interpolation
 // component is stamped with. PhysicsSystem fills `tick` from addDataToWorld, so a subclass adding data must
@@ -109,7 +109,9 @@ export function createPhysicsUpdate<
 			startInterpolationStep(interpolation, components.transform, world.elapsedTime);
 
 			// No tree means this update was called by hand without preRun: nothing to sweep against, plain move.
-			if(!broadphase) {
+			// Bound locally so it stays narrowed inside the overlap callback below.
+			const tree = broadphase;
+			if(!tree) {
 				move(entityId, components.transform, moveX, moveY, callbacks, world.reportMoves);
 				finishInterpolationStep(interpolation, world.tick);
 
@@ -124,35 +126,31 @@ export function createPhysicsUpdate<
 			// resolves with or without a callback - coming to rest is what physics does about a collision,
 			// onCollision is what the game does. A non-bouncing entity slides along a single axis off a corner; a
 			// bouncing one does not, since it is about to turn around off the face it hit.
-			const moved = broadphase.resolveMove(self, moveX, moveY, !bouncing);
+			const moved = tree.resolveMove(self, moveX, moveY, !bouncing);
 			move(entityId, components.transform, moved.moveX, moved.moveY, callbacks, world.reportMoves);
 			// Before any callback, so the stamp covers exactly the pair physics produced. A callback that writes
 			// the transform is a game move, blended towards next frame like a teleport.
 			finishInterpolationStep(interpolation, world.tick);
 
-			if(!bouncing && !onCollision) {
+			// A non-bouncing entity still has to look, since what it ran into may bounce off it.
+			if(!tree.hasBounciness && !onCollision) {
 				return;
 			}
 
 			// Handled after the entity is put down, so both bounce and callback act on where it ended up; the
-			// flipped velocity is applied by the next run. Only the mover is touched; what it hit gets its own turn.
-			broadphase.forEachOverlapping(self, other => {
-				if(bouncing) {
-					bounce(self, other);
-				}
-				if(onCollision) {
-					onCollision(world, self, other, queries, callbacks);
+			// flipped velocity is applied by the next run. A contact is resolved once per run, by whichever side
+			// reached it first - claimContact is what makes the second side's turn a no-op.
+			tree.forEachOverlapping(self, other => {
+				if(tree.claimContact(entityId, other.entityId)) {
+					resolveContact(world, self, other, queries, callbacks, onCollision);
 				}
 			});
 
 			// Then what the move was stopped against, which the overlap check cannot find: the entity rests
 			// touching it, not through it. The two lists never share an entry.
 			for(const other of moved.blocking) {
-				if(bouncing) {
-					bounce(self, other);
-				}
-				if(onCollision) {
-					onCollision(world, self, other, queries, callbacks);
+				if(tree.claimContact(entityId, other.entityId)) {
+					resolveContact(world, self, other, queries, callbacks, onCollision);
 				}
 			}
 		},
@@ -172,6 +170,27 @@ export function createPhysicsUpdate<
 	};
 
 	return update;
+}
+
+// Everything a contact means, applied once for the pair: both sides turned around by their own bounciness, then
+// the one callback. `self` is whichever side reached the contact first, so a game acting on only one of the two
+// would leave the other untouched half the time - the callback has to decide for both.
+function resolveContact<
+	C extends ComponentMap,
+	T extends PhysicsUpdateComponents & EntityUpdateComponents<C>,
+	W extends PhysicsWorld,
+>(
+	world: W,
+	self: MovingEntity<T>,
+	other: CollisionEntity<T>,
+	queries: EntityQueryComponents<C>,
+	callbacks: ComponentSystemCallbacks<C>,
+	onCollision?: CollisionFunction<C, T, W>,
+): void {
+	bouncePair(self, other);
+	if(onCollision) {
+		onCollision(world, self, other, queries, callbacks);
+	}
 }
 
 // Movement only, and the only way to get movement with no collision detection: walks an entity straight through

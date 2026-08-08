@@ -44,7 +44,7 @@ main thread                              worker thread (optional)
 | `systems/physics-system.ts` | Main-thread `ComponentSystem`: gathers entities, decides which queries/blocks travel, stamps `tick`, gates move-reporting. Fixed step default. | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig` |
 | `systems/physics-update.ts` | The per-entity update run on either backend. `physicsUpdate` = movement only; `createPhysicsUpdate` = sweeping + native bounce + `onCollision`. Owns the interpolation publish protocol and the atomic move. | `physicsUpdate`, `createPhysicsUpdate`, `POSITION_UPDATED_EVENT`, `PhysicsWorld` |
 | `systems/collision.ts` | Broadphase (flatbush R-tree bucketed by collide category) + narrowphase sweep/overlap. | `CollisionBroadphase`, `COLLIDABLE_QUERY`, `MoveResult`, `SweepResult` |
-| `systems/bounce.ts` | Native reflect-off-contact used by the sweep when an entity has bounciness. | `bounce` (internal) |
+| `systems/bounce.ts` | Native reflect-off-contact used by the sweep when an entity has bounciness. Applied to both sides of a contact. | `bouncePair`, `bounce` (internal) |
 | `systems/spatial-index.ts` | Same R-tree without collide categories — targeting / range / nearest queries. Snapshot per run. | `SpatialIndex`, `SpatialFilter` |
 | `systems/interpolation-system.ts` | Main-thread system that runs the per-frame render-position lerp. | `InterpolationSystem`, `InterpolationSystemConfig` |
 | `systems/interpolation-update.ts` | The lerp itself (`render = prev + (current-prev)*alpha`), runnable in a worker too. | `interpolationUpdate` |
@@ -66,8 +66,21 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
   to in the same instant; a plain read-modify-write would drop a move.
 - **`POSITION_UPDATED_EVENT` carries only ids**, as one array per run (never per entity — that's the
   whole point). The worker only pays for it when someone is listening (`reportMoves`).
-- **Collision is per moved entity, not per pair.** Callback fires for `self` (the mover), once per
-  thing it landed on. Two movers colliding = one call each, roles swapped. Filtering is symmetric.
+- **A contact is resolved once per pair per run.** Both sides find it — one sweeping into it, the
+  other overlapping it on its own turn — and `CollisionBroadphase.claimContact` gives it to whichever
+  looked first; the second side's turn is a no-op. So `onCollision` fires **once**, and a callback
+  must act on *both* `self` and `other`: the other side gets no call of its own. Which one is `self`
+  follows update order. Filtering is symmetric. The claim set lives on the broadphase because that is
+  what a run is scoped to — `preRun` builds a new one, so nothing has to be cleared.
+- **The native bounce turns both sides around** in that one resolution, each by its own bounciness,
+  because the sweep leaves the pair *touching* rather than overlapping — the entity that was run into
+  would never find the contact on its own turn, and one that died mid-run is filtered out of the tree
+  before it could. A mover with no bounciness therefore still runs the overlap pass when *anything*
+  in the run is bouncy (`CollisionBroadphase.hasBounciness`). The bounce is a reflection, not an
+  impulse: a still entity has no velocity into the surface, so nothing is transferred to it.
+- **Self is not re-checked for death between contacts.** The `DEAD_INDEX` guard runs once at the top
+  of the update, and `forEachCandidate` filters dead *others*. An entity that wedges between two
+  things in one run and dies on the first still resolves the second.
 - **Render position (`interpolation`) is read-only for rendering.** Anything deterministic (AI,
   targeting, saves) must read `transform`; the render position depends on local frame timing.
 - **Only capsules must name their `shape`**; circle vs rectangle is inferred from `radius` vs

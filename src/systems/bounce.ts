@@ -3,12 +3,19 @@ import { BOUNCINESS_INDEX } from '../components/bounciness-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import { shapeHalfHeight, shapeHalfWidth } from '../math/shapes';
-import type { PhysicsUpdateComponents } from '../components/registry';
-import type { CollisionEntity, MovingEntity } from './collision';
 
 interface Vector {
 	x: number
 	y: number
+}
+
+interface BounceEntity {
+	components: {
+		transform: Float32Array
+		velocity?: Float32Array
+		bounciness?: Float32Array
+		body?: Uint32Array
+	}
 }
 
 // Scratch, reused rather than allocated: a run is one unbroken pass, never re-entered part way through.
@@ -16,12 +23,19 @@ const NORMAL: Vector = { x: 0, y: 0 };
 const SELF_HALF: Vector = { x: 0, y: 0 };
 const OTHER_HALF: Vector = { x: 0, y: 0 };
 
+// Turns both sides of a contact around, each by its own bounciness
+export function bouncePair(self: BounceEntity, other: BounceEntity): void {
+	bounce(self, other);
+	bounce(other, self);
+}
+
 // Turns `self` around off `other` and writes the new heading into its velocity block. `bounciness` is how much
 // of the speed into the surface comes back: 1 reflects perfectly, 0 cancels it (slide along the surface) - see
-// BouncinessComponent. Only `self` is touched; two movers that hit each other each get their own swapped call.
-export function bounce<T extends PhysicsUpdateComponents>(self: MovingEntity<T>, other: CollisionEntity<T>): void {
+// BouncinessComponent. Only `self` is touched.
+export function bounce(self: BounceEntity, other: BounceEntity): void {
 	const bounciness = self.components.bounciness;
-	if(!bounciness) {
+	const velocity = self.components.velocity;
+	if(!bounciness || !velocity) {
 		return;
 	}
 
@@ -35,7 +49,6 @@ export function bounce<T extends PhysicsUpdateComponents>(self: MovingEntity<T>,
 		return;
 	}
 
-	const velocity = self.components.velocity;
 	const velocityX = velocity[VELOCITY_X_INDEX];
 	const velocityY = velocity[VELOCITY_Y_INDEX];
 
@@ -55,7 +68,7 @@ export function bounce<T extends PhysicsUpdateComponents>(self: MovingEntity<T>,
 
 // Which way `self` is pushed off `other`, as a unit vector, or false when the two are exactly on top of each
 // other and there is no such direction.
-function collisionNormal<T extends PhysicsUpdateComponents>(self: MovingEntity<T>, other: CollisionEntity<T>, out: Vector): boolean {
+function collisionNormal(self: BounceEntity, other: BounceEntity, out: Vector): boolean {
 	const selfTransform = self.components.transform;
 	const otherTransform = other.components.transform;
 	const dx = selfTransform[TRANSFORM_X_INDEX] - otherTransform[TRANSFORM_X_INDEX];

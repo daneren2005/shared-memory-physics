@@ -39,9 +39,10 @@ export interface CollisionEntity<T extends PhysicsUpdateComponents> {
 }
 
 // What a game runs when one entity moves into another. Runs on the physics thread, so it is a plain function
-// over the raw blocks and reaches the main thread only through `callbacks`. Called per entity right after it
-// moves: `self` just moved, `other` is what it landed on. Two movers that hit each other get one call each
-// with roles swapped, so each acts on itself. A velocity-less entity is never `self` but is found as `other`.
+// over the raw blocks and reaches the main thread only through `callbacks`. Called once per pair per run, right
+// after the mover is put down: `self` is whichever side reached the contact first, `other` is the other. Because
+// the other side gets no call of its own, a callback has to decide for both. A velocity-less entity is never
+// `self` but is found as `other`.
 export type CollisionFunction<C extends ComponentMap, T extends PhysicsUpdateComponents & EntityUpdateComponents<C>, W extends ComponentSystemWorld = ComponentSystemWorld> = (
 	world: W,
 	self: MovingEntity<T>,
@@ -68,6 +69,10 @@ export interface MoveResult<T extends PhysicsUpdateComponents> {
 
 // One shared empty array for the sweeps that find nothing, rather than one per entity per run.
 const NOTHING_BLOCKING: Array<never> = [];
+
+// Packs a pair of entity ids into one key. Ids must stay under this for the key to be unique, which a pool an
+// ECS can address leaves untouchable, and it keeps the product inside the safe integer range.
+const MAX_PAIR_ID = 2 ** 26;
 
 // A per-axis sweep that hit nothing: the whole axis, clear. Held once rather than rebuilt per clear axis.
 const CLEAR = { fraction: 1, blocking: NOTHING_BLOCKING };
@@ -110,6 +115,12 @@ interface CategoryBucket<T extends PhysicsUpdateComponents> {
 // category has no bucket, so Flatbush is never asked to index zero items.
 export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 	private buckets: Array<CategoryBucket<T>> = [];
+	// Whether anything in this run can bounce. Bounces are resolved for both sides of a contact, so an entity with
+	// no bounciness of its own still has to look at what it ran into - but only in a world where that can matter.
+	readonly hasBounciness: boolean = false;
+	// The pairs already resolved this run. Lives here rather than in the update because the tree is what a run is
+	// scoped to: preRun builds a new one, so the set is empty again for the next run with nothing to clear.
+	private resolved = new Set<number>();
 
 	constructor(entities: Array<{ entityId: number, components: EntityUpdateComponents }>, seconds: number) {
 		// Collected per category first because Flatbush needs its item count up front, which is only known once
@@ -145,6 +156,10 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			const halfWidth = shapeHalfWidth(shape, width, height, angle);
 			const halfHeight = shapeHalfHeight(shape, width, height, angle);
 
+			if(components.bounciness) {
+				this.hasBounciness = true;
+			}
+
 			const velocity = components.velocity;
 			const travelX = velocity ? Math.abs(velocity[VELOCITY_X_INDEX]) * seconds : 0;
 			const travelY = velocity ? Math.abs(velocity[VELOCITY_Y_INDEX]) * seconds : 0;
@@ -176,6 +191,20 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 
 			this.buckets.push({ category, entries, index });
 		}
+	}
+
+	// Claims a contact for the caller: true the first time this run sees the pair, false every time after. Both
+	// sides find the same contact - one sweeping into it, the other overlapping it on its own turn - and it is
+	// resolved once, by whichever got there first, so nothing is bounced or reported twice.
+	claimContact(a: number, b: number): boolean {
+		const key = a < b ? a * MAX_PAIR_ID + b : b * MAX_PAIR_ID + a;
+		if(this.resolved.has(key)) {
+			return false;
+		}
+
+		this.resolved.add(key);
+
+		return true;
 	}
 
 	// Runs `handle` for everything `self` really overlaps, having just moved. The tree narrows the field, then

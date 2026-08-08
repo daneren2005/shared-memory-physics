@@ -353,10 +353,17 @@ describe('createPhysicsUpdate', () => {
 	});
 
 	it('still reports two entities that are simply sitting on top of each other', () => {
-		// Neither moves, so this is the overlap check: one call each, roles swapped.
+		// Neither moves, so this is the overlap check. Both find the pair; only the first to look reports it.
 		const result = run([{ x: 0, y: 0 }, { x: 5, y: 0 }]);
 
-		expect(result.pairs()).toEqual([[1, 2], [2, 1]]);
+		expect(result.pairs()).toEqual([[1, 2]]);
+	});
+
+	it('reports a head-on pair once, from whichever side reached the contact first', () => {
+		// The mover claims the contact, so the entity it ran into does not report the same pair on its own turn.
+		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0, velocityX: -5 }]);
+
+		expect(result.pairs()).toEqual([[1, 2]]);
 	});
 
 	it('gives the entity that moves first the clear road', () => {
@@ -544,10 +551,124 @@ describe('createPhysicsUpdate bounce', () => {
 		expect(result.velocityX(1)).toEqual(25);
 	});
 
+	// Two bouncy units closing head-on, each losing 1 health to the contact and dying at 0 - the shape of a game
+	// built on the one-call-per-pair contract. The far unit is slow enough not to overshoot the near one once it
+	// has been turned around, which would hide the second half of the pair behind the tunnelling gap.
+	describe('with a callback that damages both sides and kills at zero', () => {
+		function runDamage(health: Record<number, number>) {
+			const entities = [
+				createUnit({ x: 0, y: 0, velocityX: 25, bounciness: 1 }, 1),
+				createUnit({ x: 30, y: 0, velocityX: -5, bounciness: 1 }, 2),
+			];
+			const remaining = { ...health };
+			// Every kill the callback claimed, in order, so claiming one twice is visible rather than idempotent.
+			const deaths: Array<number> = [];
+			function damage(entityId: number, entity: Uint32Array | undefined) {
+				remaining[entityId] -= 1;
+				if(remaining[entityId] <= 0 && entity) {
+					entity[DEAD_INDEX] = 1;
+					deaths.push(entityId);
+				}
+			}
+
+			const update = createPhysicsUpdate({
+				onCollision(_world, self, other) {
+					damage(self.entityId, self.components.entity);
+					damage(other.entityId, other.components.entity);
+				},
+			});
+
+			const world: PhysicsWorld = { gameTime: 0, elapsedTime: 1000, tick: 1 };
+			const queries = { [COLLIDABLE_QUERY]: entities };
+			const ignored: ComponentSystemCallbacks = {
+				entityComponentChanged: () => {},
+				emitEntityEvent: () => {},
+				emitSystemEvent: () => {},
+				entityDied: () => {},
+				createEntity: () => {},
+			};
+
+			update.preRun!(world, entities, queries, ignored);
+			for(const entity of entities) {
+				update(world, entity.entityId, entity.components, queries, ignored);
+			}
+
+			return {
+				deaths,
+				velocityX: (entityId: number) => entities[entityId - 1].components.velocity[VELOCITY_X_INDEX],
+			};
+		}
+
+		it('claims each death once when both die of the contact', () => {
+			const result = runDamage({ 1: 1, 2: 1 });
+
+			expect(result.deaths).toEqual([1, 2]);
+		});
+
+		it('bounces the survivor when the entity that hit it dies', () => {
+			// The bounce lands before the callback, so the survivor is already turned around when its killer dies
+			// and drops out of the tree - where the old one-sided bounce left it flying on through the corpse.
+			const result = runDamage({ 1: 1, 2: 5 });
+
+			expect(result.deaths).toEqual([1]);
+			expect(result.velocityX(2)).toBeCloseTo(5, 3);
+		});
+
+		it('bounces the survivor when the entity it hit dies', () => {
+			const result = runDamage({ 1: 5, 2: 1 });
+
+			expect(result.deaths).toEqual([2]);
+			expect(result.velocityX(1)).toBeCloseTo(-25, 3);
+		});
+
+		it('bounces both and kills neither when both live', () => {
+			const result = runDamage({ 1: 5, 2: 5 });
+
+			expect(result.deaths).toEqual([]);
+			expect(result.velocityX(1)).toBeCloseTo(-25, 3);
+			expect(result.velocityX(2)).toBeCloseTo(5, 3);
+		});
+	});
+
 	it('does not bounce a full-bounciness unit off a sensor', () => {
 		// Nothing bounces off a sensor, so the mover keeps its heading and sails through.
 		const result = run([{ x: 0, y: 0, velocityX: 25, bounciness: 1 }, { x: 30, y: 0, sensor: true }]);
 
 		expect(result.velocityX(1)).toEqual(25);
+	});
+
+	it('bounces the unit that was run into, which took its own turn first and found nothing', () => {
+		// The crawler runs before the mover reaches it, so its own sweep is clear; by the time it is hit the two
+		// only touch, which the overlap test never reports. The contact has to turn both around at once or the
+		// crawler keeps heading in and the pair never separates.
+		const result = run([
+			{ x: 30, y: 0, velocityX: -0.5, bounciness: 1 },
+			{ x: 0, y: 0, velocityX: 25, bounciness: 1 },
+		]);
+
+		expect(result.velocityX(1)).toBeCloseTo(0.5, 3);
+		expect(result.velocityX(2)).toBeCloseTo(-25, 3);
+	});
+
+	it('bounces the unit that was run into even when the mover does not bounce itself', () => {
+		// Bounciness belongs to whichever side carries it, so a dead-weight mover still sends a bouncy unit back.
+		const result = run([
+			{ x: 30, y: 0, velocityX: -0.5, bounciness: 1 },
+			{ x: 0, y: 0, velocityX: 25 },
+		]);
+
+		expect(result.velocityX(1)).toBeCloseTo(0.5, 3);
+		expect(result.velocityX(2)).toEqual(25);
+	});
+
+	it('does not bounce a unit a second time on its own turn', () => {
+		// Both were turned around by the first contact; the second one to run must not reflect back into the first.
+		const result = run([
+			{ x: 0, y: 0, velocityX: 25, bounciness: 1 },
+			{ x: 30, y: 0, velocityX: -25, bounciness: 1 },
+		]);
+
+		expect(result.velocityX(1)).toBeCloseTo(-25, 3);
+		expect(result.velocityX(2)).toBeCloseTo(25, 3);
 	});
 });
