@@ -14,37 +14,25 @@ import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-compo
 import CollisionBroadphase, { COLLIDABLE_QUERY, type CollisionFunction, type MovingEntity } from './collision';
 import { bounce } from './bounce';
 
-// The per-run data object every physics update is handed, which is the base one plus the step counter the
-// interpolation component is stamped with.  PhysicsSystem fills `tick` in from `addDataToWorld`, so a game that
-// subclasses the system to add data of its own widens this rather than replacing it - and **must call
-// `super.addDataToWorld(world)`**, or nothing gets a tick and interpolation stops noticing new steps.
+// The per-run data object every physics update is handed: the base one plus the step counter the interpolation
+// component is stamped with. PhysicsSystem fills `tick` from addDataToWorld, so a subclass adding data must
+// call `super.addDataToWorld(world)` or nothing gets a tick and interpolation stops noticing new steps.
 export interface PhysicsWorld extends ComponentSystemWorld {
-	// Which physics step this is, counted up once per run.  Only ever compared for equality: it is the
-	// publication stamp the interpolation block is read through, not a clock.
+	// Which physics step this is, bumped per run. Only compared for equality - a publication stamp, not a clock.
 	tick: number
-	// Whether to report this run's moves through POSITION_UPDATED_EVENT.  Set by PhysicsSystem from whether
-	// anything is actually listening, because the cost of the event is paid in the **worker** - an id per moved
-	// entity pushed into an array, and that array structured-cloned back across the boundary - long before a
-	// listener would have got the chance not to exist.  Undefined means report, so an update driven by hand
-	// behaves as it always did.
+	// Whether to report this run's moves. Set by PhysicsSystem from whether anything is listening, since the cost
+	// is paid in the worker (an id per moved entity, cloned across the boundary). Undefined means report.
 	reportMoves?: boolean
 }
 
-// The event a move is reported through, emitted on the **system** on the main thread once the run that moved
-// them completes, carrying the ids of everything that moved in that run:
+// The event a move is reported through, emitted on the system on the main thread once the run completes,
+// carrying the ids of everything that moved:
 //
-//   physicsSystem.on(POSITION_UPDATED_EVENT, (entityIds: Array<number>) => {
-//     for(const eid of entityIds) { ... }
-//   });
+//   physicsSystem.on(POSITION_UPDATED_EVENT, (entityIds: Array<number>) => { ... });
 //
-// Nearly every entity a physics system owns moves on nearly every run, which rules out reporting the moves
-// one entity at a time: an event object apiece in the worker, cloned across the boundary, then an eid lookup
-// and an emit apiece on the main thread costs more, at a few thousand entities, than moving them did.  So a
-// run's moves are reported as one array of ids on the system instead - see emitSystemEvent in the ECS.
-//
-// No position travels with the id.  The transform is a SharedArrayBuffer block, so where the entity ended up
-// is already on the main thread the moment the worker writes it; a listener reads it off
-// `entity.components.transform` (or straight off the block) rather than being handed a copy of what it has.
+// Reported as one id array per run rather than per entity, since nearly everything moves nearly every run. No
+// position travels with the id: the transform is a SharedArrayBuffer block already on the main thread, so a
+// listener reads it off `entity.components.transform`.
 export const POSITION_UPDATED_EVENT = 'position-updated';
 
 // What a game asks createPhysicsUpdate for on top of plain movement.
@@ -53,24 +41,19 @@ export interface PhysicsUpdateOptions<
 	T extends PhysicsUpdateComponents & EntityUpdateComponents<C>,
 	W extends PhysicsWorld = PhysicsWorld,
 > {
-	// Run for each entity that has moved into another one, straight after its own move.  Optional: an update
-	// with no callback still sweeps, so leaving it off asks for movement that comes to rest against whatever is
-	// in the way and decides nothing about it.
+	// Run for each entity that moved into another, straight after its own move. Optional: an update with no
+	// callback still sweeps and comes to rest against what is in the way, it just decides nothing about it.
 	onCollision?: CollisionFunction<C, T, W>
-	// Extra components to hand the update - and so the collision callback - beyond the transform and velocity
-	// physics itself needs.  A game that wants to take damage on collision lists its health component here so
-	// that block travels to the worker alongside the transform.  They are optional per entity: an entity that
-	// does not have one is still moved, and still collides, it just arrives without that block.
+	// Extra components to hand the update, and so the callback, beyond transform and velocity. List a health
+	// component here to take damage on collision. Optional per entity: one without it is still moved and collided.
 	optional?: Array<keyof C & string>
 }
 
-// What PhysicsSystem needs to know about an update function to set up the same components and queries the
-// function expects.  Stamped on by createPhysicsUpdate so a game declares its collision setup in the one
-// module both its worker file and its main thread system import, with no chance of the two drifting apart.
+// What PhysicsSystem needs to know about an update to set up its components and queries. Stamped on by
+// createPhysicsUpdate so a game declares its collision setup once, in the module both backends import.
 export interface PhysicsUpdateMetadata<C extends ComponentMap> {
-	// Whether the update needs the collidable query - everything with a transform and a body, whether it moves
-	// or not.  Always true for an update built by createPhysicsUpdate, which always sweeps; the bare
-	// physicsUpdate carries no metadata at all and so never asks for it.
+	// Whether the update needs the collidable query. Always true for createPhysicsUpdate, which always sweeps;
+	// the bare physicsUpdate carries no metadata and never asks for it.
 	collision: boolean
 	optional: Array<keyof C & string>
 }
@@ -83,38 +66,29 @@ export type PhysicsUpdateFunction<
 	physics: PhysicsUpdateMetadata<C>
 };
 
-// Builds the update function a game runs physics through when it wants its entities to notice each other.
-// The result is a plain EntityUpdateFunction, so it goes to both backends the same way the bare physicsUpdate
-// does - handed to createComponentWorker in the game's worker file, and to PhysicsSystem as its
-// `updateFunction` for the in-process fallback:
+// Builds the update a game runs physics through when it wants its entities to notice each other. The result is
+// a plain EntityUpdateFunction that goes to both backends: createComponentWorker in the worker file, and
+// PhysicsSystem's `updateFunction` for the in-process fallback.
 //
-//   // game-physics-update.ts - imported by both the worker file and the main thread system
 //   export const gamePhysicsUpdate = createPhysicsUpdate<Components, GameUpdateComponents>({
 //     optional: ['health'],
 //     onCollision(world, a, b, queries, callbacks) { ... },
 //   });
 //
-// **Every update built here sweeps**, so an entity always comes to rest against what is in its way rather than
-// ending up inside it.  The callback is on top of that and is optional - `createPhysicsUpdate()` with nothing
-// at all is movement that stops against things and says nothing about them, which is what a game wants for
-// terrain and walls.  Movement that walks straight through everything is the bare physicsUpdate below.
-//
-// A callback cannot be sent to a worker (functions do not survive postMessage), which is why it is baked in
-// here rather than passed to PhysicsSystem: the worker file imports this module and gets the callback with it.
+// Every update built here sweeps, so an entity comes to rest against what is in its way. The callback is on top
+// and optional; movement that walks through everything is the bare physicsUpdate below. The callback is baked
+// in rather than passed to PhysicsSystem because functions do not survive postMessage to the worker.
 export function createPhysicsUpdate<
-	// Constrained to a map that has the physics components in it rather than to any map at all, because the
-	// blocks the update works on - `T` below - are the game's own components narrowed to the transform and
-	// velocity it moves, so the map has to be able to see those two in there.  Every game already spreads
-	// physicsRegistry into its own, which is the same requirement PhysicsSystem makes.
+	// Constrained to a map holding the physics components because `T` is the game's components narrowed to
+	// transform and velocity; every game already spreads physicsRegistry into its own, as PhysicsSystem requires.
 	C extends ComponentMap & PhysicsComponents = PhysicsComponents,
 	T extends PhysicsUpdateComponents & EntityUpdateComponents<C> = PhysicsUpdateComponents & EntityUpdateComponents<C>,
 	W extends PhysicsWorld = PhysicsWorld,
 >(options: PhysicsUpdateOptions<C, T, W> = {}): PhysicsUpdateFunction<C, T, W> {
 	const { onCollision, optional = [] } = options;
 
-	// Built by preRun and read back by each entity update that follows it, which is the whole reason it can be
-	// a plain closure variable: a run is one unbroken pass - preRun, then every entity, then done - so there is
-	// never a second run part way through this one to overwrite it.
+	// Built by preRun, read by each entity update after it. Safe as a closure variable because a run is one
+	// unbroken pass - preRun, then every entity - never re-entered part way through.
 	let broadphase: CollisionBroadphase<T> | undefined;
 
 	const update: PhysicsUpdateFunction<C, T, W> = Object.assign(
@@ -130,13 +104,11 @@ export function createPhysicsUpdate<
 			const moveX = components.velocity[VELOCITY_X_INDEX] * seconds;
 			const moveY = components.velocity[VELOCITY_Y_INDEX] * seconds;
 
-			// Taken before anything is written, so the two ends of the segment a renderer blends along are this
-			// step's start and this step's end rather than positions from either side of it.
+			// Taken before anything is written, so the segment a renderer blends along runs from this step's start
+			// to its end.
 			startInterpolationStep(interpolation, components.transform, world.elapsedTime);
 
-			// preRun builds the tree before any entity is updated, so there is only nothing here for an update
-			// that was called by hand without one.  Nothing to sweep against then, and the move is the plain
-			// integration.
+			// No tree means this update was called by hand without preRun: nothing to sweep against, plain move.
 			if(!broadphase) {
 				move(entityId, components.transform, moveX, moveY, callbacks, world.reportMoves);
 				finishInterpolationStep(interpolation, world.tick);
@@ -144,39 +116,26 @@ export function createPhysicsUpdate<
 				return;
 			}
 
-			// A bounce off what it hit is native, so an entity turns around on contact without the game writing a
-			// callback for it: whether it bounces, and how much speed it keeps, is the bounciness component it
-			// carries (or does not).  It also decides how the move itself resolves - see below - so it is read
-			// before the move rather than after it.
+			// Native bounce turns an entity around on contact without a game callback; the bounciness component
+			// decides whether and how much. Read before the move because it also decides how the move resolves.
 			const bouncing = components.bounciness !== undefined;
 
-			// Where the entity may actually get to is worked out here, off the blocks rather than in them: the
-			// position is only written once the answer is known, so an entity is never inside another one - not
-			// even for the moment it would take to push it back out.
-			//
-			// The move is resolved whether or not the game gave a callback.  Coming to rest against what is in the
-			// way is what physics *does* about a collision; `onCollision` is what the game does about it, and
-			// plenty of games want the first without the second.  Movement that ignores everything around it is
-			// the bare physicsUpdate below rather than an option here.
-			//
-			// An entity that is not bouncing is let slide along a single axis where its diagonal is blocked, so it
-			// comes off a corner still moving rather than sticking to it.  A bouncing one is not: it is about to
-			// turn around off the face it hit, so skating along that face is the wrong answer for it.
+			// Resolved off the blocks and only written once known, so an entity is never inside another. The move
+			// resolves with or without a callback - coming to rest is what physics does about a collision,
+			// onCollision is what the game does. A non-bouncing entity slides along a single axis off a corner; a
+			// bouncing one does not, since it is about to turn around off the face it hit.
 			const moved = broadphase.resolveMove(self, moveX, moveY, !bouncing);
 			move(entityId, components.transform, moved.moveX, moved.moveY, callbacks, world.reportMoves);
-			// Straight after the move and before any callback, so the stamp covers exactly the pair physics itself
-			// produced.  A callback that goes on to write the transform is a move the game made rather than one
-			// this step did, and it is blended towards on the next frame the same way a teleport is.
+			// Before any callback, so the stamp covers exactly the pair physics produced. A callback that writes
+			// the transform is a game move, blended towards next frame like a teleport.
 			finishInterpolationStep(interpolation, world.tick);
 
 			if(!bouncing && !onCollision) {
 				return;
 			}
 
-			// Collisions are handled here, straight after the entity has been put down, so both the bounce and any
-			// callback act on where it has actually ended up rather than where it was - and the flipped velocity is
-			// applied by the next run's move.  Only the entity that moved is touched; whatever it hit gets its own
-			// turn when it moves, or never, if it is something the system does not move.
+			// Handled after the entity is put down, so both bounce and callback act on where it ended up; the
+			// flipped velocity is applied by the next run. Only the mover is touched; what it hit gets its own turn.
 			broadphase.forEachOverlapping(self, other => {
 				if(bouncing) {
 					bounce(self, other);
@@ -186,9 +145,8 @@ export function createPhysicsUpdate<
 				}
 			});
 
-			// Then whatever the move was stopped *against*, which the overlap check above cannot find by design:
-			// the entity was put down touching it rather than through it.  The two lists never share an entry, so
-			// nothing here has already bounced or had its callback.
+			// Then what the move was stopped against, which the overlap check cannot find: the entity rests
+			// touching it, not through it. The two lists never share an entry.
 			for(const other of moved.blocking) {
 				if(bouncing) {
 					bounce(self, other);
@@ -200,16 +158,15 @@ export function createPhysicsUpdate<
 		},
 		{
 			physics: {
-				// The sweep needs the collidable query whether or not anything is going to be told about what it
-				// found, so this is not `onCollision !== undefined`.
+				// The sweep needs the collidable query even with no callback, so this is not `onCollision !== undefined`.
 				collision: true,
 				optional,
 			},
 		},
 	);
 
-	// preRun is the one hook that sees every entity at once, which makes it the only place the tree can be
-	// built from a single consistent moment - before any of this run's movement has happened.
+	// preRun sees every entity at once, so it is the only place the tree can be built from one consistent moment,
+	// before any of this run's movement.
 	update.preRun = (world, entities, queries) => {
 		broadphase = new CollisionBroadphase<T>(queries[COLLIDABLE_QUERY] ?? [], world.elapsedTime / 1000);
 	};
@@ -217,18 +174,11 @@ export function createPhysicsUpdate<
 	return update;
 }
 
-// Shared update logic used by both ComponentSystem backends: the main-thread ComponentWebWorker runs it
-// directly (PhysicsSystem passes it as `updateFunction`), while a game's worker file imports it and hands it
-// to createComponentWorker.  Keeping it in one place means both paths run identical logic.
-//
-// This is movement only, and the *only* way to get movement with no collision detection at all: it walks an
-// entity straight through anything in its way, which is what a game wants for something that has no business
-// noticing the world - a drifting particle, a camera, a projectile that only its own system cares about.  A
-// game that wants entities stopped by each other, with or without a callback about it, builds its update with
-// createPhysicsUpdate above instead, which sweeps around this same move.
+// Movement only, and the only way to get movement with no collision detection: walks an entity straight through
+// anything in its way, for something that has no business noticing the world (a particle, a camera). For
+// entities stopped by each other, build the update with createPhysicsUpdate above, which sweeps around this move.
 export const physicsUpdate: EntityUpdateFunction<PhysicsComponents, PhysicsUpdateComponents, PhysicsWorld> = (world, entityId, components, queries, callbacks) => {
-	// elapsedTime is in milliseconds (what BaseWorld#update is driven with), while velocity is in world units
-	// per second - so convert before integrating.
+	// elapsedTime is ms, velocity is units per second.
 	const seconds = world.elapsedTime / 1000;
 	const interpolation = components.interpolation;
 
@@ -244,16 +194,10 @@ export const physicsUpdate: EntityUpdateFunction<PhysicsComponents, PhysicsUpdat
 	finishInterpolationStep(interpolation, world.tick);
 };
 
-// The half of publishing a step that has to happen *before* the move: where the entity is standing now becomes
-// the `prev` the next frame's render position is blended out of, along with how much simulated time the segment
-// between the two is going to cover.
-//
-// The duration is published rather than left to be assumed, because a run does not always cover one step: one
-// that comes back late leaves more than a step's worth of time banked and the next one takes two at once.  A
-// renderer dividing that segment by the step instead of by what it really covers draws it at double speed.
-//
-// Nothing is written for an entity without the component, which is what makes interpolation opt-in per entity
-// rather than a cost every world pays.
+// The half of publishing a step that happens before the move: where the entity stands now becomes the `prev`
+// the next frame blends out of, plus how much simulated time the segment covers. The duration is published
+// because a run does not always cover one step - a late run takes two at once - and a renderer dividing by the
+// fixed step would draw that at double speed. Nothing is written without the component, keeping it opt-in.
 function startInterpolationStep(interpolation: Float32Array | undefined, transform: Float32Array, elapsedTime: number): void {
 	if(!interpolation) {
 		return;
@@ -264,13 +208,10 @@ function startInterpolationStep(interpolation: Float32Array | undefined, transfo
 	interpolation[INTERPOLATION_DURATION_INDEX] = elapsedTime;
 }
 
-// And the half that has to happen after it.  Written unconditionally - outside `move`'s "did not go anywhere"
-// early return - so an entity pressed against a wall publishes a step where `prev` equals where it still is,
-// rather than going quiet and leaving a renderer blending against whatever it was doing before it stopped.
-//
-// The tick goes last and through storeFloat32, which is an `Atomics.store` through an Int32Array view of the
-// same memory: a release store, so a reader that sees this tick is guaranteed to also see the `prev` and the
-// transform that belong with it.  That is the whole publication protocol - see INTERPOLATION_TICK_INDEX.
+// The half after the move. Written unconditionally, so an entity pressed against a wall still publishes a step
+// (with `prev` where it is) rather than going quiet and leaving a renderer blending against stale data. The
+// tick goes last through storeFloat32 - a release store, so a reader that sees it also sees the matching `prev`
+// and transform. That is the whole publication protocol; see INTERPOLATION_TICK_INDEX.
 function finishInterpolationStep(interpolation: Float32Array | undefined, tick: number): void {
 	if(!interpolation) {
 		return;
@@ -279,29 +220,11 @@ function finishInterpolationStep(interpolation: Float32Array | undefined, tick: 
 	storeFloat32(interpolation, INTERPOLATION_TICK_INDEX, tick);
 }
 
-// Applies a move that has already been decided on - by the integration above, or by what a sweep allowed of it -
-// and reports where the entity ended up.  Because the blocks live in a SharedArrayBuffer, writing them here is
-// immediately visible through `entity.components.transform` on the main thread.
-//
-// This is the one place the position is written, and it is only reached once the final position is known: the
-// distance is worked out on plain numbers first so that nothing ever reads a transform mid-decision.
-//
-// The move is applied with addAtomicFloat32 rather than `+=`: the position is shared memory that another
-// thread (a game's own system, or a later physics system) may be adding to at the same moment, and a plain
-// read-modify-write would silently drop one of the two moves.  Its `max` cap is not wanted here - physics
-// does not bound how far something may travel - so it is passed Infinity, leaving a plain atomic add.
-//
-// A move that did not go anywhere is not reported, which is what keeps a world of still entities quiet - and an
-// entity pressed up against something it cannot move past reports nothing at all rather than a change per run.
-// An entity that did move is reported once however many axes it moved along: a listener keyed off position - a
-// spatial index, a minimap, a sprite - wants the place rather than the axis, and it reads the whole transform
-// out of shared memory anyway.
-//
-// `reportMoves` is what makes even that skippable.  It is not a saving on this line - it is a saving on the id
-// that would have been pushed into the run's event array, and on that whole array being cloned back across the
-// worker boundary once a step.  A game reading positions through the interpolation component wants nothing to
-// do with it: the event fires at the physics rate, which is the rate it is drawing *around*.  See
-// PhysicsSystem, which sets this from whether anything is actually listening.
+// Applies an already-decided move and reports where the entity ended up. The one place the position is written,
+// reached only once the final position is known. Applied with addAtomicFloat32 rather than `+=` because another
+// thread may be adding to the same shared position at once and a plain read-modify-write would drop one; the
+// `max` cap is unwanted, so Infinity leaves a plain atomic add. A move that went nowhere is not reported, which
+// keeps a world of still entities quiet. See PhysicsSystem for `reportMoves`.
 function move(entityId: number, transform: Float32Array, moveX: number, moveY: number, callbacks: PositionCallbacks, reportMoves?: boolean): void {
 	if(moveX === 0 && moveY === 0) {
 		return;
@@ -318,14 +241,11 @@ function move(entityId: number, transform: Float32Array, moveX: number, moveY: n
 		return;
 	}
 
-	// The id on its own: the block above is what the main thread reads the position out of, and it is the same
-	// memory, so there is nothing here worth sending it a copy of.
+	// Just the id: the main thread reads the position off the shared block, so no copy is worth sending.
 	callbacks.emitSystemEvent(POSITION_UPDATED_EVENT, entityId);
 }
 
-// The one callback move reaches for, narrowed to the event physics reports.  ComponentSystemCallbacks takes
-// any event name, which says nothing about what to listen for - so the moves are handed over through this
-// instead.
+// The one callback move reaches for, narrowed to the event physics reports.
 interface PositionCallbacks {
 	emitSystemEvent(event: typeof POSITION_UPDATED_EVENT, entityId: number): void
 }

@@ -25,8 +25,7 @@ describe('components', () => {
 		});
 
 		it('is the size that loads it, since that is what a game template supplies', () => {
-			// x/y come back off a save rather than out of an entity template, so on their own they do not
-			// describe an entity that has a place in the world.
+			// x/y come off a save, not the template, so on their own they do not describe a world entity.
 			expect(world.loadEntity({ width: 4, height: 4 }).components.transform).toBeDefined();
 			expect(world.loadEntity({ x: 5, y: -3 }).components.transform).toBeUndefined();
 		});
@@ -55,8 +54,7 @@ describe('components', () => {
 		});
 
 		it('loads a radius as the size of the circle it describes', () => {
-			// A radius is the same size said differently, so it is spread across width and height here and nothing
-			// downstream has to know which way the config was written.
+			// A radius is spread across width and height, so nothing downstream cares how the config was written.
 			const entity = world.loadEntity({ x: 0, y: 0, radius: 5 });
 
 			expect(entity.components.transform?.width).toEqual(10);
@@ -73,8 +71,7 @@ describe('components', () => {
 		});
 
 		it('saves its current position, and only that', () => {
-			// Position is the half that changes as the world runs; the size and facing come back from the game's
-			// own entity template rather than the save.
+			// Position changes as the world runs; size and facing come back from the template.
 			const entity = world.loadEntity({ x: 1, y: 2, width: 3, height: 4 });
 			entity.components.transform!.x = 100;
 
@@ -141,8 +138,7 @@ describe('components', () => {
 		});
 
 		it('holds a full 32 bit mask', () => {
-			// The default is every bit set, which does not fit in a signed int - the block is a Uint32Array so it
-			// round-trips, and JS bitwise operators work on the same 32 bits when the broadphase ANDs it.
+			// Every bit set does not fit a signed int, but the Uint32Array block round-trips it.
 			const entity = world.loadEntity({ x: 0, y: 0, width: 1, height: 1, collideMask: 0xFFFFFFFF });
 
 			expect(entity.components.body?.collideMask).toEqual(4294967295);
@@ -160,7 +156,6 @@ describe('components', () => {
 		});
 
 		it('reads a circle off a config that gave a radius', () => {
-			// The one shape a size can imply, so it never has to be spelled out.
 			expect(world.loadEntity({ x: 0, y: 0, radius: 5 }).components.body?.shape).toEqual(SHAPE_CIRCLE);
 		});
 
@@ -168,7 +163,6 @@ describe('components', () => {
 			const entity = world.loadEntity({ x: 0, y: 0, width: 40, height: 10, shape: SHAPE_CAPSULE });
 
 			expect(entity.components.body?.shape).toEqual(SHAPE_CAPSULE);
-			// Still one size in the transform: 40 from end to end and 10 thick.
 			expect(entity.components.transform?.width).toEqual(40);
 			expect(entity.components.transform?.height).toEqual(10);
 		});
@@ -178,8 +172,7 @@ describe('components', () => {
 		});
 
 		it('throws on a shape it does not know', () => {
-			// Defaulting an unrecognised shape to a rectangle would leave the entity colliding with the wrong
-			// outline, which is far harder to spot than a config that refuses to load.
+			// Defaulting to a rectangle would collide with the wrong outline, harder to spot than a failed load.
 			expect(() => world.loadEntity({ x: 0, y: 0, width: 1, height: 1, shape: 99 })).toThrow('Unknown body shape: 99');
 		});
 
@@ -214,7 +207,7 @@ describe('components', () => {
 		});
 
 		it('is only loaded for a config that names bounciness, so a non-bouncing entity pays nothing for it', () => {
-			// The whole reason it is its own component: a world of walls and terrain never allocates the block.
+			// Why it is its own component: a world of walls and terrain never allocates the block.
 			expect(world.loadEntity({ x: 0, y: 0, width: 1, height: 1 }).components.bounciness).toBeUndefined();
 			expect(world.loadEntity({ x: 0, y: 0, width: 1, height: 1, bounciness: 1 }).components.bounciness).toBeDefined();
 		});

@@ -1,26 +1,24 @@
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
 
-// How fast an entity is moving, in world units per second, along each axis.  An entity with both a
-// transform and a velocity is moved by the physics system every run.
+// How fast an entity moves, in world units per second per axis. An entity with a transform and a velocity is
+// moved by the physics system every run.
 export interface VelocityComponent {
 	index: number
 	velocityX: number
 	velocityY: number
 }
 
-// Velocity is named per-axis rather than plain `x`/`y` because entity configs are flat and shared across
-// every component - `x`/`y` already belong to the transform.  Either axis on its own is enough to give an
-// entity a velocity, so both are optional and a missing one starts at 0.
+// Named per-axis, not `x`/`y`, because configs are flat and `x`/`y` belong to the transform. Either axis alone
+// gives an entity a velocity, so both are optional and a missing one starts at 0.
 export interface VelocityConfig {
 	velocityX?: number
 	velocityY?: number
 }
-// Velocity is both the config an entity spawns with and live runtime state (a game's own systems apply
-// forces to it), so the whole thing round-trips back out through `save`.
+// Both spawn config and live state (a game's systems apply forces), so it round-trips through `save`.
 export type VelocitySerialization = VelocityConfig;
 
-// Indexes into the backing Float32Array block.  The physics update reads the same offsets off the raw shared
-// block, so they are exported for it (and for any game system that touches the block directly).
+// Indexes into the backing Float32Array block, exported because the physics update reads the same offsets off
+// the raw block.
 export const VELOCITY_X_INDEX = 0;
 export const VELOCITY_Y_INDEX = 1;
 export const VELOCITY_SIZE = 2;

@@ -11,31 +11,22 @@ interface Vector {
 	y: number
 }
 
-// Scratch, reused rather than allocated: the bounce runs once per collision per run, and the update is never
-// re-entered part way through - a run is one unbroken pass over the entities.
+// Scratch, reused rather than allocated: a run is one unbroken pass, never re-entered part way through.
 const NORMAL: Vector = { x: 0, y: 0 };
 const SELF_HALF: Vector = { x: 0, y: 0 };
 const OTHER_HALF: Vector = { x: 0, y: 0 };
 
-// Turns `self` around off `other`, having just run into it, and writes the new heading back into its velocity
-// block.  `bounciness` is how much of the speed into the surface comes back out: 1 reflects it perfectly (a
-// head-on hit flips the velocity), 0 cancels it (the entity slides along the surface and stops pressing into
-// it), and values between lose that share of the speed on each bounce - see BouncinessComponent.
-//
-// Only `self` is touched.  A collision is reported per entity as each one moves, so two entities that run into
-// each other each get their own call with the roles swapped and each bounces itself; a wall never moves, so it
-// never bounces at all.  Writing the block is all it takes: it is shared memory, so the next run - and the main
-// thread - see the new heading immediately.
+// Turns `self` around off `other` and writes the new heading into its velocity block. `bounciness` is how much
+// of the speed into the surface comes back: 1 reflects perfectly, 0 cancels it (slide along the surface) - see
+// BouncinessComponent. Only `self` is touched; two movers that hit each other each get their own swapped call.
 export function bounce<T extends PhysicsUpdateComponents>(self: MovingEntity<T>, other: CollisionEntity<T>): void {
 	const bounciness = self.components.bounciness;
 	if(!bounciness) {
 		return;
 	}
 
-	// Nothing bounces off a sensor, and a sensor bounces off nothing: a sensor is felt only through onCollision,
-	// never as a surface, so the two pass through each other and the velocity is left exactly as it was.  The
-	// pair is still reported - this is a `return` from the bounce, not from the collision - so a callback that
-	// wants to react to the overlap still runs.
+	// A sensor is felt only through onCollision, never as a surface, so neither side bounces. The pair is still
+	// reported - this returns from the bounce, not the collision.
 	if(isSensorBody(self.components.body) || isSensorBody(other.components.body)) {
 		return;
 	}
@@ -48,25 +39,22 @@ export function bounce<T extends PhysicsUpdateComponents>(self: MovingEntity<T>,
 	const velocityX = velocity[VELOCITY_X_INDEX];
 	const velocityY = velocity[VELOCITY_Y_INDEX];
 
-	// How much of the velocity points *into* what it hit.  Zero or more means this entity is already on its way
-	// out - two that are still overlapping keep reporting the collision for as long as they overlap, and
-	// reflecting a second time would turn it straight back in.
+	// How much of the velocity points into what it hit. Zero or more means it is already on its way out, and
+	// reflecting again while the two still overlap would turn it straight back in.
 	const into = velocityX * NORMAL.x + velocityY * NORMAL.y;
 	if(into >= 0) {
 		return;
 	}
 
-	// The part of the velocity along the contact normal is reversed and scaled by how bouncy the entity is, and
-	// the part along the surface is left alone, so a glancing hit stays glancing and a head-on one comes back.
-	// At bounciness 1 the scale is 2, which is a mirror reflection that keeps the speed; at 0 it is 1, which
-	// removes the normal component entirely and leaves the entity sliding along the surface.
+	// Reverse the normal component and scale by bounciness, leaving the surface component alone. Scale is 2 at
+	// bounciness 1 (mirror reflection) and 1 at 0 (removes the normal component, sliding along the surface).
 	const scale = (1 + bounciness[BOUNCINESS_INDEX]) * into;
 	velocity[VELOCITY_X_INDEX] = velocityX - scale * NORMAL.x;
 	velocity[VELOCITY_Y_INDEX] = velocityY - scale * NORMAL.y;
 }
 
-// Which way `self` should be pushed back off `other`, as a unit vector, or false when the two are exactly on
-// top of each other and there is no such direction.
+// Which way `self` is pushed off `other`, as a unit vector, or false when the two are exactly on top of each
+// other and there is no such direction.
 function collisionNormal<T extends PhysicsUpdateComponents>(self: MovingEntity<T>, other: CollisionEntity<T>, out: Vector): boolean {
 	const selfTransform = self.components.transform;
 	const otherTransform = other.components.transform;
@@ -76,7 +64,7 @@ function collisionNormal<T extends PhysicsUpdateComponents>(self: MovingEntity<T
 	const selfShape = shapeOf(self.components.body);
 	const otherShape = shapeOf(other.components.body);
 
-	// Two circles touch at one point and the normal there is the line between their centres, exactly.
+	// Two circles touch at one point; the normal is the line between their centres.
 	if(selfShape === SHAPE_CIRCLE && otherShape === SHAPE_CIRCLE) {
 		const distance = Math.sqrt(dx * dx + dy * dy);
 		if(distance === 0) {
@@ -89,10 +77,9 @@ function collisionNormal<T extends PhysicsUpdateComponents>(self: MovingEntity<T
 		return true;
 	}
 
-	// Anything with a flat side is answered by the axis the two are *least* through each other on, which is the
-	// face that was hit.  A circle against a tall thin left wall overlaps it hugely in y and barely at all in x,
-	// so x wins and the bounce is horizontal - which is the answer the centre-to-centre line above would have
-	// got badly wrong, the wall's centre being a long way off up the screen.
+	// Anything with a flat side bounces off the axis of least overlap - the face that was hit. A circle against
+	// a tall thin wall barely overlaps in x, so x wins and the bounce is horizontal; the centre-to-centre line
+	// above would get this badly wrong, the wall's centre being far off screen.
 	halfSize(selfTransform, selfShape, SELF_HALF);
 	halfSize(otherTransform, otherShape, OTHER_HALF);
 	const overlapX = SELF_HALF.x + OTHER_HALF.x - Math.abs(dx);
@@ -109,20 +96,17 @@ function collisionNormal<T extends PhysicsUpdateComponents>(self: MovingEntity<T
 	return true;
 }
 
-// The body travels with every entity a collision reaches, but the type allows for one without it, so the shape
-// a size-only entity would collide as is the fallback.
+// A size-only entity with no body collides as a rectangle.
 function shapeOf(body: Uint32Array | undefined): number {
 	return body ? body[BODY_SHAPE_INDEX] : SHAPE_RECTANGLE;
 }
 
-// Whether a body block is a sensor, allowing for the entity that arrived without one at all - a size-only entity
-// is a solid, not a sensor, so a missing body is false rather than a guess either way.
+// A missing body is a solid, not a sensor.
 function isSensorBody(body: Uint32Array | undefined): boolean {
 	return body !== undefined && body[BODY_SENSOR_INDEX] !== 0;
 }
 
-// How far the shape reaches from its centre along each axis, allowing for whatever it is rotated to - the same
-// numbers the library's own broadphase boxes an entity with.
+// How far the shape reaches from its centre along each axis at its rotation - the broadphase's boxing numbers.
 function halfSize(transform: Float32Array, shape: number, out: Vector): void {
 	const width = transform[TRANSFORM_WIDTH_INDEX];
 	const height = transform[TRANSFORM_HEIGHT_INDEX];

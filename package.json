@@ -30,6 +30,7 @@
 		"start": "vite --config examples/vite.config.ts",
 		"build": "vite build && tsc -p tsconfig.build.json --emitDeclarationOnly",
 		"build:examples": "vite build --config examples/vite.config.ts",
+		"build:game": "npm run build && node scripts/build-game.mjs",
 		"preview:examples": "vite preview --config examples/vite.config.ts",
 		"type-check": "tsc --noEmit",
 		"lint": "cross-env NODE_ENV=production oxlint .",

@@ -9,18 +9,15 @@ import collisionUpdate, { type CollisionUpdateComponents, OTHER_DAMAGE, SELF_DAM
 const PHYSICS_WORKER_URL = new URL('../../__tests__/fixtures/physics.worker.ts', import.meta.url);
 const COLLISION_WORKER_URL = new URL('../../__tests__/fixtures/collision.worker.ts', import.meta.url);
 
-// One second of simulation, in the milliseconds elapsedTime is measured in - so an entity moving at
-// `velocity` units per second travels exactly `velocity` units per run.
+// One second, in the ms elapsedTime uses, so an entity at `velocity` units/s travels `velocity` units per run.
 const ONE_SECOND = 1000;
 
-// Lets a worker-mode run() settle: postMessage to a real worker is async, so we wait a macrotask for the
-// run-complete message to come back.  In main-thread mode the work is synchronous and this is a noop wait.
+// Waits a macrotask for a worker-mode run to land; a noop wait in main-thread mode.
 function flush(): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, 0));
 }
 
-// Which entities the system picks up, and how it is configured - neither depends on where the update runs, so
-// these stay on the in-process backend rather than spinning up a worker per test.
+// Entity selection and config, which do not depend on the backend, so these stay in-process.
 describe('physics-system', () => {
 	let world: TestWorld;
 	let system: PhysicsSystem<Components>;
@@ -34,8 +31,6 @@ describe('physics-system', () => {
 	});
 
 	it('falls back to the main thread when no worker was supplied', () => {
-		// With nothing to run the update on there is no worker to ask for, so the system uses the in-process
-		// ComponentWebWorker instead of trying to start one.
 		expect(system.isWorkerThread).toEqual(false);
 	});
 
@@ -61,9 +56,8 @@ describe('physics-system', () => {
 	});
 });
 
-// The movement itself runs against both backends: 'main-thread' uses the in-process ComponentWebWorker
-// (forceMainThread), 'worker' uses a real worker module driven through createComponentWorker.  Both must
-// produce identical movement.
+// Movement runs against both backends, which must produce identical results: 'main-thread' in-process, 'worker'
+// a real worker module.
 type Mode = 'main-thread' | 'worker';
 const MODES: Array<Mode> = ['main-thread', 'worker'];
 
@@ -78,27 +72,23 @@ describe.each(MODES)('physics-system velocity movement (%s)', (mode) => {
 		});
 		world.addSystem(system);
 
-		// Wait for the worker to finish loading before the test runs, so it is never torn down mid-import.
+		// Wait for the worker to load, so it is never torn down mid-import.
 		await system.init();
 	});
 	afterEach(() => {
-		// Terminate any real worker spun up during the test.
 		system.destroy();
 	});
 
-	// A size is what gives an entity a transform at all, so every entity here gets one even though nothing in
-	// this block collides.
+	// Every entity gets a size, which is what gives it a transform.
 	function createEntity(config: Config): BaseEntity<Components, Config> {
 		return world.loadEntity({ width: 1, height: 1, ...config });
 	}
-	// Runs a single physics step covering `elapsedTime` ms and waits for it to land on the entity.
 	async function run(elapsedTime: number): Promise<void> {
 		system.run(elapsedTime);
 		await flush();
 	}
 
-	// Guards the parameterization itself: if a real worker ever silently fell back to the main thread, every
-	// test below would still pass while only covering one backend.
+	// Guards the parameterization: a worker silently falling back to the main thread would still pass every test.
 	it('uses the backend the mode asked for', () => {
 		expect(system.isWorkerThread).toEqual(mode === 'worker');
 	});
@@ -115,7 +105,7 @@ describe.each(MODES)('physics-system velocity movement (%s)', (mode) => {
 	it('scales movement by the elapsed time of the run', async () => {
 		let entity = createEntity({ x: 0, y: 0, velocityX: 8, velocityY: 4 });
 
-		// A quarter second run moves a quarter of the per-second velocity.
+		// A quarter-second run moves a quarter of the per-second velocity.
 		await run(ONE_SECOND / 4);
 
 		expect(entity.components.transform?.x).toEqual(2);
@@ -129,8 +119,7 @@ describe.each(MODES)('physics-system velocity movement (%s)', (mode) => {
 		await run(ONE_SECOND);
 		await run(ONE_SECOND);
 
-		// In worker mode the later runs only send the entity id and rely on the worker's cached
-		// shared-memory block, so a correct total here proves that caching path works too.
+		// In worker mode later runs only send the id and rely on the cached block, so a correct total proves that too.
 		expect(entity.components.transform?.x).toEqual(15);
 		expect(entity.components.transform?.y).toEqual(30);
 	});
@@ -153,7 +142,7 @@ describe.each(MODES)('physics-system velocity movement (%s)', (mode) => {
 
 		expect(fast.components.transform?.x).toEqual(10);
 		expect(slow.components.transform?.x).toEqual(1);
-		// No velocity, so it is not in the system at all and never moves.
+		// No velocity, so not in the system and never moved.
 		expect(still.components.transform?.x).toEqual(100);
 		expect(still.components.transform?.y).toEqual(100);
 	});
@@ -164,8 +153,7 @@ describe.each(MODES)('physics-system velocity movement (%s)', (mode) => {
 		await run(ONE_SECOND);
 		expect(entity.components.transform?.x).toEqual(1);
 
-		// The velocity block is shared memory, so writing it on the main thread is picked up by the next run
-		// without re-sending anything to the worker.
+		// The velocity block is shared memory, so a main-thread write is picked up by the next run.
 		entity.components.velocity!.velocityX = -2;
 		await run(ONE_SECOND);
 
@@ -197,8 +185,7 @@ describe.each(MODES)('physics-system velocity movement (%s)', (mode) => {
 
 function noop(): void {}
 
-// What a system would tell this run's update to do about reporting, which is the only place the answer exists:
-// with nothing listening there is by definition no event to assert the absence of.
+// What a system would tell this run's update about reporting, the only place the answer exists.
 function reportsMoves(system: PhysicsSystem<Components, CollisionUpdateComponents>): boolean | undefined {
 	const world: PhysicsWorld = { gameTime: 0, elapsedTime: 1000, tick: 0 };
 	system.addDataToWorld(world);
@@ -206,8 +193,7 @@ function reportsMoves(system: PhysicsSystem<Components, CollisionUpdateComponent
 	return world.reportMoves;
 }
 
-// How a system is put together from an update function that detects collisions.  None of this depends on where
-// the update runs, so it stays on the in-process backend.
+// How a collision-detecting system is set up; backend-independent, so in-process.
 describe('physics-system collision setup', () => {
 	let world: TestWorld;
 	let systems: Array<PhysicsSystem<Components, CollisionUpdateComponents>> = [];
@@ -231,15 +217,10 @@ describe('physics-system collision setup', () => {
 	});
 
 	it('takes the collidable query and extra components from the update function', () => {
-		// createPhysicsUpdate stamps both onto the function, so a game declares them once in the module its
-		// worker file and its system both import rather than repeating them here.
+		// createPhysicsUpdate stamps both on, so a game declares them once in the shared module.
 		const system = createSystem({ updateFunction: collisionUpdate });
 
-		// The body joins what travels with the entities this system moves, because an entity reads its own
-		// category and mask before it searches for what it hit; bounciness joins it because a moving entity turns
-		// around off what it hit; the interpolation block joins it because the update publishes the step into it
-		// for any entity that has one; and the entity block joins it so a mover killed earlier this run is read as
-		// dead and skipped rather than moved or collided a second time.
+		// body/bounciness/interpolation/entity all travel with movers on the collision path - see PhysicsSystem.
 		expect(system.options.optional).toEqual(['body', 'bounciness', 'interpolation', 'entity', 'health']);
 		expect(system.options.queries?.collidable).toEqual({
 			required: ['transform', 'body'],
@@ -248,15 +229,11 @@ describe('physics-system collision setup', () => {
 	});
 
 	it('leaves the body out of a system that only moves things', () => {
-		// Nothing is going to read a category, so shipping a block per moving entity for it would be waste.  The
-		// interpolation block stays, since publishing a step into it is not something collision turns on.
+		// Nothing reads a category. Interpolation stays, since publishing a step is not turned on by collision.
 		expect(createSystem({ optional: ['health'] }).options.optional).toEqual(['interpolation', 'health']);
 	});
 
-	// Reporting a run's moves costs an id per moved entity in the worker plus the clone of the whole array back
-	// across the boundary, and nearly every entity moves on nearly every run - so a game reading positions
-	// through the interpolation component instead should not be paying for it.  The decision is made per run
-	// off whether anything is listening, and lands on the world object the update reads.
+	// Reporting moves costs per worker run, so it is decided per run off whether anything is listening.
 	describe('reporting moves', () => {
 		it('says nothing when nothing is listening', () => {
 			expect(reportsMoves(createSystem())).toEqual(false);
@@ -270,8 +247,7 @@ describe('physics-system collision setup', () => {
 		});
 
 		it('stops again when the listener goes away', () => {
-			// Asked per run rather than once at construction, so a scene that tears its listener down is not left
-			// paying for it.
+			// Asked per run, so a scene that tears its listener down stops paying for it.
 			const system = createSystem();
 			system.on(POSITION_UPDATED_EVENT, noop);
 			system.off(POSITION_UPDATED_EVENT, noop);
@@ -280,7 +256,7 @@ describe('physics-system collision setup', () => {
 		});
 
 		it('can be forced either way', () => {
-			// For a listener somewhere this system cannot see it, and for turning the whole thing off regardless.
+			// For a listener this system cannot see, and for turning it off regardless.
 			expect(reportsMoves(createSystem({ reportMoves: true }))).toEqual(true);
 
 			const silenced = createSystem({ reportMoves: false });
@@ -290,8 +266,7 @@ describe('physics-system collision setup', () => {
 	});
 
 	it('collides with entities the system does not move', () => {
-		// The collidable query is everything with a transform, so a station with no velocity of its own is still
-		// something a ship can run into - even though it is not in the system's own entity list.
+		// The collidable query is everything with a transform, so a velocity-less station is still collidable.
 		const system = createSystem({ updateFunction: collisionUpdate });
 		const moving = world.loadEntity({ x: 0, y: 0, width: 10, height: 10, velocityX: 1, velocityY: 0, health: 3 });
 		const still = world.loadEntity({ x: 100, y: 0, width: 10, height: 10, health: 3 });
@@ -302,8 +277,7 @@ describe('physics-system collision setup', () => {
 	});
 });
 
-// The collisions themselves run against both backends, the same way movement does: the callback has to behave
-// identically whether it is running in-process or in a real worker it reached through an import.
+// Collisions run against both backends: the callback must behave identically in-process or in a real worker.
 describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 	let world: TestWorld;
 	let system: PhysicsSystem<Components, CollisionUpdateComponents>;
@@ -322,14 +296,12 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 		system.destroy();
 	});
 
-	// A 10x10 entity that moves and can be hurt - the shape every test below starts from.  Health starts high
-	// enough that a collision or two never kills anything by accident.
+	// A 10x10 mover that can be hurt, with health high enough not to die by accident.
 	const FULL_HEALTH = 10;
 	function createShip(config: Config): BaseEntity<Components, Config> {
 		return world.loadEntity({ width: 10, height: 10, velocityX: 0, velocityY: 0, health: FULL_HEALTH, ...config });
 	}
-	// Something with a transform but no velocity, so the system never moves it and it is only ever the `other`
-	// side of a collision.
+	// No velocity, so never moved and only ever the `other` side of a collision.
 	function createStation(config: Config): BaseEntity<Components, Config> {
 		return world.loadEntity({ width: 10, height: 10, health: FULL_HEALTH, ...config });
 	}
@@ -344,8 +316,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 		await run(ONE_SECOND);
 
-		// Both moved, so both got their own call: each took the self damage for the entity it landed on, and the
-		// other damage from the entity that landed on it.  The worker wrote it straight into the shared block.
+		// Both moved, so both got their own call: self damage plus the other damage from the entity that hit them.
 		expect(first.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
 		expect(second.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
 	});
@@ -366,8 +337,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 		await run(ONE_SECOND);
 
-		// Only the ship moved, so only the ship's callback ran: it took the self damage, and reached across into
-		// the station's block for the other damage.  The station never gets a call of its own.
+		// Only the ship moved, so only its callback ran: self damage, and other damage into the station's block.
 		expect(ship.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE);
 		expect(station.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
 	});
@@ -382,14 +352,13 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 		expect(unsized.components.health?.health).toEqual(FULL_HEALTH);
 	});
 
-	// A round entity, which gives its size as a radius instead of a width and a height - so it cannot go through
-	// createShip, whose defaults would supply both and be refused.
+	// Sizes via radius, so it cannot go through createShip, whose width/height defaults would be refused.
 	function createRound(config: Config): BaseEntity<Components, Config> {
 		return world.loadEntity({ velocityX: 0, velocityY: 0, health: FULL_HEALTH, ...config });
 	}
 
 	it('collides two circles, and rounds off the corner a box would keep', async () => {
-		// Offset along the diagonal by more than two 10 wide circles can reach, though two 10x10 boxes still would.
+		// Offset further than two circles reach, though two boxes still would.
 		let first = createRound({ x: 0, y: 0, radius: 5 });
 		let second = createRound({ x: 8, y: 8, radius: 5 });
 
@@ -398,7 +367,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 		expect(first.components.health?.health).toEqual(FULL_HEALTH);
 		expect(second.components.health?.health).toEqual(FULL_HEALTH);
 
-		// The same two positions as boxes do collide, so it is the shape doing the work rather than the distance.
+		// The same positions as boxes do collide, so the shape is doing the work, not the distance.
 		let box = createShip({ x: 100, y: 100 });
 		let other = createShip({ x: 108, y: 108 });
 		await run(ONE_SECOND);
@@ -408,7 +377,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 	});
 
 	it('collides a capsule along its length', async () => {
-		// 40 from end to end, so its cap reaches x = 20 and just catches a ship whose edge is at 20.5 - 5 = 15.5.
+		// 40 long, so its cap reaches x = 20 and just catches a ship whose edge is at 15.5.
 		let capsule = createShip({ x: 0, y: 0, width: 40, height: 10, shape: SHAPE_CAPSULE });
 		let target = createShip({ x: 20.5, y: 0 });
 
@@ -420,7 +389,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 	it('does not collide a capsule with what is off its ends', async () => {
 		let capsule = createShip({ x: 0, y: 0, width: 40, height: 10, shape: SHAPE_CAPSULE });
-		// Out beyond the cap by more than the ship's own half width.
+		// Beyond the cap by more than the ship's half width.
 		let target = createShip({ x: 40, y: 0 });
 
 		await run(ONE_SECOND);
@@ -431,14 +400,12 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 	it('collides a circle with a capsule it has moved onto', async () => {
 		let capsule = createShip({ x: 0, y: 0, width: 40, height: 10, shape: SHAPE_CAPSULE });
-		// Closing on the capsule's side from above: 20 up, moving down 15, so it ends 5 above the centre line and
-		// well inside the 5 the capsule is thick plus its own 1.
+		// Dropping onto the capsule's side from 20 up at 15/s.
 		let circle = createRound({ x: 0, y: 20, radius: 1, velocityY: -15 });
 
 		await run(ONE_SECOND);
 
-		// Stopped on the capsule's surface rather than going the whole 15: 5 of capsule thickness plus its own 1
-		// of radius is as close as their centres can get.
+		// Stopped on the surface, not the whole 15: 5 of thickness plus its own 1 of radius is as close as it gets.
 		expect(circle.components.transform?.y).toBeCloseTo(6);
 		expect(circle.components.health?.health).toBeLessThan(FULL_HEALTH);
 		expect(capsule.components.health?.health).toBeLessThan(FULL_HEALTH);
@@ -453,7 +420,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 	const rangedAttack = { collideCategory: PROJECTILE, collideMask: GROUND | AIR };
 
 	it('does not collide entities their categories keep apart', async () => {
-		// Sitting right on top of each other, so only the categories can be keeping them apart.
+		// Right on top of each other, so only the categories keep them apart.
 		let ground = createShip({ x: 0, y: 0, ...groundUnit });
 		let air = createShip({ x: 5, y: 0, ...airUnit });
 
@@ -470,7 +437,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 		await run(ONE_SECOND);
 
-		// The attack landed on both of them, and took the self damage once for each.
+		// The attack landed on both, taking self damage once for each.
 		expect(attack.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE * 2 - OTHER_DAMAGE * 2);
 		expect(ground.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
 		expect(air.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE - OTHER_DAMAGE);
@@ -487,8 +454,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 	});
 
 	it('follows a category changed after the entity was created', async () => {
-		// The body block is shared memory, so a unit that takes off is picked up by the next run without
-		// anything being re-sent to the worker.
+		// The body block is shared memory, so a unit that takes off is picked up by the next run.
 		let ground = createShip({ x: 0, y: 0, ...groundUnit });
 		let air = createShip({ x: 5, y: 0, ...airUnit });
 
@@ -504,14 +470,13 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 	});
 
 	it('takes the entity\'s rotation into account', async () => {
-		// Two upright bars, five apart: as they stand they miss each other.
 		let first = createShip({ x: 0, y: 0, width: 2, height: 10 });
 		let second = createShip({ x: 5, y: 0, width: 2, height: 10 });
 
 		await run(ONE_SECOND);
 		expect(first.components.health?.health).toEqual(FULL_HEALTH);
 
-		// Laid on its side, the second bar's long edge now crosses the gap.
+		// Laid on its side, the second bar's long edge crosses the gap.
 		second.components.transform!.angle = Math.PI / 2;
 		await run(ONE_SECOND);
 
@@ -520,16 +485,14 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 	});
 
 	it('collides an entity in the same run its movement drove it in', async () => {
-		// 20 apart with 10 of width each, closing at 6 units per second from both sides - so between them this run
-		// closes 12 of the 10 they have to spare, and they meet part way through it.
+		// 20 apart, 10 wide each, closing at 6/s from both sides: they meet part way through this run.
 		let first = createShip({ x: 0, y: 0, velocityX: 6 });
 		let second = createShip({ x: 20, y: 0, velocityX: -6 });
 
 		await run(ONE_SECOND);
 
-		// The check happens straight after each entity moves, so the run that closes the gap is the run that
-		// reports it rather than the one after.  The first one moves before there is anything within reach and
-		// gets its whole 6; the second is then stopped on its edge, 4 into its own 6.
+		// Checked straight after each move, so this run reports it: the first gets its whole 6, the second stops
+		// on its edge 4 into its own 6.
 		expect(first.components.transform?.x).toEqual(6);
 		expect(second.components.transform?.x).toBeCloseTo(16);
 		expect(first.components.health?.health).toBeLessThan(FULL_HEALTH);
@@ -537,15 +500,13 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 	});
 
 	it('finds a pair the broadphase would lose without room for their velocity', async () => {
-		// 80 apart, closing at 40 a second: neither is anywhere near the other when the tree is built, and only
-		// the room left for what each can cover in a run keeps the pair in the running at all.
+		// 80 apart, closing at 40/s: only the velocity room keeps the pair in the running.
 		let first = createShip({ x: 0, y: 0, velocityX: 40 });
 		let second = createShip({ x: 80, y: 0, velocityX: -40 });
 
 		await run(ONE_SECOND);
 
-		// The first one has 30 of clear road ahead of it at the moment it moves, so its whole 40 is taken; the
-		// second then runs into it where it stopped.
+		// The first has 30 of clear road when it moves, so takes its whole 40; the second runs into it there.
 		expect(first.components.transform?.x).toEqual(40);
 		expect(second.components.transform?.x).toBeCloseTo(50);
 		expect(first.components.health?.health).toBeLessThan(FULL_HEALTH);
@@ -553,23 +514,21 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 	});
 
 	it('stops an entity on the edge of what it moves into rather than inside it', async () => {
-		// 30 apart with 10 of width each, so their edges meet with the ship at 20 - short of the 25 its velocity
-		// asked for.
+		// 30 apart, 10 wide each, so edges meet at 20 - short of the 25 asked for.
 		let ship = createShip({ x: 0, y: 0, velocityX: 25 });
 		let station = createStation({ x: 30, y: 0 });
 
 		await run(ONE_SECOND);
 
 		expect(ship.components.transform?.x).toBeCloseTo(20, 3);
-		// And the callback still ran, even though the two are touching rather than through each other.
+		// The callback still ran, even though the two are only touching.
 		expect(ship.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE);
 		expect(station.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
 	});
 
 	it('does not stop inside the near entity because the far one collided first', async () => {
-		// A huddle the ship's move ends up on top of, with the far station created before the near one so it is
-		// ahead of it in the collidable query: an implementation that stopped at the first collision it reported
-		// would come to rest at 18, well inside the near one.
+		// The far station is ahead of the near one in the query, so stopping at the first collision would rest at
+		// 18, inside the near one.
 		let far = createStation({ x: 28, y: 0 });
 		let near = createStation({ x: 20, y: 0 });
 		let ship = createShip({ x: 0, y: 0, velocityX: 25 });
@@ -577,14 +536,14 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 		await run(ONE_SECOND);
 
 		expect(ship.components.transform?.x).toBeCloseTo(10, 3);
-		// Only the near one was ever reached, so only the near one was collided with.
+		// Only the near one was reached.
 		expect(near.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
 		expect(far.components.health?.health).toEqual(FULL_HEALTH);
 		expect(ship.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE);
 	});
 
 	it('holds an entity against what it is up against run after run', async () => {
-		// Closing the last 4 of the gap on the first run, which leaves it touching at 20.
+		// Closes the last 4 of the gap on the first run, touching at 20.
 		let ship = createShip({ x: 16, y: 0, velocityX: 5 });
 		createStation({ x: 30, y: 0 });
 
@@ -592,8 +551,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 		const restingPlace = ship.components.transform?.x;
 		expect(restingPlace).toBeCloseTo(20, 3);
 
-		// Still pushing into it with the same velocity, and it has nowhere left to go: the position does not creep
-		// forwards, and the collision keeps being reported for as long as it keeps pushing.
+		// Still pushing with nowhere to go: the position does not creep, and the collision keeps being reported.
 		await run(ONE_SECOND);
 
 		expect(ship.components.transform?.x).toEqual(restingPlace);
@@ -609,11 +567,9 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 		await run(ONE_SECOND);
 
-		// One call for the whole run carrying the ids, rather than an event apiece on the entities - which is the
-		// whole point of the move being reported this way.
+		// One call for the run carrying the ids, not an event apiece.
 		expect(reported).toEqual([[ship.eid]]);
-		// Nothing came with the id because nothing had to: the transform is shared memory, so where the ship
-		// ended up is already readable off the entity by the time the event lands.
+		// No position came with the id: the transform is shared memory, readable off the entity when the event lands.
 		expect(ship.components.transform?.x).toBeCloseTo(3, 3);
 		expect(ship.components.transform?.y).toBeCloseTo(-4, 3);
 	});
@@ -633,7 +589,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 	it('reports the position it came to rest at, not the one it was heading for', async () => {
 		let ship = createShip({ x: 0, y: 0, velocityX: 25 });
 		createStation({ x: 30, y: 0 });
-		// Where the ship stood each time its move was reported, read off the block the way a listener does.
+		// Where the ship stood each time its move was reported, read off the block like a listener does.
 		let reported: Array<number> = [];
 		system.on(POSITION_UPDATED_EVENT, (entityIds: Array<number>) => {
 			expect(entityIds).toEqual([ship.eid]);
@@ -642,8 +598,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 		await run(ONE_SECOND);
 
-		// One report rather than one for the move and another for being pushed back out of it: the block is only
-		// written once the sweep has settled where the entity may go.
+		// One report: the block is only written once the sweep has settled where the entity may go.
 		expect(reported).toHaveLength(1);
 		expect(reported[0]).toBeCloseTo(20, 3);
 	});
@@ -668,8 +623,7 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 		await run(ONE_SECOND);
 
-		// The callback runs where the blocks are, with no entities in reach, so a death gets back to the main
-		// thread as an event rather than being done there and then.
+		// The callback runs with only blocks in reach, so a death gets back to the main thread as an event.
 		expect(died).toEqual([ship.eid]);
 		expect(ship.components.health?.health).toEqual(0);
 	});

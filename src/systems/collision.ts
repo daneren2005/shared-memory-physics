@@ -7,53 +7,41 @@ import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, T
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import { shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapesOverlap } from '../math/shapes';
 
-// How close to the moment of contact a sweep has to get before it settles for it, in world units.  Small enough
-// that the gap it leaves an entity resting against another is far below anything a game would draw, and large
-// enough that the halving below reaches it in a handful of steps.
+// How close to contact a sweep settles for, in world units: below anything a game would draw, yet reached by
+// the halving below in a handful of steps.
 const CONTACT_TOLERANCE = 1e-4;
-// A cap on that halving, so a move over a huge distance cannot turn into an unbounded number of overlap tests.
-// Each one narrows the answer by half, so this reaches the tolerance above for any move up to about sixteen
-// hundred units - and only an entity that is actually stopping somewhere ever spends a single one of them.
+// Cap on the halving so a huge move cannot spawn unbounded overlap tests; reaches the tolerance for any move
+// up to ~1600 units.
 const MAX_REFINEMENTS = 24;
 
-// The name PhysicsSystem registers its extra query under, and the key the broadphase reads it back out of.
-// It holds everything with a transform and a body rather than only the entities the system moves, so a moving
-// entity can still run into a station, a wall or anything else that has no velocity of its own.
+// Holds everything with a transform and a body, not only the entities the system moves, so a mover can run
+// into a wall or station that has no velocity of its own.
 export const COLLIDABLE_QUERY = 'collidable';
 
-// The blocks a collision callback is handed for the entity that was run into.  `transform` and `body` are the
-// guarantees - they are what the collidable query requires - while `velocity` and everything the game listed
-// in `optional` are there only if that entity has them.
+// Blocks handed to a collision callback for the entity run into. `transform` and `body` are guaranteed by the
+// collidable query; `velocity` and anything in `optional` are present only if that entity has them.
 export type CollisionComponents<T extends PhysicsUpdateComponents> = Partial<T> & {
 	transform: Float32Array
 	body: Uint32Array
 	entity?: Uint32Array
 };
 
-// The entity that did the running into: the one being updated, so everything the system asked for is there.
+// The entity doing the running into: the one being updated, so everything the system asked for is present.
 export interface MovingEntity<T extends PhysicsUpdateComponents> {
 	entityId: number
 	components: T
 }
 
-// The entity on the other side of a collision, which may be something the system never moves at all.
+// The entity on the other side of a collision, which may be something the system never moves.
 export interface CollisionEntity<T extends PhysicsUpdateComponents> {
 	entityId: number
 	components: CollisionComponents<T>
 }
 
-// What a game runs when one entity moves into another.  It is called on the same thread the physics update
-// runs on, so it must be a plain function over the raw blocks - no entities, no world - and it reaches the
-// main thread only through `callbacks` (which report a changed property, a death, or an entity to spawn).
-//
-// It is called *per entity*, right after that entity has moved: `self` is the one that just moved and `other`
-// is what it has ended up on top of.  Two moving entities that run into each other therefore get one call
-// each, with the roles swapped, which is what lets a callback act on itself - bouncing, taking damage - and
-// leave the other side to its own call.  An entity with no velocity is never `self`, since the system never
-// moves it, but it is still found as `other`.
-//
-// `queries` is passed straight through so a callback that needs more than the two entities in front of it can
-// still walk the full collidable list, e.g. to credit a third entity for the kill.
+// What a game runs when one entity moves into another. Runs on the physics thread, so it is a plain function
+// over the raw blocks and reaches the main thread only through `callbacks`. Called per entity right after it
+// moves: `self` just moved, `other` is what it landed on. Two movers that hit each other get one call each
+// with roles swapped, so each acts on itself. A velocity-less entity is never `self` but is found as `other`.
 export type CollisionFunction<C extends ComponentMap, T extends PhysicsUpdateComponents & EntityUpdateComponents<C>, W extends ComponentSystemWorld = ComponentSystemWorld> = (
 	world: W,
 	self: MovingEntity<T>,
@@ -62,40 +50,30 @@ export type CollisionFunction<C extends ComponentMap, T extends PhysicsUpdateCom
 	callbacks: ComponentSystemCallbacks<C>,
 ) => void;
 
-// How much of a move an entity is actually allowed to make, and what stopped it there.
-//
-// `fraction` is how far along the requested move it got: 1 for a clear path, 0 for an entity already pressed up
-// against something, and whatever is in between for one that came to rest part way.
-//
-// `blocking` is what it came to rest *against*, which the overlap test at that resting place will not report -
-// the whole point of stopping there is that the two are touching rather than through each other.  More than one
-// entry means it wedged between them at the same moment, not that it should have stopped at the first.
+// How much of a move an entity may make and what stopped it. `fraction` is how far along it got (1 clear, 0
+// already pressed against something). `blocking` is what it came to rest against - the overlap test there will
+// not report it, since the two are touching; more than one entry means it wedged between them at once.
 export interface SweepResult<T extends PhysicsUpdateComponents> {
 	fraction: number
 	blocking: Array<CollisionEntity<T>>
 }
 
-// How a move actually came out, given as the displacement to apply rather than a fraction of the one that was
-// asked for - because a move that had to drop an axis to get anywhere is no longer a scaling of the original.
-//
-// `blocking` is what it came to rest against, and is empty for a move that got where it was going - including
-// one that slid off a corner and completed along a single axis, which is touching nothing by the time it stops.
+// How a move came out, as the displacement to apply rather than a fraction - a move that dropped an axis is no
+// longer a scaling of the original. `blocking` is empty for a move that got where it was going.
 export interface MoveResult<T extends PhysicsUpdateComponents> {
 	moveX: number
 	moveY: number
 	blocking: Array<CollisionEntity<T>>
 }
 
-// What `blocking` is for the sweeps that find nothing in the way, which is most of them: one shared empty array
-// rather than one per entity per run.  Read-only to a caller by nature - there is nothing in it to iterate.
+// One shared empty array for the sweeps that find nothing, rather than one per entity per run.
 const NOTHING_BLOCKING: Array<never> = [];
 
-// The result of a per-axis sweep that hit nothing: the whole of that axis, with nothing in the way of it.  Held
-// once rather than rebuilt for every axis a slide finds clear.
+// A per-axis sweep that hit nothing: the whole axis, clear. Held once rather than rebuilt per clear axis.
 const CLEAR = { fraction: 1, blocking: NOTHING_BLOCKING };
 
-// Everything about the entity doing the searching, read out of its blocks once so that a sweep testing the same
-// pair a dozen times over does not read them a dozen times over.  x/y are where it started the move.
+// The searching entity's blocks read out once, so a sweep testing the same pair repeatedly does not re-read
+// them. x/y are where it started the move.
 interface Searcher {
 	entityId: number
 	shape: number
@@ -108,50 +86,39 @@ interface Searcher {
 	halfHeight: number
 	category: number
 	mask: number
-	// Whether this entity is a sensor, so its move is never swept short: a sensor passes through whatever it moves
-	// into rather than coming to rest against it.  Constant for the whole of a searcher's sweep, so it is read out
-	// here once rather than off the block per candidate.
+	// A sensor's move is never swept short: it passes through rather than resting against. Read once here.
 	sensor: boolean
 }
 
-// One category's worth of the broadphase: every collidable entity that collides *as* that category, and an
-// R-tree over just those.  A searching entity only looks in the buckets its own mask accepts, so a projectile
-// that can only hit units never walks the tree the terrain is in.
-//
-// Bucketed on the whole category *value* rather than a bit at a time, so an entity that collides as two things
-// at once still lives in exactly one bucket and can never be found twice by one search.
+// One category's broadphase: every entity that collides as that category, plus an R-tree over them. A searcher
+// only visits buckets its mask accepts. Bucketed on the whole category value, so an entity that collides as two
+// things at once still lives in exactly one bucket and is never found twice by one search.
 interface CategoryBucket<T extends PhysicsUpdateComponents> {
 	category: number
 	entries: Array<CollisionEntity<T>>
 	index: Flatbush
 }
 
-// An R-tree over every collidable entity, built once at the top of a run and then asked, entity by entity as
-// each one moves, what it might have hit.
+// An R-tree over every collidable entity, built once at the top of a run and then asked, per entity as it
+// moves, what it might have hit.
 //
-// Everything is indexed where it stood at the *start* of the run, because that is the only moment all of the
-// entities agree on - by the time the third entity moves, the first two have already gone somewhere else.  To
-// stay a true superset of what can actually collide, each box is grown by however far that entity could
-// travel before the run is out.  The growth goes both ways rather than along the heading: a collision
-// callback is free to turn an entity around before it has had its own move, and a box grown only forwards
-// would then be pointing the wrong way.
+// Everything is indexed where it stood at the start of the run - the only moment all entities agree on. To stay
+// a superset of what can collide, each box is grown by how far that entity could travel this run, both ways: a
+// callback may turn an entity around before its own move, so a box grown only forwards would point wrong.
 //
-// The tree is split by collide category rather than being one index over everything, so most of what an entity
-// cannot hit is ruled out a whole subtree at a time instead of one candidate at a time.  Nothing is left empty:
-// a category with no collidable entities has no bucket at all, which also means Flatbush is never asked to
-// build an index over zero items.
+// Split by collide category so most of what an entity cannot hit is ruled out a subtree at a time. An empty
+// category has no bucket, so Flatbush is never asked to index zero items.
 export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 	private buckets: Array<CategoryBucket<T>> = [];
 
 	constructor(entities: Array<{ entityId: number, components: EntityUpdateComponents }>, seconds: number) {
-		// Boxes are collected per category first because Flatbush has to be told how many items it will hold up
-		// front, and how many that is only becomes clear once everything that cannot collide has been dropped.
+		// Collected per category first because Flatbush needs its item count up front, which is only known once
+		// everything that cannot collide has been dropped.
 		const pending = new Map<number, { entries: Array<CollisionEntity<T>>, bounds: Array<number> }>();
 
 		for(const entity of entities) {
-			// The ECS types query blocks generically as ComponentTypedArray since it cannot know what any given
-			// game registered; narrow them to the concrete arrays the definitions allocate here, once, so neither
-			// the search below nor the game's callback needs a cast of its own.
+			// The ECS types blocks generically as ComponentTypedArray; narrow to the concrete arrays once here so
+			// neither the search nor the game's callback needs a cast.
 			const components = entity.components as CollisionComponents<T>;
 			const transform = components.transform;
 			const body = components.body;
@@ -159,9 +126,8 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 				continue;
 			}
 
-			// No mask can ever name category 0, so an entity that collides as nothing can never be the other half
-			// of a collision either - dropping it here is exact rather than an approximation, and it is what makes
-			// `collideCategory: 0` a way to opt an entity out of collisions entirely.
+			// No mask can name category 0, so a category-0 entity can never be the other half of a collision;
+			// dropping it here is exact and is what makes `collideCategory: 0` opt out entirely.
 			const category = body[BODY_CATEGORY_INDEX];
 			if(category === 0) {
 				continue;
@@ -170,8 +136,7 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			const shape = body[BODY_SHAPE_INDEX];
 			const width = transform[TRANSFORM_WIDTH_INDEX];
 			const height = transform[TRANSFORM_HEIGHT_INDEX];
-			// A shape with no area can never overlap anything, so dropping it here is exact rather than an
-			// approximation - and it keeps an entity the game never gave a size out of the tree entirely.
+			// A shape with no area can never overlap anything; dropping it keeps a sizeless entity out of the tree.
 			if(shapeIsEmpty(shape, width, height)) {
 				continue;
 			}
@@ -213,13 +178,9 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		}
 	}
 
-	// Runs `handle` for everything `self` is really overlapping, having just moved.
-	//
-	// The tree narrows the field to whatever is anywhere near, then each of those is put through the full
-	// rotated box test against where the two entities are *now* - which for an entity that has not had its own
-	// move yet is still where it started.  That is the price of collisions happening as each entity moves
-	// rather than all at the end, and it evens out: the pair is looked at again from the other side once that
-	// entity moves too.
+	// Runs `handle` for everything `self` really overlaps, having just moved. The tree narrows the field, then
+	// each candidate gets the full rotated box test against where both entities are now - which for one that has
+	// not moved yet is still its start. That evens out: the pair is seen again from the other side once it moves.
 	forEachOverlapping(self: MovingEntity<T>, handle: (other: CollisionEntity<T>) => void): void {
 		const searcher = toSearcher(self);
 		if(!searcher) {
@@ -227,8 +188,7 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		}
 
 		const { x, y, halfWidth, halfHeight } = searcher;
-		// Searched with where this entity has actually ended up, ungrown: every box in the tree already allows
-		// for its own entity's move, so allowing for this one's a second time would only widen the net.
+		// Searched ungrown at where this entity ended up: every tree box already allows for its own entity's move.
 		this.forEachCandidate(searcher, x - halfWidth, y - halfHeight, x + halfWidth, y + halfHeight, other => {
 			if(overlapsAt(searcher, x, y, other)) {
 				handle(other);
@@ -236,14 +196,12 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		});
 	}
 
-	// How much of the move (moveX, moveY) `self` may take before it runs into something, so that an entity comes
-	// to rest against what is in its way instead of ending up inside it.  The whole move is checked in one pass
-	// for what it lands on, and only if something is there is the resting place refined - so there is one answer
-	// for the move and it is the earliest contact of the lot, not whichever candidate happened to come up first.
+	// How much of the move `self` may take before it runs into something. The whole move is checked in one pass
+	// for what it lands on, and only then is the resting place refined - so the answer is the earliest contact
+	// of the lot, not whichever candidate came up first.
 	sweep(self: MovingEntity<T>, moveX: number, moveY: number): SweepResult<T> {
 		const distance = Math.sqrt(moveX * moveX + moveY * moveY);
 		const searcher = toSearcher(self);
-		// Nothing to work out for an entity that is not going anywhere, or that does not collide at all.
 		if(!searcher || distance === 0) {
 			return { fraction: 1, blocking: NOTHING_BLOCKING };
 		}
@@ -256,21 +214,11 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		return this.refine(searcher, candidates, moveX, moveY, distance);
 	}
 
-	// Resolves a move the way physics applies it, as the displacement to write rather than a fraction of what was
-	// asked - because a move that had to drop or shorten an axis is no longer a scaling of the original.  With
-	// `slide` off it is `sweep` in different clothes: the whole move, or the swept-short part of it.
-	//
-	// With `slide` on, a diagonal move blocked where it wanted to go is resolved one axis at a time, so an entity
-	// clipping a corner keeps running along the wall instead of sticking to it.  Each axis is taken as far as it
-	// can go on its own: the blocked one stops hard against the edge it hit, and the clear one slides its whole
-	// length past - so the entity ends up right against what stopped it rather than hovering short of it.  Where
-	// the diagonal was only caught at the corner and each axis alone is clear, there is nothing to press against,
-	// so it slides the full length of the axis the move was mostly along and leaves the other be.
-	//
-	// A clear move still costs the one endpoint pass and nothing else; only a blocked one does the axis work.
-	//
-	// Sliding is the caller's to ask for because it is the wrong answer for a bouncing entity: that one turns
-	// around off whatever it hits rather than skating along it, so the bounce path resolves with `slide` off.
+	// Resolves a move as the displacement to write. With `slide` off it is `sweep` in other clothes: the whole
+	// move, or the swept-short part. With `slide` on, a blocked diagonal is resolved one axis at a time so an
+	// entity clipping a corner keeps running along the wall instead of sticking to it. Sliding is the caller's to
+	// ask for: it is wrong for a bouncing entity, which turns around rather than skating along, so bounces pass
+	// `slide` off.
 	resolveMove(self: MovingEntity<T>, moveX: number, moveY: number, slide: boolean): MoveResult<T> {
 		const distance = Math.sqrt(moveX * moveX + moveY * moveY);
 		const searcher = toSearcher(self);
@@ -278,56 +226,45 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			return { moveX, moveY, blocking: NOTHING_BLOCKING };
 		}
 
-		// The common case: the whole move lands clear, settled by the one endpoint pass and nothing else.
 		const candidates = this.gatherCandidates(searcher, moveX, moveY);
 		if(candidates.length === 0) {
 			return { moveX, moveY, blocking: NOTHING_BLOCKING };
 		}
 
-		// Blocked on the diagonal, and asked to slide: resolve each axis on its own.  The diagonal candidates
-		// above only told us it is blocked *somewhere*; which axis that was is what the two passes here work out.
+		// Blocked diagonal, asked to slide: resolve each axis on its own to find which one was actually blocked.
 		if(slide && moveX !== 0 && moveY !== 0) {
 			const xCandidates = this.gatherCandidates(searcher, moveX, 0);
 			const yCandidates = this.gatherCandidates(searcher, 0, moveY);
 
-			// Corner clip: each axis on its own reaches clear, so only the diagonal itself was caught and there is
-			// nothing to press up against.  Slide the full length of the axis the move was mostly along - keeping
-			// most of its heading - and leave the other alone, since advancing it would walk back into the corner.
+			// Corner clip: each axis alone is clear, so only the diagonal was caught. Slide the full length of the
+			// dominant axis and leave the other - advancing it would walk back into the corner.
 			if(xCandidates.length === 0 && yCandidates.length === 0) {
 				return Math.abs(moveX) >= Math.abs(moveY)
 					? { moveX, moveY: 0, blocking: NOTHING_BLOCKING }
 					: { moveX: 0, moveY, blocking: NOTHING_BLOCKING };
 			}
 
-			// At least one axis runs into something.  Take each as far as it goes: a clear axis slides its whole
-			// length, a blocked one is refined right up to the edge it hit rather than dropped to nothing - which
-			// is what puts the entity hard against the obstacle instead of floating a step short of it.
+			// At least one axis is blocked. Take each as far as it goes - a blocked one refined up to its edge, not
+			// dropped to nothing - so the entity ends hard against the obstacle.
 			const x = xCandidates.length === 0 ? CLEAR : this.refine(searcher, xCandidates, moveX, 0, Math.abs(moveX));
 			const y = yCandidates.length === 0 ? CLEAR : this.refine(searcher, yCandidates, 0, moveY, Math.abs(moveY));
 
 			return { moveX: moveX * x.fraction, moveY: moveY * y.fraction, blocking: mergeBlocking(x.blocking, y.blocking) };
 		}
 
-		// Not sliding, or a straight move with no other axis to fall onto: come to rest where the move stops, the
-		// same short move `sweep` gives, handed back as the displacement it works out to.
+		// Not sliding, or a straight move: come to rest where it stops.
 		const rest = this.refine(searcher, candidates, moveX, moveY, distance);
 
 		return { moveX: moveX * rest.fraction, moveY: moveY * rest.fraction, blocking: rest.blocking };
 	}
 
-	// The cheap half of a sweep: everything the move would land on top of, asked where it *ends* rather than
-	// anywhere along the way.  That is what keeps a clear move - which is nearly every move - down to a single
-	// shape test per candidate: an entity only ever walks its own path once something is genuinely in the way.
-	//
-	// The trade is that a move long enough to carry an entity clean past something is not stopped by it: by the
-	// time the move is out there is nothing left to land on.  That takes a single run covering more ground than
-	// the thing in the way is thick, which a fixed `deltaBetweenRuns` rules out.
+	// The cheap half of a sweep: everything the move would land on, tested only where it ends. That keeps a clear
+	// move - nearly every move - to one shape test per candidate. The trade is that a move long enough to carry
+	// an entity clean past something is not stopped by it, which a fixed `deltaBetweenRuns` rules out.
 	private gatherCandidates(searcher: Searcher, moveX: number, moveY: number): Array<CollisionEntity<T>> {
 		const { x, y, halfWidth, halfHeight } = searcher;
 
-		// A sensor is swept short by nothing: it passes through whatever it moves into rather than coming to rest
-		// against it, so there is nothing to gather.  It is still reported by forEachOverlapping - detection is
-		// exactly what a sensor is for - but the *move* is never blocked, so this returns before any shape test.
+		// A sensor's move is blocked by nothing; it is still reported by forEachOverlapping, but never gathered.
 		if(searcher.sensor) {
 			return [];
 		}
@@ -337,21 +274,17 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 
 		const candidates: Array<CollisionEntity<T>> = [];
 		this.forEachCandidate(searcher, endX - halfWidth, endY - halfHeight, endX + halfWidth, endY + halfHeight, other => {
-			// Not where the move ends up, so nothing this move has to stop for.
 			if(!overlapsAt(searcher, endX, endY, other)) {
 				return;
 			}
 
-			// A sensor blocks nothing: a solid mover passes straight through it and comes to rest only against the
-			// next real body, so it is dropped as a candidate here and left to the overlap callback that follows.
+			// A sensor blocks nothing: a solid mover passes through it, left to the overlap callback.
 			if(other.components.body[BODY_SENSOR_INDEX] !== 0) {
 				return;
 			}
 
-			// Already inside it before the move began - something the game put there, or another system pushed it
-			// into.  It cannot be what *this* move ran into, and blocking on it would pin the entity inside it for
-			// good with no way back out, so the move is let through and the pair is left to the overlap callback
-			// that follows it.
+			// Already inside it before the move began: it is not what this move ran into, and blocking on it would
+			// pin the entity inside with no way out. Let the move through and leave the pair to the overlap callback.
 			if(overlapsAt(searcher, x, y, other)) {
 				return;
 			}
@@ -362,14 +295,9 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		return candidates;
 	}
 
-	// The expensive half: the move is known to stop short of where it asked to go, and this finds where.  `clear`
-	// is a fraction of the move it is known to fit at and `blocked` one it is known not to - the whole move to
-	// begin with, since landing there is what put these candidates in the list - and halving closes the gap.
-	//
-	// Contact is halved in on rather than solved: three shapes at any rotation to one another have no single
-	// formula for when a pair first touches, while the overlap test the narrowphase already has answers it for any
-	// pair anywhere.  The result is always taken from a position that tested clear, so wherever the entity is put
-	// down it is genuinely not inside any of them.
+	// The expensive half: the move is known to stop short, and this finds where by halving between a `clear`
+	// fraction and a `blocked` one. Contact is halved in on rather than solved - three shapes at any rotation
+	// have no single first-touch formula - and the result is always taken from a position that tested clear.
 	private refine(searcher: Searcher, candidates: Array<CollisionEntity<T>>, moveX: number, moveY: number, distance: number): SweepResult<T> {
 		const { x, y } = searcher;
 		let clear = 0;
@@ -384,8 +312,7 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			}
 		}
 
-		// Whatever is in the way at the first position that was not clear: the entity has come to rest a hair
-		// short of exactly there, so this is what it is up against.
+		// Whatever is in the way at the first blocked position: the entity rests a hair short of it.
 		const blocking: Array<CollisionEntity<T>> = [];
 		const blockedX = x + moveX * blocked;
 		const blockedY = y + moveY * blocked;
@@ -395,8 +322,8 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			}
 		}
 
-		// An entity already up against something is left exactly where it is rather than crawling the last
-		// fraction of a tolerance forwards every run, which would report a position change for no visible move.
+		// An entity already against something is left exactly where it is, rather than crawling a sub-tolerance
+		// step forward every run and reporting a position change for no visible move.
 		return { fraction: clear * distance > CONTACT_TOLERANCE ? clear : 0, blocking };
 	}
 
@@ -413,34 +340,27 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		return false;
 	}
 
-	// Runs `handle` for every collidable entity in the box that `searcher` is allowed to collide with at all -
-	// the tree search and the category rules, with no geometry beyond the boxes themselves.
-	//
-	// The collide masks are applied before any shape test rather than after: a pair that can never collide is
-	// settled by two ANDs instead of a full separating-axis test.
+	// Runs `handle` for every collidable entity in the box that `searcher` may collide with: the tree search and
+	// the category masks, applied before any shape test so an impossible pair is settled by two ANDs.
 	private forEachCandidate(searcher: Searcher, minX: number, minY: number, maxX: number, maxY: number, handle: (other: CollisionEntity<T>) => void): void {
 		for(const bucket of this.buckets) {
-			// Half of canCollide, settled once for everything in the bucket rather than once per candidate:
-			// they all collide as the same category, so either this entity's mask accepts the lot of them or it
-			// accepts none of them.
+			// Half of canCollide, settled once per bucket: all entries share this category.
 			if((searcher.mask & bucket.category) === 0) {
 				continue;
 			}
 
 			for(const found of bucket.index.search(minX, minY, maxX, maxY)) {
 				const other = bucket.entries[found];
-				// Every collidable entity is in some bucket, including this one.
 				if(other.entityId === searcher.entityId) {
 					continue;
 				}
 
-				// The other half of canCollide, which does have to be per candidate: a bucket shares one category
-				// but every entity in it carries its own mask.
+				// The other half of canCollide, per candidate: each entity carries its own mask.
 				if((other.components.body[BODY_MASK_INDEX] & searcher.category) === 0) {
 					continue;
 				}
 
-				// Already killed - in an earlier collision this run, or by another worker sharing this block
+				// Already killed this run, or by another worker sharing this block.
 				if(other.components.entity?.[DEAD_INDEX] === 1) {
 					continue;
 				}
@@ -451,9 +371,8 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 	}
 }
 
-// Combines what stopped each axis of a slide into one list, without repeating an entity that stopped both - a
-// single box in the corner of a diagonal move can be the thing each axis ran into.  Either side being empty is
-// the common case (usually only one axis is blocked), so that side is handed straight back rather than copied.
+// Merges what stopped each axis of a slide, without repeating an entity that stopped both. Either side empty is
+// the common case, so it is handed straight back rather than copied.
 function mergeBlocking<T extends PhysicsUpdateComponents>(a: Array<CollisionEntity<T>>, b: Array<CollisionEntity<T>>): Array<CollisionEntity<T>> {
 	if(a.length === 0) {
 		return b;
@@ -472,18 +391,16 @@ function mergeBlocking<T extends PhysicsUpdateComponents>(a: Array<CollisionEnti
 	return merged;
 }
 
-// Reads out what a searching entity needs to be measured by, or undefined for one that cannot collide at all.
+// Reads what a searching entity is measured by, or undefined for one that cannot collide.
 function toSearcher<T extends PhysicsUpdateComponents>(self: MovingEntity<T>): Searcher | undefined {
-	// An entity with no body does not collide at all.  It can still be moved by the system - the query that
-	// moves entities only asks for the body, it does not require it.
+	// No body means no collisions, though the system can still move it - the move query does not require a body.
 	const body = self.components.body;
 	if(!body) {
 		return undefined;
 	}
 
-	// Willing to run into nothing at all, so there is no bucket worth searching.  Note this only stops it being
-	// the entity that *finds* a collision: something whose mask accepts it can still find this one, and that is
-	// the asymmetry the symmetric canCollide rule then rules out.
+	// Mask 0 runs into nothing, so no bucket is worth searching. This only stops it finding a collision; something
+	// whose mask accepts it can still find this one, an asymmetry the symmetric canCollide rule then rules out.
 	const mask = body[BODY_MASK_INDEX];
 	if(mask === 0) {
 		return undefined;
@@ -515,8 +432,8 @@ function toSearcher<T extends PhysicsUpdateComponents>(self: MovingEntity<T>): S
 	};
 }
 
-// Whether the searching entity, put down at (x, y) rather than wherever its own block says it is, overlaps
-// `other`.  Taking the position as arguments is what lets a sweep try a whole path without writing any of it.
+// Whether the searcher, put down at (x, y) rather than its own block's position, overlaps `other`. Taking the
+// position as arguments lets a sweep try a whole path without writing any of it.
 function overlapsAt<T extends PhysicsUpdateComponents>(searcher: Searcher, x: number, y: number, other: CollisionEntity<T>): boolean {
 	const transform = other.components.transform;
 

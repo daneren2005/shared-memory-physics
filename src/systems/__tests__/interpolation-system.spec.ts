@@ -8,22 +8,19 @@ import collisionUpdate, { type CollisionUpdateComponents } from '../../__tests__
 const PHYSICS_WORKER_URL = new URL('../../__tests__/fixtures/physics.worker.ts', import.meta.url);
 const COLLISION_WORKER_URL = new URL('../../__tests__/fixtures/collision.worker.ts', import.meta.url);
 
-// A step and a frame that divide evenly into each other, so every number below is exact rather than nearly
-// right: five frames to a step.
+// A step and frame that divide evenly, so every number below is exact: five frames to a step.
 const STEP = 50;
 const FRAME = 10;
-// One unit of drawn movement per frame at this speed, which is what makes a jerk in the motion something a
-// test can name rather than something it has to eyeball.
+// One unit of drawn movement per frame, so a jerk is a number a test can name.
 const SPEED = 100;
 const PER_FRAME = SPEED * FRAME / 1000;
 
-// Lets a worker-mode run() settle: postMessage to a real worker is async, so we wait a macrotask for the
-// run-complete message to come back.  In main-thread mode the work is synchronous and this is a noop wait.
+// Waits a macrotask for a worker-mode run to land; a noop wait in main-thread mode.
 function flush(): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, 0));
 }
 
-// The drawn position, which is what a renderer reads instead of the transform.
+// The drawn position, which a renderer reads instead of the transform.
 function drawn(entity: BaseEntity<Components, Config>): [number, number] {
 	const block = entity.components.interpolation!;
 
@@ -33,9 +30,8 @@ function drawn(entity: BaseEntity<Components, Config>): [number, number] {
 type Mode = 'main-thread' | 'worker';
 const MODES: Array<Mode> = ['main-thread', 'worker'];
 
-// Both backends, because worker mode is the only configuration where the writer is genuinely on another thread -
-// which is what the publication stamp exists for.  Waiting for the run to land between frames is what a real
-// page gets too: physics is posted at the end of one frame and read at the top of the next.
+// Both backends, since worker mode is the only one where the writer is truly on another thread - what the
+// publication stamp exists for.
 describe.each(MODES)('interpolation-system (%s)', (mode) => {
 	let world: TestWorld;
 	let physics: PhysicsSystem<Components>;
@@ -50,9 +46,7 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 		});
 		interpolation = new InterpolationSystem<Components>(world);
 
-		// Physics first, so a step is drawn on the frame it happened rather than the one after.  Nothing about
-		// the smoothness depends on the order - the pacing is driven by what has landed in the block, not by
-		// where this system sits in the list - it is only worth one frame of latency.
+		// Physics first, so a step is drawn on the frame it happened; the order is worth only one frame of latency.
 		world.addSystem(physics);
 		world.addSystem(interpolation);
 
@@ -66,7 +60,7 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 	function createEntity(config: Config): BaseEntity<Components, Config> {
 		return world.loadEntity({ width: 1, height: 1, interpolate: true, ...config });
 	}
-	// One rendered frame: the world update, then whatever the worker had to say about it.
+	// One rendered frame: the world update, then whatever the worker reported.
 	async function frame(elapsedTime = FRAME): Promise<void> {
 		world.update(elapsedTime);
 		await flush();
@@ -83,8 +77,7 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 	}
 
 	it('starts an entity drawn where it spawned rather than at the origin', async () => {
-		// The block is seeded from the config, so an entity added between physics steps has somewhere real to be
-		// drawn before it has ever been in a run.
+		// The block is seeded from the config, so an entity added between steps has somewhere real to be drawn.
 		const entity = createEntity({ x: 300, y: -40, velocityX: SPEED });
 		expect(drawn(entity)).toEqual([300, -40]);
 
@@ -92,12 +85,11 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 		expect(drawn(entity)).toEqual([300, -40]);
 	});
 
-	// The point of the whole thing: the drawn position changes by the same amount every frame, where the
-	// transform changes by a step's worth once every five.
+	// The point of it all: the drawn position changes by the same amount every frame.
 	it('advances by exactly one frame of the velocity, every frame', async () => {
 		const entity = createEntity({ x: 0, y: 0, velocityX: SPEED });
 
-		// One step plus a frame of warm-up: there is no segment to blend along until physics has published one.
+		// A step plus a frame of warm-up: no segment to blend until physics has published one.
 		await drawnOver(entity, STEP / FRAME + 2);
 
 		const positions = await drawnOver(entity, 12);
@@ -106,8 +98,7 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 		}
 	});
 
-	// The transform only moves on one frame in five, which is the choppiness being fixed - stated as an
-	// assertion so the test above is measuring something rather than agreeing with itself.
+	// The transform moves one frame in five - the choppiness being fixed - asserted so the test above is real.
 	it('changes the transform only once a step', async () => {
 		const entity = createEntity({ x: 0, y: 0, velocityX: SPEED });
 		await drawnOver(entity, STEP / FRAME + 2);
@@ -118,12 +109,12 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 			positions.push(entity.components.transform!.x);
 		}
 
-		// Ten frames cover two steps, so the transform takes three values across them - where a renderer reading
-		// it directly would need ten to look smooth.  That gap is the whole reason this system exists.
+		// Ten frames cover two steps, so the transform takes three values - a renderer reading it needs ten to
+		// look smooth. That gap is why this system exists.
 		expect(new Set(positions).size).toEqual(3);
 	});
 
-	// C's whole guarantee: nothing is ever drawn ahead of where the simulation has actually got to.
+	// The whole guarantee: nothing is drawn ahead of where the simulation has got to.
 	it('never draws a position the simulation has not reached', async () => {
 		const entity = createEntity({ x: 0, y: 0, velocityX: SPEED });
 
@@ -133,8 +124,8 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 		}
 	});
 
-	// The case the whole option was chosen for.  Guessing forward from a velocity draws a turning entity a step
-	// into its old heading and then snaps it back by |dv| * step - here 7 units, against the 1 a frame is worth.
+	// Guessing forward from velocity would draw a turning entity into its old heading and snap it back; blending
+	// does not.
 	it('never jumps when an entity is redirected', async () => {
 		const entity = createEntity({ x: 0, y: 0, velocityY: -SPEED });
 		await drawnOver(entity, 12);
@@ -146,8 +137,7 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 		const positions = await drawnOver(entity, 12);
 		for(let i = 1; i < positions.length; i++) {
 			const moved = Math.hypot(positions[i][0] - positions[i - 1][0], positions[i][1] - positions[i - 1][1]);
-			// A frame's worth of the speed and no more - the turn shows up as a corner in the drawn path rather
-			// than as a jump anywhere along it.
+			// A frame's worth and no more - the turn is a corner in the path, not a jump.
 			expect(moved).toBeLessThanOrEqual(PER_FRAME * 1.001);
 		}
 	});
@@ -156,7 +146,7 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 		const entity = createEntity({ x: 0, y: 0, velocityX: SPEED });
 		await drawnOver(entity, 12);
 
-		// Nothing is written for this: a paused world runs no systems at all, so neither accumulator moves.
+		// A paused world runs no systems, so neither accumulator moves.
 		world.pause();
 		const held = drawn(entity);
 		for(let i = 0; i < 6; i++) {
@@ -180,8 +170,7 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 		}
 	});
 
-	// The one thing blending between real positions cannot work out for itself: a teleport and a long move are
-	// the same two numbers.
+	// The one thing blending cannot work out: a teleport and a long move are the same two numbers.
 	describe('a teleport', () => {
 		async function teleport(): Promise<BaseEntity<Components, Config>> {
 			const entity = createEntity({ x: 0, y: 0, velocityX: SPEED });
@@ -196,8 +185,7 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 			const before = drawn(entity)[0];
 			await frame();
 
-			// Documenting the sharp edge rather than pretending it is not there: the entity is drawn part way
-			// along a 500-unit segment it never travelled, and takes the rest of the step to arrive.
+			// Documents the sharp edge: the entity is drawn part way along a 500-unit segment it never travelled.
 			expect(drawn(entity)[0]).toBeGreaterThan(before);
 			expect(drawn(entity)[0]).toBeLessThan(500);
 		});
@@ -212,8 +200,7 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 	});
 
 	it('leaves an entity with no interpolation component alone', async () => {
-		// Interpolation is opt-in per entity, so a world can draw most things smoothly and still keep something
-		// out of it entirely.
+		// Interpolation is opt-in per entity.
 		const entity = world.loadEntity({ x: 0, y: 0, width: 1, height: 1, velocityX: SPEED });
 		await drawnOver(createEntity({ x: 0, y: 0 }), 12);
 
@@ -222,8 +209,7 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 	});
 });
 
-// An entity that comes to rest against something is the case guessing forward from a velocity gets wrong, so it
-// gets its own world - one whose update sweeps.
+// Coming to rest against something is the case velocity-guessing gets wrong, so it gets a world whose update sweeps.
 describe.each(MODES)('interpolation-system against a wall (%s)', (mode) => {
 	let world: TestWorld;
 	let physics: PhysicsSystem<Components, CollisionUpdateComponents>;
@@ -248,8 +234,7 @@ describe.each(MODES)('interpolation-system against a wall (%s)', (mode) => {
 		physics.destroy();
 	});
 
-	// A ship at 0 walking into a station at 30, both 10 wide, so their edges meet with the ship at 20.  Health is
-	// high enough that nothing dies of the contact.
+	// A ship at 0 walking into a station at 30, both 10 wide, so edges meet at 20.
 	const RESTING_PLACE = 20;
 	async function walkIntoTheWall(): Promise<Array<number>> {
 		const ship = world.loadEntity({ x: 0, y: 0, width: 10, height: 10, velocityX: SPEED, health: 1000, interpolate: true });
@@ -275,8 +260,7 @@ describe.each(MODES)('interpolation-system against a wall (%s)', (mode) => {
 		const positions = await walkIntoTheWall();
 
 		expect(positions[positions.length - 1]).toBeCloseTo(RESTING_PLACE, 3);
-		// Never once drawn backwards: the entity was going forwards the whole time, so a frame that moved it back
-		// would be a correction for a position it should not have been drawn at in the first place.
+		// Never drawn backwards: the entity went forwards throughout, so a backward frame would be a correction.
 		for(let i = 1; i < positions.length; i++) {
 			expect(positions[i]).toBeGreaterThanOrEqual(positions[i - 1]);
 		}

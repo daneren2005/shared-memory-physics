@@ -4,9 +4,8 @@ import type { InterpolationComponents, InterpolationUpdateComponents } from '../
 import interpolationUpdate from './interpolation-update';
 
 export interface InterpolationSystemConfig extends Partial<SystemConfig> {
-	// As on PhysicsSystem, and defaulted the other way round: this runs on the main thread unless a game asks
-	// otherwise, since a render position read one frame after it was computed is a render position one frame
-	// stale, which is the latency this system exists to keep down.
+	// Defaulted the opposite way to PhysicsSystem - main thread unless asked otherwise - since a render position
+	// read a frame after it was computed is a frame stale, the latency this system exists to cut.
 	forceMainThread?: boolean
 	getWorker?: () => Worker
 }
@@ -14,34 +13,23 @@ export interface InterpolationSystemConfig extends Partial<SystemConfig> {
 // Fills in a render position for every entity with an `interpolation` component, once per frame, by blending
 // between the two positions physics published either side of its last step.
 //
-// **It is not wired to the physics system at all**, and that is deliberate rather than convenient. Everything it
-// needs - the two positions, how much simulated time lies between them, and whether that pair is new - is in the
-// block, published by whichever run wrote it. Pacing off the physics system instead would mean pacing off when a
-// run was *posted*, and on a worker thread that is not when its results arrive; see interpolation-update.ts for
-// what that costs.
-//
-// So it takes no configuration, and it follows a step the game retunes mid-flight with nothing told to it:
-//
-//   world.addSystem(new PhysicsSystem(world, { getWorker }));
-//   world.addSystem(new InterpolationSystem(world));
-//
-// Ordering against the physics system is a preference rather than a requirement - going after it means a step
-// is picked up on the frame it happened rather than the one after, which is one frame of latency and nothing
-// else. Pause and `timeScale` need no code either: `BaseWorld#runUpdate` skips every system while paused and
-// scales the elapsed time it hands them, so the pacing stops and slows with the simulation for free.
+// It is deliberately not wired to the physics system: everything it needs is in the block, published by
+// whichever run wrote it. Pacing off the physics system would pace off when a run was posted, which on a worker
+// is not when its results arrive; see interpolation-update.ts. So it takes no configuration and follows a step
+// the game retunes mid-flight. Ordering after the physics system is a preference worth one frame of latency;
+// pause and `timeScale` need no code, since BaseWorld#runUpdate already skips and scales for free.
 export default class InterpolationSystem<
 	C extends ComponentMap & InterpolationComponents,
 > extends ComponentSystem<C, InterpolationUpdateComponents & EntityUpdateComponents<C>> {
 	constructor(world: BaseWorld<ComponentDefinitionMap, C>, options: InterpolationSystemConfig = {}) {
 		super(world, {
 			name: options.name ?? 'InterpolationSystem',
-			// Every frame, which is the entire point of it.
+			// Every frame, which is the whole point.
 			deltaBetweenRuns: 0,
 			firstRun: options.firstRun,
 
-			// A velocity is never read - the blend is between two positions the simulation already produced - so
-			// something with no velocity of its own is in this system on exactly the same terms as a ship, and gets
-			// a render position that tracks its transform.
+			// No velocity is read - the blend is between two positions the simulation produced - so a velocity-less
+			// entity is in this system on the same terms as a ship.
 			required: ['transform', 'interpolation'],
 			updateFunction: interpolationUpdate,
 
