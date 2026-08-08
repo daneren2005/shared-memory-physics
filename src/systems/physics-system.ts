@@ -89,10 +89,14 @@ export default class PhysicsSystem<
 		// Collision is between anything with a transform and a body, not only movers, so a ship can hit a station.
 		// Gathered only when something will read it, since it ships a block per entity in the world. Merged with
 		// the game's own `queries`, and neither is narrowed by the shard `filter`.
+		// `bounciness` has to be on this side too, not just the movers: a contact is resolved once and turns both
+		// sides around by their own bounciness, and the broadphase decides from these blocks whether anything in the
+		// run can bounce at all. Left off, hasBounciness is never true and nothing ever bounces.
+		const collidableOptional = optional.includes('bounciness') ? optional : ['bounciness', ...optional];
 		const collidableQuery = collision ? {
 			[COLLIDABLE_QUERY]: {
 				required: ['transform', 'body'] as Array<keyof C>,
-				optional: ['velocity', 'entity', ...optional] as Array<keyof C>,
+				optional: ['velocity', 'entity', ...collidableOptional] as Array<keyof C>,
 			},
 		} : undefined;
 		const queries = collidableQuery || options.queries ? { ...collidableQuery, ...options.queries } : undefined;

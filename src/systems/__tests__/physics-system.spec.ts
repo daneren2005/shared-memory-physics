@@ -1,5 +1,5 @@
 import PhysicsSystem, { type PhysicsSystemConfig } from '../physics-system';
-import { POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
+import { createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import { createTestWorld, type Components, type Config, type TestWorld } from '../../__tests__/fixtures/world';
 import { SHAPE_CAPSULE } from '../../components/body-component';
@@ -224,7 +224,7 @@ describe('physics-system collision setup', () => {
 		expect(system.options.optional).toEqual(['body', 'bounciness', 'interpolation', 'entity', 'health']);
 		expect(system.options.queries?.collidable).toEqual({
 			required: ['transform', 'body'],
-			optional: ['velocity', 'entity', 'health'],
+			optional: ['velocity', 'entity', 'bounciness', 'health'],
 		});
 	});
 
@@ -274,6 +274,48 @@ describe('physics-system collision setup', () => {
 		expect(Array.from(system.entities.values(), entity => entity.eid)).toEqual([moving.eid]);
 		expect(system.isEntityInSystem(still)).toEqual(false);
 		expect(system.options.queries?.collidable).toBeDefined();
+	});
+});
+
+// The native bounce driven through the system rather than the update, which is where the blocks a bounce needs
+// are decided: bounciness has to reach the collidable query, not only the movers, or nothing ever bounces.
+describe('physics-system native bounce', () => {
+	const sweepUpdate = createPhysicsUpdate<Components>();
+	let world: TestWorld;
+	let system: PhysicsSystem<Components>;
+	beforeEach(() => {
+		world = createTestWorld();
+		system = new PhysicsSystem(world, { updateFunction: sweepUpdate });
+		world.addSystem(system);
+	});
+	afterEach(() => {
+		system.destroy();
+	});
+
+	// Enough 50ms steps to cover the gap in each case and leave the bounce behind.
+	function runUntilContact(): void {
+		for(let i = 0; i < 20; i++) {
+			system.run(50);
+		}
+	}
+
+	it('turns a bouncy entity around off a wall it has no callback for', () => {
+		const ball = world.loadEntity({ x: 100, y: 400, radius: 12, velocityX: -160, bounciness: 1 });
+		world.loadEntity({ x: -200, y: 400, width: 400, height: 1600 });
+
+		runUntilContact();
+
+		expect(ball.components.velocity?.velocityX).toBeCloseTo(160, 3);
+	});
+
+	it('turns both sides of a contact around', () => {
+		const first = world.loadEntity({ x: 0, y: 0, radius: 5, velocityX: 20, bounciness: 1 });
+		const second = world.loadEntity({ x: 30, y: 0, radius: 5, velocityX: -20, bounciness: 1 });
+
+		runUntilContact();
+
+		expect(first.components.velocity?.velocityX).toBeCloseTo(-20, 3);
+		expect(second.components.velocity?.velocityX).toBeCloseTo(20, 3);
 	});
 });
 
