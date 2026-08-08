@@ -40,7 +40,7 @@
 		"prepare": "husky"
 	},
 	"devDependencies": {
-		"@daneren2005/shared-memory-ecs": "^1.2.2",
+		"@daneren2005/shared-memory-ecs": "^1.3.0",
 		"@daneren2005/shared-memory-objects": "^1.1.0",
 		"@semantic-release/git": "^10.0.1",
 		"@stylistic/eslint-plugin": "^5.10.0",

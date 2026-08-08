@@ -196,7 +196,11 @@ function resolveContact<
 // Movement only, and the only way to get movement with no collision detection: walks an entity straight through
 // anything in its way, for something that has no business noticing the world (a particle, a camera). For
 // entities stopped by each other, build the update with createPhysicsUpdate above, which sweeps around this move.
-export const physicsUpdate: EntityUpdateFunction<PhysicsComponents, PhysicsUpdateComponents, PhysicsWorld> = (world, entityId, components, queries, callbacks) => {
+export function physicsUpdate<
+	C extends ComponentMap & PhysicsComponents = PhysicsComponents,
+	T extends PhysicsUpdateComponents & EntityUpdateComponents<C> = PhysicsUpdateComponents & EntityUpdateComponents<C>,
+	W extends PhysicsWorld = PhysicsWorld,
+>(world: W, entityId: number, components: T, queries: EntityQueryComponents<C>, callbacks: ComponentSystemCallbacks<C>): void {
 	// elapsedTime is ms, velocity is units per second.
 	const seconds = world.elapsedTime / 1000;
 	const interpolation = components.interpolation;
@@ -211,7 +215,7 @@ export const physicsUpdate: EntityUpdateFunction<PhysicsComponents, PhysicsUpdat
 		world.reportMoves,
 	);
 	finishInterpolationStep(interpolation, world.tick);
-};
+}
 
 // The half of publishing a step that happens before the move: where the entity stands now becomes the `prev`
 // the next frame blends out of, plus how much simulated time the segment covers. The duration is published
