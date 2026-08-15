@@ -277,6 +277,75 @@ describe('physics-system collision setup', () => {
 	});
 });
 
+// Scope bounds a system to one group of the world - a solar system, a level - narrowing the collidable set too,
+// so a body outside the group never enters the broadphase and two overlapping groups cannot collide across the
+// boundary. Entity selection is backend-independent, so this runs in-process.
+describe('physics-system scope', () => {
+	const FULL_HEALTH = 10;
+	let world: TestWorld;
+	let systems: Array<PhysicsSystem<Components, CollisionUpdateComponents>> = [];
+	function createScopedSystem(groupId: number, options: PhysicsSystemConfig<Components, CollisionUpdateComponents> = {}) {
+		const system = new PhysicsSystem<Components, CollisionUpdateComponents>(world, {
+			updateFunction: collisionUpdate,
+			scope: entity => entity.components.tag?.tag === groupId,
+			...options,
+		});
+		systems.push(system);
+		world.addSystem(system);
+
+		return system;
+	}
+	beforeEach(() => {
+		world = createTestWorld();
+		systems = [];
+	});
+	afterEach(() => {
+		systems.forEach(system => system.destroy());
+	});
+
+	it('never collides a scoped mover with a body outside its scope, even when their boxes overlap', () => {
+		const system = createScopedSystem(1);
+		// Same spot, overlapping outright, so nothing but the scope keeps them apart. The station is out of group and
+		// has no velocity - it can only ever be the other side of a contact, so it proves the collidable set, not just
+		// the movers, is narrowed: were it still in the broadphase the overlap would report a hit.
+		const ship = world.loadEntity({ x: 0, y: 0, width: 10, height: 10, velocityX: 0, velocityY: 0, health: FULL_HEALTH, tag: 1 });
+		const otherGroup = world.loadEntity({ x: 5, y: 0, width: 10, height: 10, health: FULL_HEALTH, tag: 2 });
+
+		// The out-of-scope body never enters this system at all.
+		expect(system.isEntityInSystem(otherGroup)).toEqual(false);
+
+		system.run(ONE_SECOND);
+
+		expect(ship.components.health?.health).toEqual(FULL_HEALTH);
+		expect(otherGroup.components.health?.health).toEqual(FULL_HEALTH);
+	});
+
+	it('still collides two bodies inside the same scope', () => {
+		// The identical overlap as above, but both in group 1: the scope is what changed, so the collision it lets
+		// through here is what the cross-group case suppressed - the pair, not the geometry, is the difference.
+		const system = createScopedSystem(1);
+		const ship = world.loadEntity({ x: 0, y: 0, width: 10, height: 10, velocityX: 0, velocityY: 0, health: FULL_HEALTH, tag: 1 });
+		const same = world.loadEntity({ x: 5, y: 0, width: 10, height: 10, health: FULL_HEALTH, tag: 1 });
+
+		system.run(ONE_SECOND);
+
+		expect(ship.components.health?.health).toBeLessThan(FULL_HEALTH);
+		expect(same.components.health?.health).toBeLessThan(FULL_HEALTH);
+	});
+
+	it('moves only entities that pass both scope and the shard filter', () => {
+		// scope bounds the group; the shard filter then takes a subset of it. An entity has to clear both to be moved.
+		const system = createScopedSystem(1, { filter: entity => (entity.components.transform?.x ?? 0) >= 0 });
+		const inBoth = world.loadEntity({ x: 10, y: 0, width: 1, height: 1, velocityX: 0, velocityY: 0, tag: 1 });
+		const wrongGroup = world.loadEntity({ x: 10, y: 0, width: 1, height: 1, velocityX: 0, velocityY: 0, tag: 2 });
+		const wrongShard = world.loadEntity({ x: -10, y: 0, width: 1, height: 1, velocityX: 0, velocityY: 0, tag: 1 });
+
+		expect(system.isEntityInSystem(inBoth)).toEqual(true);
+		expect(system.isEntityInSystem(wrongGroup)).toEqual(false);
+		expect(system.isEntityInSystem(wrongShard)).toEqual(false);
+	});
+});
+
 // The native bounce driven through the system rather than the update, which is where the blocks a bounce needs
 // are decided: bounciness has to reach the collidable query, not only the movers, or nothing ever bounces.
 describe('physics-system native bounce', () => {

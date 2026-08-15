@@ -42,6 +42,13 @@ export interface PhysicsSystemConfig<
 	// give each the same update but a shard filter (`entity => entity.eid % workers === n`). The collidable query
 	// and any extra `queries` are gathered whole regardless, so every shard sweeps against the whole world.
 	filter?: (entity: BaseEntity<C>) => boolean
+	// Restricts this system to one group of the world - a solar system, a level - so it never sees, moves, or
+	// collides against anything outside it. Unlike `filter` (which shards movers but still sweeps the whole world),
+	// `scope` narrows the collidable set too, so an out-of-scope body never enters this system's broadphase and two
+	// overlapping groups cannot collide across the boundary. Give each group its own PhysicsSystem with its own
+	// `scope` (`entity => entity.components.group?.groupId === thisId`). Combined with `filter` an entity must pass
+	// both to be moved. Extra `queries` are left whole - scope them in the caller if a group-local read is wanted.
+	scope?: (entity: BaseEntity<C>) => boolean
 	// Extra queries sent to the worker alongside the collidable one, for an update that reads more of the world
 	// than the entity it moves (e.g. flocking). Read by name off `queries`, gathered whole regardless of `filter`,
 	// and merged with the collidable query rather than replacing it.
@@ -97,9 +104,15 @@ export default class PhysicsSystem<
 			[COLLIDABLE_QUERY]: {
 				required: ['transform', 'body'] as Array<keyof C>,
 				optional: ['velocity', 'entity', ...collidableOptional] as Array<keyof C>,
+				// Scope narrows the collidable set as well as the movers, so an out-of-scope body never enters the
+				// broadphase; the shard `filter` deliberately does not, since every shard sweeps the whole group.
+				filter: options.scope,
 			},
 		} : undefined;
 		const queries = collidableQuery || options.queries ? { ...collidableQuery, ...options.queries } : undefined;
+
+		// A moving entity must be in scope and in this shard: scope bounds the group, filter shards it across workers.
+		const moverFilter = combineFilters(options.scope, options.filter);
 
 		super(world, {
 			name: options.name ?? 'PhysicsSystem',
@@ -109,7 +122,7 @@ export default class PhysicsSystem<
 			// Movement needs both; an entity with only one is not moved, though it can still be collided with.
 			required: ['transform', 'velocity'],
 			optional: movingOptional,
-			filter: options.filter,
+			filter: moverFilter,
 			updateFunction,
 			queries,
 
@@ -131,4 +144,19 @@ export default class PhysicsSystem<
 		// Asked per run so a game can attach and drop the listener freely.
 		world.reportMoves = this.reportMoves ?? this.listenerCount(POSITION_UPDATED_EVENT) > 0;
 	}
+}
+
+// Ands two optional entity filters. Either alone is handed straight back; only both present pays for a closure.
+function combineFilters<C extends ComponentMap & PhysicsComponents>(
+	a: ((entity: BaseEntity<C>) => boolean) | undefined,
+	b: ((entity: BaseEntity<C>) => boolean) | undefined,
+): ((entity: BaseEntity<C>) => boolean) | undefined {
+	if(!a) {
+		return b;
+	}
+	if(!b) {
+		return a;
+	}
+
+	return entity => a(entity) && b(entity);
 }

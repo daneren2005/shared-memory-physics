@@ -525,6 +525,26 @@ than off both. The pair is never missed, just attributed to the side that moved 
 the entity that moves first gets the clear road: it takes its whole move, and the second one is the one that
 comes to rest against it.
 
+### Scoping a system to a group
+
+Categories decide which *kinds* of body collide; `scope` decides which *world* they collide in. A game that
+runs several independent groups at once - solar systems around the same origin, floors of a dungeon - gives
+each group its own `PhysicsSystem` with a `scope`, and each one then only ever sees, moves, or collides against
+the entities that pass it:
+
+```ts
+world.addSystem(new PhysicsSystem<Components>(world, {
+	updateFunction: gamePhysicsUpdate,
+	scope: entity => entity.components.solarSystem?.solarSystemId === solId,
+}));
+```
+
+Unlike a category rule - which every body in the world is still weighed against - a scoped-out body never
+enters this system's broadphase at all, so two groups whose boxes overlap around a shared origin cannot collide
+across the boundary, and the tree each run builds is only as big as its own group. `scope` is separate from the
+sharding `filter` (which narrows only *which* movers a worker steps, still sweeping the whole world so one
+simulation can spread across cores); an entity handed both has to pass each to be moved.
+
 ## Using physicsUpdate in your own system
 
 `physicsUpdate` is a plain `EntityUpdateFunction`, so a game that already has its own movement system can call

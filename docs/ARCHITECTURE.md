@@ -66,6 +66,12 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
   to in the same instant; a plain read-modify-write would drop a move.
 - **`POSITION_UPDATED_EVENT` carries only ids**, as one array per run (never per entity — that's the
   whole point). The worker only pays for it when someone is listening (`reportMoves`).
+- **`filter` vs `scope` on `PhysicsSystem`.** Both are query filters the ECS applies at gather time
+  (`ComponentSystemQuery.filter`), but they sit on different queries. `filter` narrows only the mover
+  query, so a shard steps a subset while still sweeping the whole world. `scope` is applied to the
+  mover query *and* the `COLLIDABLE_QUERY`, so a scoped-out body never enters the broadphase — that is
+  what isolates overlapping groups (solar systems). Given both, a mover must pass each; the collidable
+  set is scoped but never sharded. No collision.ts change: the broadphase indexes whatever it's handed.
 - **A contact is resolved once per pair per run.** Both sides find it — one sweeping into it, the
   other overlapping it on its own turn — and `CollisionBroadphase.claimContact` gives it to whichever
   looked first; the second side's turn is a no-op. So `onCollision` fires **once**, and a callback
