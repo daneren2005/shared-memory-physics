@@ -36,6 +36,7 @@ export {
 	BODY_CATEGORY_INDEX,
 	BODY_MASK_INDEX,
 	BODY_SENSOR_INDEX,
+	BODY_CCD_INDEX,
 	BODY_SIZE,
 } from './components/body-component';
 export type {

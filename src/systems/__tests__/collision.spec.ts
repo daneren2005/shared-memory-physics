@@ -1,7 +1,7 @@
 import CollisionBroadphase, { type MoveResult, type MovingEntity, type SweepResult } from '../collision';
 import type { PhysicsUpdateComponents } from '../../components/registry';
 import {
-	BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, BODY_SIZE,
+	BODY_CATEGORY_INDEX, BODY_CCD_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, BODY_SIZE,
 	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK,
 	SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE,
 } from '../../components/body-component';
@@ -27,6 +27,7 @@ interface Box {
 	collideCategory?: number
 	collideMask?: number
 	sensor?: boolean
+	continuousCollisionDetection?: boolean
 }
 
 // Boxes default to 10x10, still, colliding with everything, so most tests only give a position.
@@ -47,6 +48,7 @@ function createEntity(box: Box, entityId: number): MovingEntity<PhysicsUpdateCom
 	body[BODY_CATEGORY_INDEX] = box.collideCategory ?? DEFAULT_COLLIDE_CATEGORY;
 	body[BODY_MASK_INDEX] = box.collideMask ?? DEFAULT_COLLIDE_MASK;
 	body[BODY_SENSOR_INDEX] = box.sensor ? 1 : 0;
+	body[BODY_CCD_INDEX] = box.continuousCollisionDetection ? 1 : 0;
 
 	return { entityId, components: { transform, velocity, body } };
 }
@@ -718,6 +720,116 @@ describe('collision-broadphase', () => {
 			];
 
 			expect(hits(boxes, 1)).toEqual([]);
+		});
+	});
+
+	// A continuous body is tested along its whole path this run, not only where its step ends, so a move long
+	// enough to carry it clean past something still catches it. 10x10 boxes unless said otherwise.
+	describe('continuous collision detection', () => {
+		function sweep(boxes: Array<Box>, entityId: number, moveX: number, moveY: number): SweepResult<PhysicsUpdateComponents> {
+			const entities = createEntities(boxes);
+
+			return build(entities).sweep(entities[entityId - 1], moveX, moveY);
+		}
+
+		// forEachOverlapping is run after the entity has moved, so the searcher stands at the end and the move it
+		// just took is handed back in - which is how the swept path is reconstructed.
+		function sweptOverlapping(boxes: Array<Box>, entityId: number, moveX: number, moveY: number): Array<number> {
+			const entities = createEntities(boxes);
+			const found: Array<number> = [];
+			build(entities).forEachOverlapping(entities[entityId - 1], other => found.push(other.entityId), moveX, moveY);
+
+			return found.sort((first, second) => first - second);
+		}
+
+		it('stops a fast box on the thin wall a plain body flies clean through', () => {
+			// The tunnelling case from the plain sweep: a 2-wide box moving 60 past a 1-thick wall at 50. Plain, it
+			// ends past the wall with nothing to land on; continuous, it is caught and stops on the near face.
+			const boxes: Array<Box> = [{ x: 0, y: 0, width: 2, height: 2 }, { x: 50, y: 0, width: 1, height: 40 }];
+
+			expect(sweep(boxes, 1, 60, 0).fraction).toEqual(1);
+
+			const ccd = [{ ...boxes[0], continuousCollisionDetection: true }, boxes[1]];
+			const result = sweep(ccd, 1, 60, 0);
+			// Near face at 49.5, the box's half-width 1: contact when its centre reaches 48.5.
+			expect(result.fraction).toBeCloseTo(48.5 / 60, 3);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('stops at the nearest of two along the path, not whichever came up first', () => {
+			// Two thin walls the move would fly past; it must come to rest on the near one.
+			const near = { x: 30, y: 0, width: 1, height: 40 };
+			const far = { x: 60, y: 0, width: 1, height: 40 };
+			const mover = { x: 0, y: 0, width: 2, height: 2, continuousCollisionDetection: true };
+
+			const result = sweep([mover, near, far], 1, 100, 0);
+			expect(result.fraction).toBeCloseTo(28.5 / 100, 3);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('sweeps a circle down its path as a capsule', () => {
+			// A radius-3 circle stepping 60 past a radius-5 circle at 50; the two meet when their centres are 8 apart.
+			const circles = { shape: SHAPE_CIRCLE, height: 0 };
+			const mover = { x: 0, y: 0, width: 6, ...circles, continuousCollisionDetection: true };
+			const target = { x: 50, y: 0, width: 10, ...circles };
+
+			expect(sweep([{ x: 0, y: 0, width: 6, ...circles }, target], 1, 60, 0).fraction).toEqual(1);
+			expect(sweep([mover, target], 1, 60, 0).fraction).toBeCloseTo(42 / 60, 2);
+		});
+
+		it('detects along the whole swept path from the resting side', () => {
+			// The searcher ends at 60, past the wall at 50; without the move it overlaps nothing there, with the move
+			// its path is tested and the wall it flew through is found.
+			const boxes: Array<Box> = [
+				{ x: 60, y: 0, width: 2, height: 2, continuousCollisionDetection: true },
+				{ x: 50, y: 0, width: 1, height: 40 },
+			];
+
+			expect(sweptOverlapping(boxes, 1, 0, 0)).toEqual([]);
+			expect(sweptOverlapping(boxes, 1, 60, 0)).toEqual([2]);
+		});
+
+		it('leaves a plain body tested only where it landed', () => {
+			// The same geometry with the flag off: the move is handed in but ignored, so nothing on the path is found.
+			const boxes: Array<Box> = [
+				{ x: 60, y: 0, width: 2, height: 2 },
+				{ x: 50, y: 0, width: 1, height: 40 },
+			];
+
+			expect(sweptOverlapping(boxes, 1, 60, 0)).toEqual([]);
+		});
+
+		it('catches a sensor that flew past its target without ever stopping it', () => {
+			// The bullet-hell case: a fast sensor is never swept short, so its move stays whole, but its path is still
+			// tested and the target it passed through is reported for the callback to act on.
+			const boxes: Array<Box> = [
+				{ x: 60, y: 0, width: 2, height: 2, sensor: true, continuousCollisionDetection: true },
+				{ x: 50, y: 0, width: 1, height: 40 },
+			];
+
+			expect(sweptOverlapping(boxes, 1, 60, 0)).toEqual([2]);
+			// And still stopped by nothing: a sensor blocks on no path.
+			const passing = sweep([{ ...boxes[0], x: 0 }, { x: 50, y: 0, width: 1, height: 40 }], 1, 60, 0);
+			expect(passing.fraction).toEqual(1);
+			expect(blocking(passing)).toEqual([]);
+		});
+
+		it('does not stop on something it is already inside', () => {
+			// Overlapping at the start is not what this move ran into; let it move on out, same as the plain sweep.
+			const result = sweep([{ x: 0, y: 0, continuousCollisionDetection: true }, { x: 5, y: 0 }], 1, 60, 0);
+
+			expect(result.fraction).toEqual(1);
+			expect(blocking(result)).toEqual([]);
+		});
+
+		it('still obeys collide categories', () => {
+			// A wall the mover's categories keep it apart from is not swept against, however far the move reaches.
+			const boxes: Array<Box> = [
+				{ x: 0, y: 0, width: 2, height: 2, collideCategory: GROUND, collideMask: GROUND | PROJECTILE, continuousCollisionDetection: true },
+				{ x: 50, y: 0, width: 1, height: 40, collideCategory: AIR, collideMask: AIR | PROJECTILE },
+			];
+
+			expect(sweep(boxes, 1, 60, 0).fraction).toEqual(1);
 		});
 	});
 });

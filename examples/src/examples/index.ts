@@ -3,6 +3,7 @@ import { boids } from './boids';
 import { bouncingCircles } from './bouncing-circles';
 import { bouncingRectangles } from './bouncing-rectangles';
 import { breakout } from './breakout';
+import { bulletHell } from './bullet-hell';
 import { clickToMove } from './click-to-move';
 import { interpolationWalk } from './interpolation-walk';
 import { sensors } from './sensors';
@@ -15,6 +16,7 @@ export const EXAMPLES: Array<Example> = [
 	clickToMove,
 	sensors,
 	breakout,
+	bulletHell,
 	boids,
 ];
 

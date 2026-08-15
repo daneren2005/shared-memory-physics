@@ -11,6 +11,8 @@ export interface BodyComponent {
 	// A sensor takes part in detection - a mover overlapping it still gets its onCollision - but stops nothing:
 	// nothing is swept short against it or bounces off it. Only about the response; it obeys canCollide unchanged.
 	sensor: boolean
+	// When set, this body's own move is tested along its whole path this run rather than only where it ends.
+	continuousCollisionDetection: boolean
 }
 
 // The shapes a body can be, all held in the same transform (position, width, height, angle):
@@ -54,6 +56,7 @@ export interface BodyConfig {
 	collideMask?: number
 	// Makes the body a sensor: found and reported, but never blocking or bounced off. Defaults to solid.
 	sensor?: boolean
+	continuousCollisionDetection?: boolean
 }
 
 // Indexes into the backing Uint32Array block, exported because the broadphase reads the same offsets off the
@@ -63,7 +66,8 @@ export const BODY_CATEGORY_INDEX = 1;
 export const BODY_MASK_INDEX = 2;
 // 1 for a sensor, 0 for solid. In the block, not a JS flag, so the broadphase and bounce read it on the worker.
 export const BODY_SENSOR_INDEX = 3;
-export const BODY_SIZE = 4;
+export const BODY_CCD_INDEX = 4;
+export const BODY_SIZE = 5;
 
 // Whether a body block is a sensor. Exported so a game system reads the flag the way the broadphase does.
 export function isSensor(body: Uint32Array): boolean {
@@ -73,13 +77,14 @@ export function isSensor(body: Uint32Array): boolean {
 export const bodyDefinition: ComponentDefinition<BodyComponent, Uint32Array, BodyConfig> = {
 	type: Uint32Array,
 	size: BODY_SIZE,
-	loadProperties: ['width', 'height', 'radius', 'shape', 'collideCategory', 'collideMask', 'sensor'],
+	loadProperties: ['width', 'height', 'radius', 'shape', 'collideCategory', 'collideMask', 'sensor', 'continuousCollisionDetection'],
 	load(entity, memory, config) {
 		const index = memory.create([
 			toShape(config),
 			config.collideCategory ?? DEFAULT_COLLIDE_CATEGORY,
 			config.collideMask ?? DEFAULT_COLLIDE_MASK,
 			config.sensor ? 1 : 0,
+			config.continuousCollisionDetection ? 1 : 0,
 		]);
 		const block = memory.getBlock(index);
 
@@ -108,6 +113,12 @@ export const bodyDefinition: ComponentDefinition<BodyComponent, Uint32Array, Bod
 			},
 			set sensor(value: boolean) {
 				block[BODY_SENSOR_INDEX] = value ? 1 : 0;
+			},
+			get continuousCollisionDetection() {
+				return block[BODY_CCD_INDEX] !== 0;
+			},
+			set continuousCollisionDetection(value: boolean) {
+				block[BODY_CCD_INDEX] = value ? 1 : 0;
 			},
 		};
 	},

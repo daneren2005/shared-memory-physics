@@ -4,7 +4,7 @@ import type { ComponentSystemCallbacks } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
 import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
 import {
-	BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, BODY_SIZE,
+	BODY_CATEGORY_INDEX, BODY_CCD_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, BODY_SIZE,
 	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CIRCLE, SHAPE_RECTANGLE,
 } from '../../components/body-component';
 import { BOUNCINESS_INDEX, BOUNCINESS_SIZE } from '../../components/bounciness-component';
@@ -155,6 +155,7 @@ interface Unit {
 	// Left off, the unit has no bounciness block - the case a game's terrain and walls are.
 	bounciness?: number
 	sensor?: boolean
+	continuousCollisionDetection?: boolean
 	dead?: boolean
 }
 
@@ -175,6 +176,7 @@ function createUnit(unit: Unit, entityId: number): MovingEntity<PhysicsUpdateCom
 	body[BODY_CATEGORY_INDEX] = DEFAULT_COLLIDE_CATEGORY;
 	body[BODY_MASK_INDEX] = DEFAULT_COLLIDE_MASK;
 	body[BODY_SENSOR_INDEX] = unit.sensor ? 1 : 0;
+	body[BODY_CCD_INDEX] = unit.continuousCollisionDetection ? 1 : 0;
 
 	const entity = new Uint32Array(2);
 	entity[DEAD_INDEX] = unit.dead ? 1 : 0;
@@ -350,6 +352,37 @@ describe('createPhysicsUpdate', () => {
 		expect(result.hits()).toEqual([2]);
 		// The mover ends inside the sensor - its whole 25, not stopped short.
 		expect(result.collisions[0].selfX).toEqual(25);
+	});
+
+	it('runs the callback for a continuous sensor that flew clean past its target', () => {
+		// The bullet-hell case end to end: a 2-wide sensor stepping 60 past a 1-thick target. Its whole move is
+		// taken (a sensor is stopped by nothing), but its swept path is tested, so the callback still fires.
+		const bullet = { x: 0, y: 0, width: 2, height: 2, velocityX: 60, sensor: true, continuousCollisionDetection: true };
+		const target = { x: 50, y: 0, width: 1, height: 40 };
+		const result = run([bullet, target]);
+
+		expect(result.x(1)).toEqual(60);
+		expect(result.hits()).toEqual([2]);
+	});
+
+	it('says nothing about the same sensor when it is not continuous', () => {
+		// Without the flag the sensor is only tested where its step ends, past the target, so nothing is reported.
+		const bullet = { x: 0, y: 0, width: 2, height: 2, velocityX: 60, sensor: true };
+		const target = { x: 50, y: 0, width: 1, height: 40 };
+		const result = run([bullet, target]);
+
+		expect(result.x(1)).toEqual(60);
+		expect(result.hits()).toEqual([]);
+	});
+
+	it('stops a continuous solid on the thin wall it would otherwise tunnel through', () => {
+		// The same geometry with a solid mover: it is swept along its path and comes to rest on the near face.
+		const mover = { x: 0, y: 0, width: 2, height: 2, velocityX: 60, continuousCollisionDetection: true };
+		const wall = { x: 50, y: 0, width: 1, height: 40 };
+		const result = run([mover, wall]);
+
+		expect(result.x(1)).toBeCloseTo(48.5, 3);
+		expect(result.hits()).toEqual([2]);
 	});
 
 	it('still reports two entities that are simply sitting on top of each other', () => {

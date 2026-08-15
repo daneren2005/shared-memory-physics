@@ -38,7 +38,7 @@ main thread                              worker thread (optional)
 | `components/registry.ts` | `physicsRegistry` map + the component-map type slices systems are generic over. | `physicsRegistry`, `PhysicsComponents`, `PhysicsUpdateComponents`, `InterpolationComponents`, `InterpolationUpdateComponents` |
 | `components/transform-component.ts` | Where/how big/facing. `x,y` = **centre**; `angle` radians CCW. | `transformDefinition`, `TRANSFORM_*_INDEX`, `TRANSFORM_SIZE` |
 | `components/velocity-component.ts` | World units per **second**. Keyed `velocityX/Y` in configs. | `velocityDefinition`, `VELOCITY_*_INDEX` |
-| `components/body-component.ts` | Shape + collide category/mask. A body is what makes an entity collidable. | `bodyDefinition`, `canCollide`, `isSensor`, `SHAPE_*`, `BODY_*_INDEX` |
+| `components/body-component.ts` | Shape + collide category/mask + sensor + continuous-collision flag. A body is what makes an entity collidable. | `bodyDefinition`, `canCollide`, `isSensor`, `SHAPE_*`, `BODY_*_INDEX` |
 | `components/bounciness-component.ts` | Standalone bounce float (not part of body block). | `bouncinessDefinition`, `BOUNCINESS_INDEX` |
 | `components/interpolation-component.ts` | Render position + publication protocol fields (`prev`, `progress`, `tick`, `duration`). | `interpolationDefinition`, `snapEntity`, `INTERPOLATION_*_INDEX` |
 | `systems/physics-system.ts` | Main-thread `ComponentSystem`: gathers entities, decides which queries/blocks travel, stamps `tick`, gates move-reporting. Fixed step default. | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig` |
@@ -58,6 +58,15 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
 - **Fixed 50ms step by default** (`DEFAULT_PHYSICS_STEP_MS`). A move is swept where it *ends*, so a
   step longer than an obstacle is thick lets a fast entity tunnel through it. `deltaBetweenRuns: 0`
   = every frame. (README → "The step")
+- **Continuous collision detection is a per-body opt-out of that ceiling** (`continuousCollisionDetection`
+  on the body block, `BODY_CCD_INDEX`). It swaps the single end-of-move test for a swept-path test - one extra
+  covering-shape overlap per candidate, gated on `searcher.ccd` so no non-ccd body pays anything. It touches
+  three places in `collision.ts`: `gatherContinuousCandidates` + `sweepContinuous`/`entryFraction` (blocking,
+  first-contact rather than rest-against, so it handles a pass-through refine cannot), the swept branch of
+  `forEachOverlapping` (detection - this is what catches a fast *sensor*, since a sensor is never gathered as a
+  blocker), and the free `sweptOverlaps`. A continuous body never corner-slides. `forEachOverlapping` runs after
+  the move, so it takes the just-applied delta as trailing args to reconstruct the path; `sweep`/`resolveMove`
+  run before the move, so `searcher.x/y` is already the start.
 - **The `tick` publication protocol.** Interpolation reads `prev`/transform across a release-store
   `tick` (written last via `storeFloat32`) and drops the frame if it changed mid-read. A subclass
   overriding `addDataToWorld` **must call `super.addDataToWorld(world)`** or nothing gets a tick and

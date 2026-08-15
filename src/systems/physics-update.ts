@@ -144,7 +144,7 @@ export function createPhysicsUpdate<
 				if(tree.claimContact(entityId, other.entityId)) {
 					resolveContact(world, self, other, queries, callbacks, onCollision);
 				}
-			});
+			}, moved.moveX, moved.moveY);
 
 			// Then what the move was stopped against, which the overlap check cannot find: the entity rests
 			// touching it, not through it. The two lists never share an entry.

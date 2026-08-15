@@ -3,6 +3,7 @@ import type { PhysicsUpdateMetadata, PhysicsWorld } from '@daneren2005/shared-me
 import type { EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { Components, ExampleUpdateComponents } from '../world';
 import { breakoutUpdate } from './breakout-update';
+import { bulletHellUpdate } from './bullet-hell-update';
 import { sweepUpdate } from './sweep-update';
 
 // An update function and the worker that runs it, kept together because they have to agree: whatever a game
@@ -23,6 +24,9 @@ export interface PhysicsBackend {
 //     entity turns around off what it hits only through the `bounciness` component it carries - see ./sweep-update.ts.
 //   - `breakout` is the same movement plus one callback that kills a brick the ball has bounced off, run in the
 //     physics thread rather than on the main thread - see ./breakout-update.ts.
+//   - `bulletHell` is the same again, with a callback that kills a bullet the instant it touches anything and
+//     reports the ones that reach the player.  The bullets are sensors, so the callback is all that acts on a
+//     bullet contact - the sweep passes movers straight through them - see ./bullet-hell-update.ts.
 //   - `movement` is the library's own `physicsUpdate` with nothing on top: it integrates the velocity, publishes
 //     the interpolation step, and notices nothing around it.  Boids run on this - what turns them is a steering
 //     system of the example's own (see ../systems/steering-system.ts), so the physics half is the plain one.
@@ -34,6 +38,10 @@ export const PHYSICS_BACKENDS = {
 	breakout: {
 		updateFunction: breakoutUpdate,
 		getWorker: () => new Worker(new URL('./breakout.worker.ts', import.meta.url), { type: 'module' }),
+	},
+	bulletHell: {
+		updateFunction: bulletHellUpdate,
+		getWorker: () => new Worker(new URL('./bullet-hell.worker.ts', import.meta.url), { type: 'module' }),
 	},
 	movement: {
 		updateFunction: physicsUpdate,

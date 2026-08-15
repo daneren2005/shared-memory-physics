@@ -139,6 +139,13 @@ describe('components', () => {
 			expect(entity.components.body?.collideMask).toEqual(5);
 		});
 
+		it('is not continuous by default and takes the flag when asked', () => {
+			expect(world.loadEntity({ x: 0, y: 0, width: 8, height: 4 }).components.body?.continuousCollisionDetection).toEqual(false);
+
+			const continuous = world.loadEntity({ x: 0, y: 0, width: 8, height: 4, continuousCollisionDetection: true });
+			expect(continuous.components.body?.continuousCollisionDetection).toEqual(true);
+		});
+
 		it('holds a full 32 bit mask', () => {
 			// Every bit set does not fit a signed int, but the Uint32Array block round-trips it.
 			const entity = world.loadEntity({ x: 0, y: 0, width: 1, height: 1, collideMask: 0xFFFFFFFF });

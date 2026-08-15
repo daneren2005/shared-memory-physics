@@ -2,10 +2,10 @@ import Flatbush from 'flatbush';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsUpdateComponents } from '../components/registry';
-import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX } from '../components/body-component';
+import { BODY_CATEGORY_INDEX, BODY_CCD_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, SHAPE_CAPSULE, SHAPE_RECTANGLE } from '../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
-import { shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapesOverlap } from '../math/shapes';
+import { shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap } from '../math/shapes';
 
 // How close to contact a sweep settles for, in world units: below anything a game would draw, yet reached by
 // the halving below in a handful of steps.
@@ -93,6 +93,7 @@ interface Searcher {
 	mask: number
 	// A sensor's move is never swept short: it passes through rather than resting against. Read once here.
 	sensor: boolean
+	ccd: boolean
 }
 
 // One category's broadphase: every entity that collides as that category, plus an R-tree over them. A searcher
@@ -210,13 +211,32 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 	// Runs `handle` for everything `self` really overlaps, having just moved. The tree narrows the field, then
 	// each candidate gets the full rotated box test against where both entities are now - which for one that has
 	// not moved yet is still its start. That evens out: the pair is seen again from the other side once it moves.
-	forEachOverlapping(self: MovingEntity<T>, handle: (other: CollisionEntity<T>) => void): void {
+	//
+	// `moveX`/`moveY` is the move this entity just took, so a continuous-collision body can be tested along the way
+	forEachOverlapping(self: MovingEntity<T>, handle: (other: CollisionEntity<T>) => void, moveX = 0, moveY = 0): void {
 		const searcher = toSearcher(self);
 		if(!searcher) {
 			return;
 		}
 
 		const { x, y, halfWidth, halfHeight } = searcher;
+
+		if(searcher.ccd && (moveX !== 0 || moveY !== 0)) {
+			const startX = x - moveX;
+			const startY = y - moveY;
+			const minX = Math.min(startX, x) - halfWidth;
+			const minY = Math.min(startY, y) - halfHeight;
+			const maxX = Math.max(startX, x) + halfWidth;
+			const maxY = Math.max(startY, y) + halfHeight;
+			this.forEachCandidate(searcher, minX, minY, maxX, maxY, other => {
+				if(sweptOverlaps(searcher, startX, startY, moveX, moveY, other)) {
+					handle(other);
+				}
+			});
+
+			return;
+		}
+
 		// Searched ungrown at where this entity ended up: every tree box already allows for its own entity's move.
 		this.forEachCandidate(searcher, x - halfWidth, y - halfHeight, x + halfWidth, y + halfHeight, other => {
 			if(overlapsAt(searcher, x, y, other)) {
@@ -233,6 +253,10 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		const searcher = toSearcher(self);
 		if(!searcher || distance === 0) {
 			return { fraction: 1, blocking: NOTHING_BLOCKING };
+		}
+
+		if(searcher.ccd) {
+			return this.sweepContinuous(searcher, moveX, moveY, distance);
 		}
 
 		const candidates = this.gatherCandidates(searcher, moveX, moveY);
@@ -253,6 +277,15 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		const searcher = toSearcher(self);
 		if(!searcher || distance === 0) {
 			return { moveX, moveY, blocking: NOTHING_BLOCKING };
+		}
+
+		// A continuous body comes straight to rest at its first contact, never sliding: sliding is for a steered
+		// character clipping a corner at walking pace, not the fast thing ccd is switched on for, and the swept
+		// path is a single decision over the whole move rather than one refined per axis.
+		if(searcher.ccd) {
+			const rest = this.sweepContinuous(searcher, moveX, moveY, distance);
+
+			return { moveX: moveX * rest.fraction, moveY: moveY * rest.fraction, blocking: rest.blocking };
 		}
 
 		const candidates = this.gatherCandidates(searcher, moveX, moveY);
@@ -373,6 +406,111 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		return { fraction: clear * distance > CONTACT_TOLERANCE ? clear : 0, blocking };
 	}
 
+	// The continuous counterpart to gatherCandidates: everything the move sweeps *across*, not only what it ends
+	// on, so a step long enough to fly clean past something still gathers it. Costs the swept-shape test per
+	// candidate, which is why it is a body's own opt-in rather than the default.
+	private gatherContinuousCandidates(searcher: Searcher, moveX: number, moveY: number): Array<CollisionEntity<T>> {
+		// A sensor is stopped by nothing; its overlaps are still reported by forEachOverlapping, never gathered here.
+		if(searcher.sensor) {
+			return [];
+		}
+
+		const { x, y, halfWidth, halfHeight } = searcher;
+		const endX = x + moveX;
+		const endY = y + moveY;
+
+		const candidates: Array<CollisionEntity<T>> = [];
+		this.forEachCandidate(searcher, Math.min(x, endX) - halfWidth, Math.min(y, endY) - halfHeight, Math.max(x, endX) + halfWidth, Math.max(y, endY) + halfHeight, other => {
+			// A sensor blocks nothing: a solid mover passes through it, left to the overlap callback.
+			if(other.components.body[BODY_SENSOR_INDEX] !== 0) {
+				return;
+			}
+
+			// Already inside it before the move began: not what this move ran into, and blocking on it would pin the
+			// entity there. Let the move through and leave the pair to the overlap callback.
+			if(overlapsAt(searcher, x, y, other)) {
+				return;
+			}
+
+			if(sweptOverlaps(searcher, x, y, moveX, moveY, other)) {
+				candidates.push(other);
+			}
+		});
+
+		return candidates;
+	}
+
+	// A continuous move's resting place: the earliest contact of everything it swept across. Each candidate's own
+	// entry fraction is found and the whole move stops at the smallest of them - the near obstacle, not whichever
+	// the tree happened to turn up first.
+	private sweepContinuous(searcher: Searcher, moveX: number, moveY: number, distance: number): SweepResult<T> {
+		const candidates = this.gatherContinuousCandidates(searcher, moveX, moveY);
+		if(candidates.length === 0) {
+			return { fraction: 1, blocking: NOTHING_BLOCKING };
+		}
+
+		let earliest = 1;
+		let blocking: Array<CollisionEntity<T>> = [];
+		const tolerance = CONTACT_TOLERANCE / distance;
+		for(const other of candidates) {
+			const fraction = this.entryFraction(searcher, other, moveX, moveY, distance);
+			if(fraction < earliest - tolerance) {
+				earliest = fraction;
+				blocking = [other];
+			} else if(fraction <= earliest + tolerance) {
+				blocking.push(other);
+			}
+		}
+
+		// An entity already against something is left exactly where it is rather than creeping a sub-tolerance step
+		// forward every run, same as refine.
+		return { fraction: earliest * distance > CONTACT_TOLERANCE ? earliest : 0, blocking };
+	}
+
+	// The fraction of its move at which `searcher` first touches `other`, halved in the way refine does. What refine
+	// cannot assume here is that the far end is blocked: a continuous move may pass clean through, clear at both
+	// ends, so the blocked bracket is seeded from where the two centres pass closest - which for convex shapes that
+	// really cross lies inside the overlap - rather than from the end of the move.
+	private entryFraction(searcher: Searcher, other: CollisionEntity<T>, moveX: number, moveY: number, distance: number): number {
+		let blocked: number;
+		if(this.blockedAtOne(searcher, other, moveX, moveY, 1)) {
+			blocked = 1;
+		} else {
+			const transform = other.components.transform;
+			const toX = transform[TRANSFORM_X_INDEX] - searcher.x;
+			const toY = transform[TRANSFORM_Y_INDEX] - searcher.y;
+			const closest = clamp01((toX * moveX + toY * moveY) / (distance * distance));
+			// The swept shape crossed the candidate but the centres' closest pass is not itself an overlap (a
+			// glancing hit off the centre line): stop there rather than search on. It rests a hair early at worst,
+			// which never tunnels.
+			if(!this.blockedAtOne(searcher, other, moveX, moveY, closest)) {
+				return closest;
+			}
+
+			blocked = closest;
+		}
+
+		let clear = 0;
+		const tolerance = CONTACT_TOLERANCE / distance;
+		for(let i = 0; i < MAX_REFINEMENTS && blocked - clear > tolerance; i++) {
+			const middle = (clear + blocked) / 2;
+			if(this.blockedAtOne(searcher, other, moveX, moveY, middle)) {
+				blocked = middle;
+			} else {
+				clear = middle;
+			}
+		}
+
+		return clear;
+	}
+
+	// blockedAt for a single candidate, so the continuous refinement halves without allocating a one-item array per
+	// step. The position is rounded to float32 for the same reason blockedAt is - the resting place must stay clear
+	// once stored to the shared transform.
+	private blockedAtOne(searcher: Searcher, other: CollisionEntity<T>, moveX: number, moveY: number, fraction: number): boolean {
+		return overlapsAt(searcher, Math.fround(searcher.x + moveX * fraction), Math.fround(searcher.y + moveY * fraction), other);
+	}
+
 	// Whether `self` would be inside any of `candidates` that far along its move. The position is rounded to
 	// float32 - what `move` actually stores into the shared transform - so the resting place this settles on is
 	// still clear once stored, not a hair inside. Otherwise a float32 nudge into overlap would trip the
@@ -478,7 +616,75 @@ function toSearcher<T extends PhysicsUpdateComponents>(self: MovingEntity<T>): S
 		category: body[BODY_CATEGORY_INDEX],
 		mask,
 		sensor: body[BODY_SENSOR_INDEX] !== 0,
+		ccd: body[BODY_CCD_INDEX] !== 0,
 	};
+}
+
+// Whether `searcher`, swept from (startX, startY) along (moveX, moveY), crosses `other` anywhere along the way -
+// the single extra test a continuous-collision body pays per candidate. Each shape sweeps to one covering shape:
+//   rectangle - an oriented box holding its start, its end, and everything between, since a box that does not turn
+//               as it moves just slides in its own frame and the region it covers is itself grown by that slide.
+//   circle    - a capsule down the centre path, which is exactly a moving circle's swept region.
+//   capsule   - that same path capsule, plus its own destination shape for the far end of the pill the straight
+//               path capsule falls short of.
+// Every shape's region is a superset of the true swept area, so a contact is only ever reported early, never
+// missed - which is the whole point of turning ccd on.
+function sweptOverlaps<T extends PhysicsUpdateComponents>(searcher: Searcher, startX: number, startY: number, moveX: number, moveY: number, other: CollisionEntity<T>): boolean {
+	const endX = startX + moveX;
+	const endY = startY + moveY;
+	const transform = other.components.transform;
+	const otherShape = other.components.body[BODY_SHAPE_INDEX];
+	const otherX = transform[TRANSFORM_X_INDEX];
+	const otherY = transform[TRANSFORM_Y_INDEX];
+	const otherWidth = transform[TRANSFORM_WIDTH_INDEX];
+	const otherHeight = transform[TRANSFORM_HEIGHT_INDEX];
+	const otherAngle = transform[TRANSFORM_ANGLE_INDEX];
+
+	if(searcher.shape === SHAPE_RECTANGLE) {
+		// The move measured in the box's own frame, where the box is axis aligned and merely slides by it. Growing
+		// each side by that slide over-covers the two corners the slid hexagon leaves open, which reports early, not
+		// short.
+		const cos = Math.cos(searcher.angle);
+		const sin = Math.sin(searcher.angle);
+		const localX = moveX * cos + moveY * sin;
+		const localY = -moveX * sin + moveY * cos;
+
+		return shapesOverlap(
+			SHAPE_RECTANGLE, (startX + endX) / 2, (startY + endY) / 2,
+			searcher.width + Math.abs(localX), searcher.height + Math.abs(localY), searcher.angle,
+			otherShape, otherX, otherY, otherWidth, otherHeight, otherAngle,
+		);
+	}
+
+	// A capsule of the mover's own radius laid down the centre path: width is the path length plus a cap at each
+	// end, height the full thickness. For a circle that is the exact swept region; for a capsule the destination
+	// test below adds back the length of the pill it does not cover.
+	const radius = shapeRadius(searcher.shape, searcher.width, searcher.height);
+	const distance = Math.sqrt(moveX * moveX + moveY * moveY);
+	const pathAngle = distance > 0 ? Math.atan2(moveY, moveX) : searcher.angle;
+	const alongPath = shapesOverlap(
+		SHAPE_CAPSULE, (startX + endX) / 2, (startY + endY) / 2, distance + radius * 2, radius * 2, pathAngle,
+		otherShape, otherX, otherY, otherWidth, otherHeight, otherAngle,
+	);
+	if(alongPath) {
+		return true;
+	}
+
+	return shapesOverlap(
+		searcher.shape, endX, endY, searcher.width, searcher.height, searcher.angle,
+		otherShape, otherX, otherY, otherWidth, otherHeight, otherAngle,
+	);
+}
+
+// [0, 1] clamp for the closest-approach fraction; the shapes helper keeps its own copy unexported.
+function clamp01(value: number): number {
+	if(value < 0) {
+		return 0;
+	} else if(value > 1) {
+		return 1;
+	}
+
+	return value;
 }
 
 // Whether the searcher, put down at (x, y) rather than its own block's position, overlaps `other`. Taking the

@@ -20,7 +20,7 @@ npm install @daneren2005/shared-memory-physics @daneren2005/shared-memory-ecs @d
 | --------------- | -------------------------------------------- | -------------------------- | ---------------------------------------------- |
 | `transform`     | `width`, `height`, `angle?` / `radius`       | `x`, `y`, `angle`          | `Float32Array` – where, how big, facing        |
 | `velocity`      | –                                            | `velocityX?`, `velocityY?` | `Float32Array` – world units per second        |
-| `body`          | `shape?`, `collideCategory?`, `collideMask?` | –                          | `Uint32Array` – what shape, what collides with |
+| `body`          | `shape?`, `collideCategory?`, `collideMask?`, `sensor?`, `continuousCollisionDetection?` | –                          | `Uint32Array` – what shape, what collides with |
 | `interpolation` | `interpolate`                                | –                          | `Float32Array` – where to *draw* it            |
 
 Entity configs are flat and shared across every component, so velocity is keyed as `velocityX` / `velocityY`
@@ -470,6 +470,17 @@ thing in the way is thick, so at any normal frame rate it does not arise - a shi
 moves 1.6 of them per frame at 60fps. A fixed `deltaBetweenRuns` puts a ceiling on it if your game has anything
 fast enough to care.
 
+**Continuous collision detection** lifts that ceiling for the bodies that need it, without slowing down the
+ones that do not. Set `continuousCollisionDetection: true` on a body and its own move is tested along the whole
+path it swept this run rather than only where the step ends - so a bullet that steps clean past a target still
+comes to rest against it (or, if it is a sensor, still reports the pass through it). It is one extra swept-shape
+test per candidate and only for that body: every other body stays on the single end-of-move test. Each shape
+sweeps to a single covering shape - a rectangle to an oriented box spanning start to end, a circle or capsule to
+a capsule down its path - chosen to be a superset of the ground actually covered, so a contact is reported early
+at worst, never missed. A continuous body comes straight to rest at its first contact and does not corner-slide,
+which is the behaviour a fast thing wants anyway. Reach for it on the small, fast things that tunnel - bullets,
+thrown weapons - and leave it off everything else.
+
 ### Collision filtering
 
 Every body collides **as** a `collideCategory` and **with** a `collideMask`, both plain 32-bit fields. The
@@ -577,6 +588,11 @@ transform[TRANSFORM_Y_INDEX] += moveY * fraction;
 
 `blocking` is what the entity came to rest *against*, which `forEachOverlapping` will not report from that
 resting place: the two are touching rather than through each other.
+
+Both honour a body's `continuousCollisionDetection` flag. `sweep` picks it up on its own - a continuous body's
+move is swept along its whole path. `forEachOverlapping` needs the move handed to it, since it runs after the
+entity has already been put down: `forEachOverlapping(self, handle, moveX, moveY)` tests the path a continuous
+body just swept, while the two-argument form (and every non-continuous body) tests only where it now stands.
 
 ## Spatial queries
 
