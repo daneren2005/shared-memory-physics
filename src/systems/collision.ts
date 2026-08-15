@@ -278,7 +278,24 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			const x = xCandidates.length === 0 ? CLEAR : this.refine(searcher, xCandidates, moveX, 0, Math.abs(moveX));
 			const y = yCandidates.length === 0 ? CLEAR : this.refine(searcher, yCandidates, 0, moveY, Math.abs(moveY));
 
-			return { moveX: moveX * x.fraction, moveY: moveY * y.fraction, blocking: mergeBlocking(x.blocking, y.blocking) };
+			const slidX = moveX * x.fraction;
+			const slidY = moveY * y.fraction;
+
+			// The axes were swept apart; their combination can still poke into a convex (round) obstacle neither axis
+			// alone reached - sliding the full length of one axis carries the entity into the curve the other axis
+			// stopped short of. Left overlapping, next run's start-overlap escape hatch would let it pass straight
+			// through, so the combined slide is checked against where it actually lands and refined to contact if it
+			// overlaps. A box slide ends touching an axis-aligned face and finds nothing here.
+			if(slidX !== 0 && slidY !== 0) {
+				const slidCandidates = this.gatherCandidates(searcher, slidX, slidY);
+				if(slidCandidates.length > 0) {
+					const rest = this.refine(searcher, slidCandidates, slidX, slidY, Math.sqrt(slidX * slidX + slidY * slidY));
+
+					return { moveX: slidX * rest.fraction, moveY: slidY * rest.fraction, blocking: rest.blocking };
+				}
+			}
+
+			return { moveX: slidX, moveY: slidY, blocking: mergeBlocking(x.blocking, y.blocking) };
 		}
 
 		// Not sliding, or a straight move: come to rest where it stops.
@@ -356,10 +373,13 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		return { fraction: clear * distance > CONTACT_TOLERANCE ? clear : 0, blocking };
 	}
 
-	// Whether `self` would be inside any of `candidates` that far along its move.
+	// Whether `self` would be inside any of `candidates` that far along its move. The position is rounded to
+	// float32 - what `move` actually stores into the shared transform - so the resting place this settles on is
+	// still clear once stored, not a hair inside. Otherwise a float32 nudge into overlap would trip the
+	// start-overlap escape hatch next run and let the entity pass straight through what it came to rest against.
 	private blockedAt(searcher: Searcher, candidates: Array<CollisionEntity<T>>, moveX: number, moveY: number, fraction: number): boolean {
-		const x = searcher.x + moveX * fraction;
-		const y = searcher.y + moveY * fraction;
+		const x = Math.fround(searcher.x + moveX * fraction);
+		const y = Math.fround(searcher.y + moveY * fraction);
 		for(const other of candidates) {
 			if(overlapsAt(searcher, x, y, other)) {
 				return true;

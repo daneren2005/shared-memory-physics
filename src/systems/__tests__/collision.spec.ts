@@ -562,6 +562,20 @@ describe('collision-broadphase', () => {
 			expect(mostlyY.moveY).toEqual(12);
 		});
 
+		it('does not slide a square into a circle it is stopping short of', () => {
+			// The square heads down-right into a circle sitting up-right of its path. X alone clears the circle and
+			// y alone stops short against it, but composing the full x slide with the shortened y drove the square
+			// into the circle's curve - leaving it overlapping, so the next run's start-overlap escape hatch tunnels
+			// it straight through. The slide must end touching the circle, not inside it.
+			const result = resolve([{ x: 0, y: 0 }, { x: 15, y: 25, width: 24, shape: SHAPE_CIRCLE }], 1, 15, 25);
+
+			const gapX = Math.max(Math.abs(15 - result.moveX) - 5, 0);
+			const gapY = Math.max(Math.abs(25 - result.moveY) - 5, 0);
+			// Squared centre-to-box gap against the squared radius: at or beyond it, the square is not inside.
+			expect(gapX * gapX + gapY * gapY).toBeGreaterThanOrEqual(12 * 12);
+			expect(blocking(result)).toEqual([2]);
+		});
+
 		it('comes to rest in the corner when both axes are blocked', () => {
 			// An inside corner: no axis to slide onto, so it stops against both walls.
 			const result = resolve([
@@ -591,6 +605,52 @@ describe('collision-broadphase', () => {
 			expect(result.moveX).toEqual(0);
 			expect(result.moveY).toEqual(0);
 			expect(blocking(result)).toEqual([2]);
+		});
+	});
+
+	// Driving a steered mover across a round obstacle, run after run, the way the click-to-move example does: the
+	// resting place a slide settles on must stay clear once written to the float32 transform, or a hair of rounding
+	// into overlap trips the start-overlap escape hatch next run and lets the mover pass straight through.
+	describe('sliding across a circle run after run', () => {
+		it('never comes to rest overlapping the circle it is steered into', () => {
+			const circle = createEntity({ x: 0, y: 0, width: 40, shape: SHAPE_CIRCLE }, 2);
+			const player = createEntity({ x: 0, y: 0, width: 28, height: 28 }, 1);
+			// A near-symmetric diagonal - the angle that used to leave the mover a rounding-width inside the circle
+			// and then tunnel through it. Steer straight at the far side and drive one 16ms step at a time.
+			const rad = (206 * Math.PI) / 180;
+			player.components.transform[TRANSFORM_X_INDEX] = Math.cos(rad) * 80;
+			player.components.transform[TRANSFORM_Y_INDEX] = Math.sin(rad) * 80;
+			const destX = -Math.cos(rad) * 80;
+			const destY = -Math.sin(rad) * 80;
+			const seconds = 16 / 1000;
+
+			for(let frame = 0; frame < 400; frame++) {
+				const transform = player.components.transform;
+				const dx = destX - transform[TRANSFORM_X_INDEX];
+				const dy = destY - transform[TRANSFORM_Y_INDEX];
+				const distance = Math.hypot(dx, dy);
+				if(distance <= 5) {
+					break;
+				}
+
+				const speed = Math.min(260, distance / seconds);
+				const broadphase = build([player, circle], seconds);
+				const moved = broadphase.resolveMove(player, (dx / distance) * speed * seconds, (dy / distance) * speed * seconds, true);
+				transform[TRANSFORM_X_INDEX] += moved.moveX;
+				transform[TRANSFORM_Y_INDEX] += moved.moveY;
+
+				// Rebuilt against where it now stands: if the step left it overlapping, the escape hatch would let
+				// the next one walk straight through. Steered straight into the circle it comes to rest against the
+				// near face rather than reaching the far side - that it never overlaps is the point, not that it
+				// gets across.
+				expect(overlapping(build([player, circle]), player)).toEqual([]);
+
+				// And it stays on its own side of the circle: steered straight in, it comes to rest against the near
+				// face (~34 out, the circle's centre being at 0) and never crosses to the far side - which, without
+				// ever overlapping, could only mean it teleported through.
+				const alongDiagonal = transform[TRANSFORM_X_INDEX] * Math.cos(rad) + transform[TRANSFORM_Y_INDEX] * Math.sin(rad);
+				expect(alongDiagonal).toBeGreaterThan(10);
+			}
 		});
 	});
 
