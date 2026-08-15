@@ -18,7 +18,7 @@ npm install @daneren2005/shared-memory-physics @daneren2005/shared-memory-ecs @d
 
 | Component       | Config                                       | Serialization              | Block                                          |
 | --------------- | -------------------------------------------- | -------------------------- | ---------------------------------------------- |
-| `transform`     | `width`, `height`, `angle?` / `radius`       | `x`, `y`                   | `Float32Array` – where, how big, facing        |
+| `transform`     | `width`, `height`, `angle?` / `radius`       | `x`, `y`, `angle`          | `Float32Array` – where, how big, facing        |
 | `velocity`      | –                                            | `velocityX?`, `velocityY?` | `Float32Array` – world units per second        |
 | `body`          | `shape?`, `collideCategory?`, `collideMask?` | –                          | `Uint32Array` – what shape, what collides with |
 | `interpolation` | `interpolate`                                | –                          | `Float32Array` – where to *draw* it            |
@@ -30,12 +30,13 @@ load one, and the missing one defaults to `0`.
 The transform is split in two. **Config** is what your entity template says - `width` and `height` are
 required, `angle` defaults to `0` - and a size is what loads the component at all: a config with neither a
 width nor a height does not get a transform. **Serialization** is the live state that changes as the world
-runs, so `save()` returns only `x` / `y` and a reloaded entity gets its size and starting facing back from
-your own template rather than the save.
+runs, so `save()` returns `x` / `y` and `angle`, while a reloaded entity gets its size back from your own
+template rather than the save.
 
 `x` / `y` are the **centre** of the box, not a corner: the box is rotated about that point and collision
 projects out from it in both directions. `angle` is in **radians** counter-clockwise from the +x axis, and
-nothing here writes it - it is yours to set, usually from the heading, and collision reads it. `width` /
+the physics never writes it - it is yours to set, usually from the heading, and collision reads it - but it
+round-trips through `save` so a turned entity comes back facing the same way. `width` /
 `height` are the unrotated size; a box with no area never overlaps anything, not even another box sharing its
 exact position.
 

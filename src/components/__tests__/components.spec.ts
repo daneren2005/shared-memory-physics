@@ -70,12 +70,14 @@ describe('components', () => {
 				.toThrow('A transform takes either a radius or a width and height, not both');
 		});
 
-		it('saves its current position, and only that', () => {
-			// Position changes as the world runs; size and facing come back from the template.
-			const entity = world.loadEntity({ x: 1, y: 2, width: 3, height: 4 });
+		it('saves its current position and facing, and only those', () => {
+			// Position and angle change as the world runs; size comes back from the template.
+			const entity = world.loadEntity({ x: 1, y: 2, width: 3, height: 4, angle: Math.PI });
 			entity.components.transform!.x = 100;
+			entity.components.transform!.angle = Math.PI / 2;
 
 			expect(entity.save()).toMatchObject({ x: 100, y: 2 });
+			expect(entity.save().angle).toBeCloseTo(Math.PI / 2);
 			expect(entity.save()).not.toHaveProperty('width');
 		});
 	});

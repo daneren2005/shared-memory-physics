@@ -20,11 +20,13 @@ export interface TransformConfig {
 	angle?: number
 	radius?: number
 }
-// The live runtime half: the physics system moves the position every run, so it round-trips through `save`. Size
-// and facing come back from the template. `x`/`y` are the centre of the box, not a corner.
+// The live runtime half: the physics system moves the position and can turn the box every run, so both round-trip
+// through `save`. Size comes back from the template. `x`/`y` are the centre of the box, not a corner; `angle` is
+// radians counter-clockwise from +x.
 export interface TransformSerialization {
 	x: number
 	y: number
+	angle: number
 }
 
 // Indexes into the backing Float32Array block, exported because the physics update reads the same offsets off
@@ -96,6 +98,7 @@ export const transformDefinition: ComponentDefinition<TransformComponent, Float3
 		return {
 			x: component.x,
 			y: component.y,
+			angle: component.angle,
 		};
 	},
 };
