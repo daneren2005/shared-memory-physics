@@ -55,7 +55,7 @@ export type {
 	BouncinessConfig,
 } from './components/bounciness-component';
 
-export { default as interpolationDefinition, snapEntity } from './components/interpolation-component';
+export { default as interpolationDefinition, snapEntity, startSpawnInterpolation } from './components/interpolation-component';
 export {
 	INTERPOLATION_X_INDEX,
 	INTERPOLATION_Y_INDEX,
@@ -71,6 +71,8 @@ export type {
 	InterpolationComponent,
 	InterpolationConfig,
 	SnappableEntity,
+	SpawnableEntity,
+	SpawnInterpolationOptions,
 } from './components/interpolation-component';
 
 export { physicsRegistry } from './components/registry';

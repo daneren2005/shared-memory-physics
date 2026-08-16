@@ -1,5 +1,6 @@
 import { ComponentSystem } from '@daneren2005/shared-memory-ecs';
 import type { BaseEntity, BaseWorld, ComponentDefinitionMap, ComponentMap, ComponentSystemQuery, EntityUpdateComponents, EntityUpdateFunction, SystemConfig } from '@daneren2005/shared-memory-ecs';
+import { startSpawnInterpolation, type SpawnableEntity } from '../components/interpolation-component';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
 import physicsUpdate, { POSITION_UPDATED_EVENT, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
 import { COLLIDABLE_QUERY } from './collision';
@@ -134,6 +135,21 @@ export default class PhysicsSystem<
 		});
 
 		this.reportMoves = options.reportMoves;
+	}
+
+	// Seeds a just-spawned, already-moving entity's interpolation so a renderer draws it leaving its spawn point
+	// from the next frame rather than parked there until this system's first step reaches it.
+	startInterpolation(entity: SpawnableEntity): void {
+		const step = this.deltaBetweenRuns;
+		if(step <= 0) {
+			return;
+		}
+
+		startSpawnInterpolation(entity, {
+			stepMs: step,
+			stepFraction: this.currentDelta / step,
+			tick: this.tick,
+		});
 	}
 
 	// Stamps the run with its step number and whether to report what moved. A subclass overriding this to attach

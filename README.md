@@ -309,8 +309,9 @@ happened rather than the one after, which is one frame of latency and nothing el
 
 - **Pause and `timeScale`** are free. `BaseWorld#runUpdate` skips every system while paused and scales the
   elapsed time it hands them, so the pacing stops and slows with the simulation on its own.
-- **Spawns** are free. The block is seeded from the entity's config, so something added between steps is drawn
-  standing where it was put rather than sliding in from the origin.
+- **Spawns at rest** are free. The block is seeded from the entity's config, so something added between steps is
+  drawn standing where it was put rather than sliding in from the origin. A spawn *already moving* is the one case
+  that needs a hand - see [`startInterpolation`](#a-moving-spawn-startinterpolation) below.
 - **Velocity changes, collisions and coming to rest** are all just steps the simulation took, and are drawn as
   they happened.
 
@@ -325,6 +326,41 @@ import { snapEntity } from '@daneren2005/shared-memory-physics';
 entity.components.transform!.x = 500;
 snapEntity(entity);   // drawn at 500 on the very next frame
 ```
+
+### A moving spawn: `startInterpolation`
+
+Blending has only one position for a brand-new entity - where it spawned - so it holds there until the first
+physics step gives it a second, up to a whole step later. For anything at rest that is exactly right (the bullet
+above stands where it was put). For something spawned *already moving* - a bullet leaving a barrel - that step of
+stillness reads as the shot hanging in the air before it goes.
+
+`startInterpolation` fixes it by **opening the render at the spawn point** and moving it out along the entity's own
+velocity at its true speed, **jumping the transform forward** to where that motion reaches by the time the first
+real step lands. So the entity is drawn leaving the spawn in its true direction from the very next frame, and the
+seeded segment hands straight over to the first step with no seam. How far it jumps - and how long the seeded
+segment lasts - is whatever is left of the current step, since that is when the first run lands:
+
+```ts
+const bullet = world.loadEntity({
+  x: 0, y: 0, velocityX: 400, velocityY: 0, radius: 3, interpolate: true,
+});
+physics.startInterpolation(bullet);   // drawn from the spawn point and moving out, not parked there until the first step
+```
+
+It reads the step and the accumulator off the system, so there is nothing to pass.
+
+**The jump skips a collision sweep.** It is a real move of the transform, applied without sweeping the span it
+covers, so the entity skips forward up to a step: it can **tunnel** through anything within that span of the spawn,
+and it runs that far ahead of where its velocity alone would have put it from then on. This is a deliberate trade
+for **spawned projectiles**, where leaving the muzzle instantly matters more than that first sweep - a shot fired
+*into* a target still lands inside it and is caught and killed by the next run's overlap test; only something thin
+enough to sit entirely within that jumped span is passed through uncaught. Reach for it on bullets and the like,
+not on something that must never skip a step of collision. Because the transform is jumped to the segment's end,
+the render is still never drawn ahead of the simulation.
+
+A no-op for an entity with no velocity or no interpolation, or while the system steps every frame. Driving physics
+by hand rather than through `PhysicsSystem`? Call the underlying `startSpawnInterpolation(entity, { stepMs,
+stepFraction, tick })` directly.
 
 ### The cost
 

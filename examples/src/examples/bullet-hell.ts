@@ -319,7 +319,7 @@ function fireBullet(runtime: ExampleRuntime, origin: { x: number, y: number }): 
 	const dirX = Math.cos(heading);
 	const dirY = Math.sin(heading);
 
-	runtime.world.loadEntity({
+	const bullet = runtime.world.loadEntity({
 		x: origin.x + dirX * BULLET_SPAWN_OFFSET,
 		y: origin.y + dirY * BULLET_SPAWN_OFFSET,
 		radius: BULLET_RADIUS,
@@ -336,6 +336,14 @@ function fireBullet(runtime: ExampleRuntime, origin: { x: number, y: number }): 
 		continuousCollisionDetection: true,
 		interpolate: true,
 	});
+
+	// A bullet is born mid-way between physics steps, so without this it would be drawn parked at the muzzle until
+	// the first step reaches it - up to a whole step of stillness that reads as the shot hanging before it leaves.
+	// This draws it from the muzzle and moving out along its heading from the first frame, jumping the transform
+	// forward to where the first step picks it up. That jump skips a collision sweep, so a shot can tunnel through a
+	// target within a step of the muzzle - fine here: these are sensor bullets meant to be dodged, not a mechanic
+	// that must never miss.
+	runtime.physics.startInterpolation(bullet);
 }
 
 // A spot placed so far, kept only so far as the reach used to space the next one off it.

@@ -207,6 +207,81 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 		expect(entity.components.interpolation).toBeUndefined();
 		expect(entity.components.transform!.x).toBeGreaterThan(0);
 	});
+
+	// A spawn is otherwise drawn parked at its spawn point until the first step reaches it (test above). For
+	// something spawned already moving - a bullet leaving a barrel - that stillness reads as lag, so `startInterpolation`
+	// opens the render at the spawn and jumps the transform forward so it is drawn leaving the spawn from the first frame.
+	describe('a moving spawn', () => {
+		const STEP_DISTANCE = SPEED * STEP / 1000;
+
+		it('is drawn at the spawn point and moves out from there, not offset ahead of it', async () => {
+			// Right at a step boundary, so the whole step is still to come and the jump is a full step.
+			physics.currentDelta = 0;
+			const entity = createEntity({ x: 0, y: 0, velocityX: SPEED });
+			physics.startInterpolation(entity);
+
+			// Drawn exactly at the spawn point, then moving out - where before it opened offset ahead of the spawn.
+			expect(drawn(entity)).toEqual([0, 0]);
+			// The transform is jumped forward to where the first step will pick it up.
+			expect(entity.components.transform!.x).toBeCloseTo(STEP_DISTANCE, 4);
+
+			await frame();
+			expect(drawn(entity)[0]).toBeGreaterThan(0);
+			expect(drawn(entity)[0]).toBeLessThanOrEqual(entity.components.transform!.x + 1e-4);
+		});
+
+		it('never goes backwards or ahead of the simulation across the handover to the first step', async () => {
+			const entity = createEntity({ x: 0, y: 0, velocityX: SPEED });
+			physics.startInterpolation(entity);
+
+			let previous = drawn(entity)[0];
+			for(let i = 0; i < 20; i++) {
+				await frame();
+				const [x] = drawn(entity);
+				expect(x).toBeGreaterThanOrEqual(previous - 1e-4);
+				expect(x).toBeLessThanOrEqual(entity.components.transform!.x + 1e-4);
+				previous = x;
+			}
+		});
+
+		it('settles to one frame of the velocity once the first real step has taken over', async () => {
+			const entity = createEntity({ x: 0, y: 0, velocityX: SPEED });
+			physics.startInterpolation(entity);
+
+			// Past the seeded segment and its handover.
+			await drawnOver(entity, STEP / FRAME + 4);
+
+			const positions = await drawnOver(entity, 10);
+			for(let i = 1; i < positions.length; i++) {
+				expect(positions[i][0] - positions[i - 1][0]).toBeCloseTo(PER_FRAME, 4);
+			}
+		});
+
+		it('opens at the spawn wherever in the step it lands, jumping only what is left of the step', () => {
+			const entity = createEntity({ x: 0, y: 0, velocityX: SPEED });
+			// Half a step already banked toward the next run, so only half a step is left to jump.
+			physics.currentDelta = STEP / 2;
+			physics.startInterpolation(entity);
+
+			// The render always opens at the spawn point, whenever in the step the spawn happened.
+			expect(drawn(entity)).toEqual([0, 0]);
+			// ...and the transform is jumped forward by only the part of the step still to come.
+			expect(entity.components.transform!.x).toBeCloseTo(STEP_DISTANCE * 0.5, 4);
+		});
+
+		it('does nothing while the system steps every frame', () => {
+			const everyFrame = new PhysicsSystem<Components>(world, { deltaBetweenRuns: 0, forceMainThread: true });
+			world.addSystem(everyFrame);
+
+			const entity = createEntity({ x: 7, y: 0, velocityX: SPEED });
+			everyFrame.startInterpolation(entity);
+
+			// Neither jumped nor seeded: with no window between steps there is nothing to smooth over.
+			expect(entity.components.transform!.x).toEqual(7);
+			expect(drawn(entity)).toEqual([7, 0]);
+			everyFrame.destroy();
+		});
+	});
 });
 
 // Coming to rest against something is the case velocity-guessing gets wrong, so it gets a world whose update sweeps.

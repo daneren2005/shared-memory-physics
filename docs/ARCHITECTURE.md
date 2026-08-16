@@ -40,8 +40,8 @@ main thread                              worker thread (optional)
 | `components/velocity-component.ts` | World units per **second**. Keyed `velocityX/Y` in configs. | `velocityDefinition`, `VELOCITY_*_INDEX` |
 | `components/body-component.ts` | Shape + collide category/mask + sensor + continuous-collision flag. A body is what makes an entity collidable. Shape/sensor/ccd share one packed flags word (`BODY_FLAGS_INDEX`), read via `bodyShape`/`isSensor`/`isContinuous`. | `bodyDefinition`, `canCollide`, `isSensor`, `isContinuous`, `bodyShape`, `SHAPE_*`, `BODY_*` |
 | `components/bounciness-component.ts` | Standalone bounce float (not part of body block). | `bouncinessDefinition`, `BOUNCINESS_INDEX` |
-| `components/interpolation-component.ts` | Render position + publication protocol fields (`prev`, `progress`, `tick`, `duration`). | `interpolationDefinition`, `snapEntity`, `INTERPOLATION_*_INDEX` |
-| `systems/physics-system.ts` | Main-thread `ComponentSystem`: gathers entities, decides which queries/blocks travel, stamps `tick`, gates move-reporting. Fixed step default. | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig` |
+| `components/interpolation-component.ts` | Render position + publication protocol fields (`prev`, `progress`, `tick`, `duration`), exposed on the block so a spawn can seed a first segment by hand. | `interpolationDefinition`, `snapEntity`, `startSpawnInterpolation`, `INTERPOLATION_*_INDEX` |
+| `systems/physics-system.ts` | Main-thread `ComponentSystem`: gathers entities, decides which queries/blocks travel, stamps `tick`, gates move-reporting. Fixed step default. `startInterpolation(entity)` seeds a just-spawned mover so it is drawn moving now (feeds its step + accumulator to `startSpawnInterpolation`). | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig` |
 | `systems/physics-update.ts` | The per-entity update run on either backend. `physicsUpdate` = movement only; `createPhysicsUpdate` = sweeping + native bounce + `onCollision`. Owns the interpolation publish protocol and the atomic move. | `physicsUpdate`, `createPhysicsUpdate`, `POSITION_UPDATED_EVENT`, `PhysicsWorld` |
 | `systems/collision.ts` | Broadphase (flatbush R-tree bucketed by collide category) + narrowphase sweep/overlap. | `CollisionBroadphase`, `COLLIDABLE_QUERY`, `MoveResult`, `SweepResult` |
 | `systems/bounce.ts` | Native reflect-off-contact used by the sweep when an entity has bounciness. Applied to both sides of a contact. | `bouncePair`, `bounce` (internal) |
@@ -96,6 +96,20 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
 - **Self is not re-checked for death between contacts.** The `DEAD_INDEX` guard runs once at the top
   of the update, and `forEachCandidate` filters dead *others*. An entity that wedges between two
   things in one run and dies on the first still resolves the second.
+- **A moving spawn is drawn frozen until its first step, unless seeded — and seeding opens at the spawn and jumps
+  the transform forward.** Interpolation only blends between two positions the simulation produced, and a fresh
+  entity has just the one, so it holds at its spawn point (up to a whole step) before the first run gives it a
+  second. `startSpawnInterpolation` (via `PhysicsSystem#startInterpolation`) instead **opens the render at the spawn
+  point** and moves it out along the velocity at true speed, **jumping the transform forward** to where that motion
+  reaches by the time the first real step lands (whatever is left of the step, `1 - accumulator/step`), so the
+  seeded segment hands straight over with no seam. The jump is a real move applied **without a collision sweep**:
+  the entity skips forward up to a step (so it can *tunnel* through anything within that span of the spawn) and runs
+  that far ahead of its velocity for the rest of its life. That is a deliberate trade for **spawned projectiles** —
+  a shot fired into a target still lands inside it and is killed by the next run's overlap test; only something thin
+  enough to sit entirely within that jumped span is passed through uncaught. Do not use it where a step of collision
+  must not be skipped. The transform is jumped to the segment's end, so the render is still never drawn ahead of the
+  simulation. The protocol fields (`progress`/`duration`/`syncedTick`/`tick`) are exposed on the interpolation
+  block's wrapper for exactly this; `tick` round-trips through the release-store.
 - **Render position (`interpolation`) is read-only for rendering.** Anything deterministic (AI,
   targeting, saves) must read `transform`; the render position depends on local frame timing.
 - **Only capsules must name their `shape`**; circle vs rectangle is inferred from `radius` vs
