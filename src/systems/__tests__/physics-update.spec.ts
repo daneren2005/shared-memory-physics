@@ -4,7 +4,7 @@ import type { ComponentSystemCallbacks } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
 import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
 import {
-	BODY_CATEGORY_INDEX, BODY_CCD_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, BODY_SIZE,
+	BODY_CATEGORY_INDEX, BODY_CCD_FLAG, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SENSOR_FLAG, BODY_SIZE,
 	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CIRCLE, SHAPE_RECTANGLE,
 } from '../../components/body-component';
 import { BOUNCINESS_INDEX, BOUNCINESS_SIZE } from '../../components/bounciness-component';
@@ -172,11 +172,9 @@ function createUnit(unit: Unit, entityId: number): MovingEntity<PhysicsUpdateCom
 	velocity[VELOCITY_Y_INDEX] = unit.velocityY ?? 0;
 
 	const body = new Uint32Array(BODY_SIZE);
-	body[BODY_SHAPE_INDEX] = unit.shape ?? SHAPE_RECTANGLE;
+	body[BODY_FLAGS_INDEX] = (unit.shape ?? SHAPE_RECTANGLE) | (unit.sensor ? BODY_SENSOR_FLAG : 0) | (unit.continuousCollisionDetection ? BODY_CCD_FLAG : 0);
 	body[BODY_CATEGORY_INDEX] = DEFAULT_COLLIDE_CATEGORY;
 	body[BODY_MASK_INDEX] = DEFAULT_COLLIDE_MASK;
-	body[BODY_SENSOR_INDEX] = unit.sensor ? 1 : 0;
-	body[BODY_CCD_INDEX] = unit.continuousCollisionDetection ? 1 : 0;
 
 	const entity = new Uint32Array(2);
 	entity[DEAD_INDEX] = unit.dead ? 1 : 0;

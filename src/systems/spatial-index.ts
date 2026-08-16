@@ -1,6 +1,6 @@
 import Flatbush from 'flatbush';
 import type { EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
-import { BODY_SHAPE_INDEX, SHAPE_RECTANGLE } from '../components/body-component';
+import { bodyShape, SHAPE_RECTANGLE } from '../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { shapeHalfHeight, shapeHalfWidth } from '../math/shapes';
 
@@ -52,7 +52,7 @@ export default class SpatialIndex<T extends SpatialComponents = SpatialComponent
 			// No body means the transform's width and height are a plain rectangle, keeping the index usable for
 			// anything with a place in the world, not only things that collide.
 			const body = components.body;
-			const shape = body ? body[BODY_SHAPE_INDEX] : SHAPE_RECTANGLE;
+			const shape = body ? bodyShape(body) : SHAPE_RECTANGLE;
 			const width = transform[TRANSFORM_WIDTH_INDEX];
 			const height = transform[TRANSFORM_HEIGHT_INDEX];
 			const angle = transform[TRANSFORM_ANGLE_INDEX];

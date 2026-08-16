@@ -1,7 +1,7 @@
 import CollisionBroadphase, { type MoveResult, type MovingEntity, type SweepResult } from '../collision';
 import type { PhysicsUpdateComponents } from '../../components/registry';
 import {
-	BODY_CATEGORY_INDEX, BODY_CCD_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, BODY_SIZE,
+	BODY_CATEGORY_INDEX, BODY_CCD_FLAG, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SENSOR_FLAG, BODY_SIZE,
 	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK,
 	SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE,
 } from '../../components/body-component';
@@ -44,11 +44,9 @@ function createEntity(box: Box, entityId: number): MovingEntity<PhysicsUpdateCom
 	velocity[VELOCITY_Y_INDEX] = box.velocityY ?? 0;
 
 	const body = new Uint32Array(BODY_SIZE);
-	body[BODY_SHAPE_INDEX] = box.shape ?? SHAPE_RECTANGLE;
+	body[BODY_FLAGS_INDEX] = (box.shape ?? SHAPE_RECTANGLE) | (box.sensor ? BODY_SENSOR_FLAG : 0) | (box.continuousCollisionDetection ? BODY_CCD_FLAG : 0);
 	body[BODY_CATEGORY_INDEX] = box.collideCategory ?? DEFAULT_COLLIDE_CATEGORY;
 	body[BODY_MASK_INDEX] = box.collideMask ?? DEFAULT_COLLIDE_MASK;
-	body[BODY_SENSOR_INDEX] = box.sensor ? 1 : 0;
-	body[BODY_CCD_INDEX] = box.continuousCollisionDetection ? 1 : 0;
 
 	return { entityId, components: { transform, velocity, body } };
 }

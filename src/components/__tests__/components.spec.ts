@@ -1,5 +1,8 @@
 import { createTestWorld, type TestWorld } from '../../__tests__/fixtures/world';
-import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, BODY_SHAPE_INDEX, DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../body-component';
+import {
+	BODY_CATEGORY_INDEX, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SHAPE_MASK,
+	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE,
+} from '../body-component';
 
 describe('components', () => {
 	let world: TestWorld;
@@ -196,7 +199,7 @@ describe('components', () => {
 			block[BODY_MASK_INDEX] = 24;
 			expect(body.collideMask).toEqual(24);
 
-			expect(block[BODY_SHAPE_INDEX]).toEqual(SHAPE_RECTANGLE);
+			expect(block[BODY_FLAGS_INDEX] & BODY_SHAPE_MASK).toEqual(SHAPE_RECTANGLE);
 		});
 
 		it('saves nothing, since what it holds comes back from the game\'s own template', () => {

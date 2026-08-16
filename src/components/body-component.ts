@@ -60,18 +60,28 @@ export interface BodyConfig {
 }
 
 // Indexes into the backing Uint32Array block, exported because the broadphase reads the same offsets off the
-// raw shared block.
-export const BODY_SHAPE_INDEX = 0;
+// raw shared block. Shape, sensor and ccd share one flags word - never read directly, always through the
+// helpers below so the packing stays in one place.
+export const BODY_FLAGS_INDEX = 0;
 export const BODY_CATEGORY_INDEX = 1;
 export const BODY_MASK_INDEX = 2;
-// 1 for a sensor, 0 for solid. In the block, not a JS flag, so the broadphase and bounce read it on the worker.
-export const BODY_SENSOR_INDEX = 3;
-export const BODY_CCD_INDEX = 4;
-export const BODY_SIZE = 5;
+export const BODY_SIZE = 3;
 
-// Whether a body block is a sensor. Exported so a game system reads the flag the way the broadphase does.
+// The flags word holds the shape in its low bits and the boolean body flags above them. Shapes are 1..3, so
+// two bits cover them; the sensor/ccd bits sit clear of that.
+export const BODY_SHAPE_MASK = 0b11;
+export const BODY_SENSOR_FLAG = 0b100;
+export const BODY_CCD_FLAG = 0b1000;
+
+// Readers off a raw body block, exported so the broadphase, bounce and game systems unpack the flags the same way.
+export function bodyShape(body: Uint32Array): number {
+	return body[BODY_FLAGS_INDEX] & BODY_SHAPE_MASK;
+}
 export function isSensor(body: Uint32Array): boolean {
-	return body[BODY_SENSOR_INDEX] !== 0;
+	return (body[BODY_FLAGS_INDEX] & BODY_SENSOR_FLAG) !== 0;
+}
+export function isContinuous(body: Uint32Array): boolean {
+	return (body[BODY_FLAGS_INDEX] & BODY_CCD_FLAG) !== 0;
 }
 
 export const bodyDefinition: ComponentDefinition<BodyComponent, Uint32Array, BodyConfig> = {
@@ -80,21 +90,19 @@ export const bodyDefinition: ComponentDefinition<BodyComponent, Uint32Array, Bod
 	loadProperties: ['width', 'height', 'radius', 'shape', 'collideCategory', 'collideMask', 'sensor', 'continuousCollisionDetection'],
 	load(entity, memory, config) {
 		const index = memory.create([
-			toShape(config),
+			toFlags(config),
 			config.collideCategory ?? DEFAULT_COLLIDE_CATEGORY,
 			config.collideMask ?? DEFAULT_COLLIDE_MASK,
-			config.sensor ? 1 : 0,
-			config.continuousCollisionDetection ? 1 : 0,
 		]);
 		const block = memory.getBlock(index);
 
 		return {
 			index,
 			get shape() {
-				return block[BODY_SHAPE_INDEX];
+				return block[BODY_FLAGS_INDEX] & BODY_SHAPE_MASK;
 			},
 			set shape(value: number) {
-				block[BODY_SHAPE_INDEX] = value;
+				block[BODY_FLAGS_INDEX] = (block[BODY_FLAGS_INDEX] & ~BODY_SHAPE_MASK) | (value & BODY_SHAPE_MASK);
 			},
 			get collideCategory() {
 				return block[BODY_CATEGORY_INDEX];
@@ -109,20 +117,33 @@ export const bodyDefinition: ComponentDefinition<BodyComponent, Uint32Array, Bod
 				block[BODY_MASK_INDEX] = value;
 			},
 			get sensor() {
-				return block[BODY_SENSOR_INDEX] !== 0;
+				return (block[BODY_FLAGS_INDEX] & BODY_SENSOR_FLAG) !== 0;
 			},
 			set sensor(value: boolean) {
-				block[BODY_SENSOR_INDEX] = value ? 1 : 0;
+				block[BODY_FLAGS_INDEX] = value ? (block[BODY_FLAGS_INDEX] | BODY_SENSOR_FLAG) : (block[BODY_FLAGS_INDEX] & ~BODY_SENSOR_FLAG);
 			},
 			get continuousCollisionDetection() {
-				return block[BODY_CCD_INDEX] !== 0;
+				return (block[BODY_FLAGS_INDEX] & BODY_CCD_FLAG) !== 0;
 			},
 			set continuousCollisionDetection(value: boolean) {
-				block[BODY_CCD_INDEX] = value ? 1 : 0;
+				block[BODY_FLAGS_INDEX] = value ? (block[BODY_FLAGS_INDEX] | BODY_CCD_FLAG) : (block[BODY_FLAGS_INDEX] & ~BODY_CCD_FLAG);
 			},
 		};
 	},
 };
+
+// Packs the config's shape and boolean flags into the single flags word stored at BODY_FLAGS_INDEX.
+function toFlags(config: BodyConfig): number {
+	let flags = toShape(config);
+	if(config.sensor) {
+		flags |= BODY_SENSOR_FLAG;
+	}
+	if(config.continuousCollisionDetection) {
+		flags |= BODY_CCD_FLAG;
+	}
+
+	return flags;
+}
 
 // An unknown shape throws rather than defaulting: colliding with the wrong outline is harder to spot than a
 // failed load. A config that names no shape is read off its size - `radius` is a circle, anything else a rectangle.

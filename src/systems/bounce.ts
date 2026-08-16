@@ -1,4 +1,4 @@
-import { BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, SHAPE_RECTANGLE } from '../components/body-component';
+import { bodyShape, isSensor, SHAPE_RECTANGLE } from '../components/body-component';
 import { BOUNCINESS_INDEX } from '../components/bounciness-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
@@ -98,12 +98,12 @@ function collisionNormal(self: BounceEntity, other: BounceEntity, out: Vector): 
 
 // A size-only entity with no body collides as a rectangle.
 function shapeOf(body: Uint32Array | undefined): number {
-	return body ? body[BODY_SHAPE_INDEX] : SHAPE_RECTANGLE;
+	return body ? bodyShape(body) : SHAPE_RECTANGLE;
 }
 
 // A missing body is a solid, not a sensor.
 function isSensorBody(body: Uint32Array | undefined): boolean {
-	return body !== undefined && body[BODY_SENSOR_INDEX] !== 0;
+	return body !== undefined && isSensor(body);
 }
 
 export default bounce;

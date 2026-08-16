@@ -1,5 +1,5 @@
 import { bouncePair, default as bounce } from '../bounce';
-import { SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../../components/body-component';
+import { BODY_SENSOR_FLAG, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../../components/body-component';
 
 const EIGHTH_TURN = Math.PI / 4;
 
@@ -22,7 +22,7 @@ function entity(x: number, y: number, options: EntityOptions = {}) {
 			transform: new Float32Array([x, y, width, options.height ?? width, options.angle ?? 0]),
 			velocity: new Float32Array([options.velocityX ?? 0, options.velocityY ?? 0]),
 			bounciness: new Float32Array([options.bounciness ?? 1]),
-			body: new Uint32Array([options.shape ?? SHAPE_RECTANGLE, 1, 0xffffffff, options.sensor ? 1 : 0]),
+			body: new Uint32Array([(options.shape ?? SHAPE_RECTANGLE) | (options.sensor ? BODY_SENSOR_FLAG : 0), 1, 0xffffffff]),
 		},
 	};
 }

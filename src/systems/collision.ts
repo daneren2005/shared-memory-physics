@@ -2,7 +2,7 @@ import Flatbush from 'flatbush';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsUpdateComponents } from '../components/registry';
-import { BODY_CATEGORY_INDEX, BODY_CCD_INDEX, BODY_MASK_INDEX, BODY_SENSOR_INDEX, BODY_SHAPE_INDEX, SHAPE_CAPSULE, SHAPE_RECTANGLE } from '../components/body-component';
+import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, bodyShape, isContinuous, isSensor, SHAPE_CAPSULE, SHAPE_RECTANGLE } from '../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import { shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap } from '../math/shapes';
@@ -145,7 +145,7 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 				continue;
 			}
 
-			const shape = body[BODY_SHAPE_INDEX];
+			const shape = bodyShape(body);
 			const width = transform[TRANSFORM_WIDTH_INDEX];
 			const height = transform[TRANSFORM_HEIGHT_INDEX];
 			// A shape with no area can never overlap anything; dropping it keeps a sizeless entity out of the tree.
@@ -358,7 +358,7 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			}
 
 			// A sensor blocks nothing: a solid mover passes through it, left to the overlap callback.
-			if(other.components.body[BODY_SENSOR_INDEX] !== 0) {
+			if(isSensor(other.components.body)) {
 				return;
 			}
 
@@ -422,7 +422,7 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		const candidates: Array<CollisionEntity<T>> = [];
 		this.forEachCandidate(searcher, Math.min(x, endX) - halfWidth, Math.min(y, endY) - halfHeight, Math.max(x, endX) + halfWidth, Math.max(y, endY) + halfHeight, other => {
 			// A sensor blocks nothing: a solid mover passes through it, left to the overlap callback.
-			if(other.components.body[BODY_SENSOR_INDEX] !== 0) {
+			if(isSensor(other.components.body)) {
 				return;
 			}
 
@@ -594,7 +594,7 @@ function toSearcher<T extends PhysicsUpdateComponents>(self: MovingEntity<T>): S
 	}
 
 	const transform = self.components.transform;
-	const shape = body[BODY_SHAPE_INDEX];
+	const shape = bodyShape(body);
 	const width = transform[TRANSFORM_WIDTH_INDEX];
 	const height = transform[TRANSFORM_HEIGHT_INDEX];
 	if(shapeIsEmpty(shape, width, height)) {
@@ -615,8 +615,8 @@ function toSearcher<T extends PhysicsUpdateComponents>(self: MovingEntity<T>): S
 		halfHeight: shapeHalfHeight(shape, width, height, angle),
 		category: body[BODY_CATEGORY_INDEX],
 		mask,
-		sensor: body[BODY_SENSOR_INDEX] !== 0,
-		ccd: body[BODY_CCD_INDEX] !== 0,
+		sensor: isSensor(body),
+		ccd: isContinuous(body),
 	};
 }
 
@@ -633,7 +633,7 @@ function sweptOverlaps<T extends PhysicsUpdateComponents>(searcher: Searcher, st
 	const endX = startX + moveX;
 	const endY = startY + moveY;
 	const transform = other.components.transform;
-	const otherShape = other.components.body[BODY_SHAPE_INDEX];
+	const otherShape = bodyShape(other.components.body);
 	const otherX = transform[TRANSFORM_X_INDEX];
 	const otherY = transform[TRANSFORM_Y_INDEX];
 	const otherWidth = transform[TRANSFORM_WIDTH_INDEX];
@@ -694,7 +694,7 @@ function overlapsAt<T extends PhysicsUpdateComponents>(searcher: Searcher, x: nu
 
 	return shapesOverlap(
 		searcher.shape, x, y, searcher.width, searcher.height, searcher.angle,
-		other.components.body[BODY_SHAPE_INDEX],
+		bodyShape(other.components.body),
 		transform[TRANSFORM_X_INDEX], transform[TRANSFORM_Y_INDEX],
 		transform[TRANSFORM_WIDTH_INDEX], transform[TRANSFORM_HEIGHT_INDEX], transform[TRANSFORM_ANGLE_INDEX],
 	);

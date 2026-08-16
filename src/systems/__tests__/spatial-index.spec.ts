@@ -1,5 +1,5 @@
 import SpatialIndex, { type SpatialComponents } from '../spatial-index';
-import { BODY_SHAPE_INDEX, BODY_SIZE, SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../../components/body-component';
+import { BODY_FLAGS_INDEX, BODY_SIZE, SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
 
 interface Box {
@@ -26,7 +26,7 @@ function createEntity(box: Box, entityId: number): { entityId: number, component
 	}
 
 	const body = new Uint32Array(BODY_SIZE);
-	body[BODY_SHAPE_INDEX] = box.shape ?? SHAPE_RECTANGLE;
+	body[BODY_FLAGS_INDEX] = box.shape ?? SHAPE_RECTANGLE;
 
 	return { entityId, components: { transform, body } };
 }
