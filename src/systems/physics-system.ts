@@ -54,6 +54,8 @@ export interface PhysicsSystemConfig<
 	// than the entity it moves (e.g. flocking). Read by name off `queries`, gathered whole regardless of `filter`,
 	// and merged with the collidable query rather than replacing it.
 	queries?: { [key: string]: ComponentSystemQuery<C> }
+	// For a grouped update (see `group` on createPhysicsUpdate)
+	skipGroup?: number
 }
 
 // Moves every entity with a transform and a velocity, and (when the update detects collisions) reports overlaps
@@ -71,6 +73,9 @@ export default class PhysicsSystem<
 	// Undefined means "whenever something is listening", worked out per run by addDataToWorld.
 	reportMoves: boolean | undefined;
 
+	// The group left untouched each run, sent to the worker per run via addDataToWorld
+	skipGroup: number | undefined;
+
 	constructor(world: BaseWorld<ComponentDefinitionMap, C>, options: PhysicsSystemConfig<C, T, W> = {}) {
 		const updateFunction: EntityUpdateFunction<C, T, W> & { physics?: PhysicsUpdateMetadata<C> } = options.updateFunction ?? physicsUpdate;
 		const optional = options.optional ?? updateFunction.physics?.optional ?? [];
@@ -79,6 +84,8 @@ export default class PhysicsSystem<
 		// travel with movers too - but only on the collision path, or they are blocks per mover for nothing.
 		// Interpolation goes along unconditionally, since the update must publish into it and nothing flags which
 		// entities have one. All are free for entities that lack them: the ECS only sends a block it actually holds.
+		const group = updateFunction.physics?.group;
+
 		const extraOptional: Array<keyof C & string> = [];
 		if(collision && !optional.includes('body')) {
 			extraOptional.push('body');
@@ -92,6 +99,11 @@ export default class PhysicsSystem<
 		if(collision) {
 			extraOptional.push('entity');
 		}
+		// The group block travels with every mover so the update can read its group id and honour skipGroup even
+		// where nothing collides.
+		if(group && !optional.includes(group.component)) {
+			extraOptional.push(group.component);
+		}
 		const movingOptional = extraOptional.length ? [...extraOptional, ...optional] : optional;
 
 		// Collision is between anything with a transform and a body, not only movers, so a ship can hit a station.
@@ -100,7 +112,11 @@ export default class PhysicsSystem<
 		// `bounciness` has to be on this side too, not just the movers: a contact is resolved once and turns both
 		// sides around by their own bounciness, and the broadphase decides from these blocks whether anything in the
 		// run can bounce at all. Left off, hasBounciness is never true and nothing ever bounces.
-		const collidableOptional = optional.includes('bounciness') ? optional : ['bounciness', ...optional];
+		const collidableOptional = optional.includes('bounciness') ? [...optional] : ['bounciness', ...optional];
+		// The group block on the collidable side too, so preRun can bucket the broadphase by group.
+		if(group && !collidableOptional.includes(group.component)) {
+			collidableOptional.push(group.component);
+		}
 		const collidableQuery = collision ? {
 			[COLLIDABLE_QUERY]: {
 				required: ['transform', 'body'] as Array<keyof C>,
@@ -135,6 +151,7 @@ export default class PhysicsSystem<
 		});
 
 		this.reportMoves = options.reportMoves;
+		this.skipGroup = options.skipGroup;
 	}
 
 	// Seeds a just-spawned, already-moving entity's interpolation so a renderer draws it leaving its spawn point
@@ -159,6 +176,8 @@ export default class PhysicsSystem<
 		world.tick = ++this.tick;
 		// Asked per run so a game can attach and drop the listener freely.
 		world.reportMoves = this.reportMoves ?? this.listenerCount(POSITION_UPDATED_EVENT) > 0;
+		// Sent every run so a game can flip which group is handed off (a jump) between runs with no rebuild.
+		world.skipGroup = this.skipGroup;
 	}
 }
 

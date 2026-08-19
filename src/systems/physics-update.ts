@@ -23,6 +23,8 @@ export interface PhysicsWorld extends ComponentSystemWorld {
 	// Whether to report this run's moves. Set by PhysicsSystem from whether anything is listening, since the cost
 	// is paid in the worker (an id per moved entity, cloned across the boundary). Undefined means report.
 	reportMoves?: boolean
+	// For a grouped update (see `group` on createPhysicsUpdate)
+	skipGroup?: number
 }
 
 // The event a move is reported through, emitted on the system on the main thread once the run completes,
@@ -47,6 +49,15 @@ export interface PhysicsUpdateOptions<
 	// Extra components to hand the update, and so the callback, beyond transform and velocity. List a health
 	// component here to take damage on collision. Optional per entity: one without it is still moved and collided.
 	optional?: Array<keyof C & string>
+	// Splits the run into isolated groups by a numeric id read off a component block, so one system can simulate many independent worlds at once
+	group?: PhysicsGroupConfig<C>
+}
+
+// Which component block carries an entity's group id, and where in it. The block travels with both movers and
+// collidables (PhysicsSystem adds it to their optionals), so grouping holds on both sides of a collision.
+export interface PhysicsGroupConfig<C extends ComponentMap> {
+	component: keyof C & string
+	index: number
 }
 
 // What PhysicsSystem needs to know about an update to set up its components and queries. Stamped on by
@@ -56,6 +67,8 @@ export interface PhysicsUpdateMetadata<C extends ComponentMap> {
 	// the bare physicsUpdate carries no metadata and never asks for it.
 	collision: boolean
 	optional: Array<keyof C & string>
+	// Set when the update groups its run; PhysicsSystem reads it to send the group block with movers and collidables.
+	group?: PhysicsGroupConfig<C>
 }
 
 export type PhysicsUpdateFunction<
@@ -85,16 +98,24 @@ export function createPhysicsUpdate<
 	T extends PhysicsUpdateComponents & EntityUpdateComponents<C> = PhysicsUpdateComponents & EntityUpdateComponents<C>,
 	W extends PhysicsWorld = PhysicsWorld,
 >(options: PhysicsUpdateOptions<C, T, W> = {}): PhysicsUpdateFunction<C, T, W> {
-	const { onCollision, optional = [] } = options;
+	const { onCollision, optional = [], group } = options;
 
-	// Built by preRun, read by each entity update after it. Safe as a closure variable because a run is one
-	// unbroken pass - preRun, then every entity - never re-entered part way through.
+	// Built by preRun, read by each entity update after it. Safe as closure variables because a run is one
+	// unbroken pass - preRun, then every entity - never re-entered part way through. Ungrouped runs use the single
+	// `broadphase`; a grouped run keeps one per group and each entity sweeps against its own.
 	let broadphase: CollisionBroadphase<T> | undefined;
+	let broadphaseByGroup: Map<number, CollisionBroadphase<T>> | undefined;
 
 	const update: PhysicsUpdateFunction<C, T, W> = Object.assign(
 		(world: W, entityId: number, components: T, queries: EntityQueryComponents<C>, callbacks: ComponentSystemCallbacks<C>) => {
 			// Killed earlier this run
 			if(components.entity?.[DEAD_INDEX] === 1) {
+				return;
+			}
+
+			// A grouped entity in the skipped group is left entirely alone - another system owns it this run.
+			const groupId = group ? readGroup<C>(components, group) : 0;
+			if(group && world.skipGroup === groupId) {
 				return;
 			}
 
@@ -108,9 +129,10 @@ export function createPhysicsUpdate<
 			// to its end.
 			startInterpolationStep(interpolation, components.transform, world.elapsedTime);
 
-			// No tree means this update was called by hand without preRun: nothing to sweep against, plain move.
-			// Bound locally so it stays narrowed inside the overlap callback below.
-			const tree = broadphase;
+			// No tree means either this update was called by hand without preRun, or a grouped entity whose group
+			// holds nothing collidable: nothing to sweep against, plain move. Bound locally so it stays narrowed
+			// inside the overlap callback below.
+			const tree = group ? broadphaseByGroup?.get(groupId) : broadphase;
 			if(!tree) {
 				move(entityId, components.transform, moveX, moveY, callbacks, world.reportMoves);
 				finishInterpolationStep(interpolation, world.tick);
@@ -159,17 +181,52 @@ export function createPhysicsUpdate<
 				// The sweep needs the collidable query even with no callback, so this is not `onCollision !== undefined`.
 				collision: true,
 				optional,
+				group,
 			},
 		},
 	);
 
 	// preRun sees every entity at once, so it is the only place the tree can be built from one consistent moment,
-	// before any of this run's movement.
+	// before any of this run's movement. Ungrouped builds one tree over everything; grouped buckets the collidables
+	// by group id and builds a tree per group, so an entity only ever sweeps against its own group - the skipped
+	// group gets none, since nothing in it will be stepped.
 	update.preRun = (world, entities, queries) => {
-		broadphase = new CollisionBroadphase<T>(queries[COLLIDABLE_QUERY] ?? [], world.elapsedTime / 1000);
+		const seconds = world.elapsedTime / 1000;
+		const collidables = queries[COLLIDABLE_QUERY] ?? [];
+		if(!group) {
+			broadphase = new CollisionBroadphase<T>(collidables, seconds);
+			return;
+		}
+
+		const byGroup = new Map<number, typeof collidables>();
+		for(const entity of collidables) {
+			const groupId = readGroup<C>(entity.components, group);
+			if(world.skipGroup === groupId) {
+				continue;
+			}
+
+			let list = byGroup.get(groupId);
+			if(!list) {
+				list = [];
+				byGroup.set(groupId, list);
+			}
+			list.push(entity);
+		}
+
+		broadphaseByGroup = new Map();
+		for(const [groupId, list] of byGroup) {
+			broadphaseByGroup.set(groupId, new CollisionBroadphase<T>(list, seconds));
+		}
 	};
 
 	return update;
+}
+
+// Reads an entity's group id off the configured block, defaulting to group 0 when the entity lacks it.
+function readGroup<C extends ComponentMap>(components: EntityUpdateComponents<C>, group: PhysicsGroupConfig<C>): number {
+	const block = components[group.component];
+
+	return block ? block[group.index] : 0;
 }
 
 // Everything a contact means, applied once for the pair: both sides turned around by their own bounciness, then

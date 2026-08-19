@@ -107,7 +107,7 @@ export { default as SpatialIndex } from './systems/spatial-index';
 export type { SpatialComponents, SpatialEntity, SpatialFilter } from './systems/spatial-index';
 
 export { default as physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT } from './systems/physics-update';
-export type { PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions, PhysicsWorld } from './systems/physics-update';
+export type { PhysicsGroupConfig, PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions, PhysicsWorld } from './systems/physics-update';
 export { default as PhysicsSystem, DEFAULT_PHYSICS_STEP_MS } from './systems/physics-system';
 export type { PhysicsSystemConfig } from './systems/physics-system';
 
