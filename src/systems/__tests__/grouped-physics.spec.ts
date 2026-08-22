@@ -71,7 +71,7 @@ function run(units: Array<Unit>, skipGroup?: number, elapsedTime = 1000): RunRes
 		},
 	});
 
-	const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, skipGroup };
+	const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, skipGroup, getString: () => '' };
 	const queries = { [COLLIDABLE_QUERY]: entities };
 	const ignored: ComponentSystemCallbacks<GroupComponents> = {
 		entityComponentChanged: () => {},

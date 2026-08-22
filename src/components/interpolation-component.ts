@@ -1,4 +1,5 @@
 import { loadFloat32, storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
+import { Component } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
 import type { TransformComponent } from './transform-component';
 import type { VelocityComponent } from './velocity-component';
@@ -59,73 +60,73 @@ export const INTERPOLATION_DURATION_INDEX = 6;
 export const INTERPOLATION_TICK_INDEX = 7;
 export const INTERPOLATION_SIZE = 8;
 
+class InterpolationComponentImpl extends Component<Float32Array> implements InterpolationComponent {
+	get x() {
+		return this.block[INTERPOLATION_X_INDEX];
+	}
+	set x(value: number) {
+		this.block[INTERPOLATION_X_INDEX] = value;
+	}
+	get y() {
+		return this.block[INTERPOLATION_Y_INDEX];
+	}
+	set y(value: number) {
+		this.block[INTERPOLATION_Y_INDEX] = value;
+	}
+	get prevX() {
+		return this.block[INTERPOLATION_PREV_X_INDEX];
+	}
+	set prevX(value: number) {
+		this.block[INTERPOLATION_PREV_X_INDEX] = value;
+	}
+	get prevY() {
+		return this.block[INTERPOLATION_PREV_Y_INDEX];
+	}
+	set prevY(value: number) {
+		this.block[INTERPOLATION_PREV_Y_INDEX] = value;
+	}
+	get progress() {
+		return this.block[INTERPOLATION_PROGRESS_INDEX];
+	}
+	set progress(value: number) {
+		this.block[INTERPOLATION_PROGRESS_INDEX] = value;
+	}
+	get syncedTick() {
+		return this.block[INTERPOLATION_SYNCED_TICK_INDEX];
+	}
+	set syncedTick(value: number) {
+		this.block[INTERPOLATION_SYNCED_TICK_INDEX] = value;
+	}
+	get duration() {
+		return this.block[INTERPOLATION_DURATION_INDEX];
+	}
+	set duration(value: number) {
+		this.block[INTERPOLATION_DURATION_INDEX] = value;
+	}
+	// The stamp everything else is published under, so it is read and written atomically like the physics update
+	// does: a release store paired with the acquire load the interpolation update reads it through.
+	get tick() {
+		return loadFloat32(this.block, INTERPOLATION_TICK_INDEX);
+	}
+	set tick(value: number) {
+		storeFloat32(this.block, INTERPOLATION_TICK_INDEX, value);
+	}
+}
+
 export const interpolationDefinition: ComponentDefinition<InterpolationComponent, Float32Array, InterpolationConfig> = {
 	type: Float32Array,
 	size: INTERPOLATION_SIZE,
 	loadProperties: ['interpolate'],
-	load(entity, memory, config) {
+	toBlock(config) {
 		const x = config.x ?? 0;
 		const y = config.y ?? 0;
-
 		// Spawn position on both sides of the blend, pacing at rest, so an entity added between steps is drawn
 		// standing still. PhysicsSystem's first run stamps tick 1, so the 0 here reads as a new step to reconcile.
 		// Duration 0 means "no segment yet", drawing the entity at its transform - as for anything never moved.
-		const index = memory.create([x, y, x, y, 0, 0, 0, 0]);
-		const block = memory.getBlock(index);
-
-		return {
-			index,
-			get x() {
-				return block[INTERPOLATION_X_INDEX];
-			},
-			set x(value: number) {
-				block[INTERPOLATION_X_INDEX] = value;
-			},
-			get y() {
-				return block[INTERPOLATION_Y_INDEX];
-			},
-			set y(value: number) {
-				block[INTERPOLATION_Y_INDEX] = value;
-			},
-			get prevX() {
-				return block[INTERPOLATION_PREV_X_INDEX];
-			},
-			set prevX(value: number) {
-				block[INTERPOLATION_PREV_X_INDEX] = value;
-			},
-			get prevY() {
-				return block[INTERPOLATION_PREV_Y_INDEX];
-			},
-			set prevY(value: number) {
-				block[INTERPOLATION_PREV_Y_INDEX] = value;
-			},
-			get progress() {
-				return block[INTERPOLATION_PROGRESS_INDEX];
-			},
-			set progress(value: number) {
-				block[INTERPOLATION_PROGRESS_INDEX] = value;
-			},
-			get syncedTick() {
-				return block[INTERPOLATION_SYNCED_TICK_INDEX];
-			},
-			set syncedTick(value: number) {
-				block[INTERPOLATION_SYNCED_TICK_INDEX] = value;
-			},
-			get duration() {
-				return block[INTERPOLATION_DURATION_INDEX];
-			},
-			set duration(value: number) {
-				block[INTERPOLATION_DURATION_INDEX] = value;
-			},
-			// The stamp everything else is published under, so it is read and written atomically like the physics
-			// update does: a release store paired with the acquire load the interpolation update reads it through.
-			get tick() {
-				return loadFloat32(block, INTERPOLATION_TICK_INDEX);
-			},
-			set tick(value: number) {
-				storeFloat32(block, INTERPOLATION_TICK_INDEX, value);
-			},
-		};
+		return [x, y, x, y, 0, 0, 0, 0];
+	},
+	attach(entity, memory, index) {
+		return new InterpolationComponentImpl(memory.getBlock(index), index);
 	},
 	// No `save`: everything here is derived from the transform and rebuilt on the next step, and `interpolate`
 	// is defining config from the entity template.

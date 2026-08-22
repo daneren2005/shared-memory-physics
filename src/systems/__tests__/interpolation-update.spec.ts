@@ -45,7 +45,7 @@ describe('interpolation-update', () => {
 	// Sets a known progress and runs a zero-elapsed frame, so the result is the blend at exactly that alpha.
 	function renderAt(components: { transform: Float32Array, interpolation: Float32Array }, alpha: number): [number, number] {
 		components.interpolation[INTERPOLATION_PROGRESS_INDEX] = alpha;
-		const world: ComponentSystemWorld = { gameTime: 0, elapsedTime: 0 };
+		const world: ComponentSystemWorld = { gameTime: 0, elapsedTime: 0, getString: () => '' };
 		interpolationUpdate(world, 1, components, {}, callbacks);
 
 		return [
@@ -90,7 +90,7 @@ describe('interpolation-update', () => {
 		// A step covering exactly its own frame falls out of the same arithmetic: a frame's worth of a frame-long
 		// segment is all of it.
 		const components = createEntity([0, 0], [10, 20], 16);
-		interpolationUpdate({ gameTime: 0, elapsedTime: 16 }, 1, components, {}, callbacks);
+		interpolationUpdate({ gameTime: 0, elapsedTime: 16, getString: () => '' }, 1, components, {}, callbacks);
 
 		expect(components.interpolation[INTERPOLATION_X_INDEX]).toEqual(10);
 		expect(components.interpolation[INTERPOLATION_Y_INDEX]).toEqual(20);
@@ -103,7 +103,7 @@ describe('interpolation-update', () => {
 		transform[TRANSFORM_Y_INDEX] = -12;
 		const interpolation = new Float32Array(INTERPOLATION_SIZE);
 
-		interpolationUpdate({ gameTime: 0, elapsedTime: 16 }, 1, { transform, interpolation }, {}, callbacks);
+		interpolationUpdate({ gameTime: 0, elapsedTime: 16, getString: () => '' }, 1, { transform, interpolation }, {}, callbacks);
 
 		expect(interpolation[INTERPOLATION_X_INDEX]).toEqual(40);
 		expect(interpolation[INTERPOLATION_Y_INDEX]).toEqual(-12);
@@ -195,7 +195,7 @@ function simulate(lag: number, frames = 60, frameLength = FRAME, lagFor: (tick: 
 		}
 
 		// And finally the interpolation system.
-		const world: ComponentSystemWorld = { gameTime: now, elapsedTime: frameLength };
+		const world: ComponentSystemWorld = { gameTime: now, elapsedTime: frameLength, getString: () => '' };
 		interpolationUpdate(world, 1, components, {}, callbacks);
 
 		drawn.push(interpolation[INTERPOLATION_X_INDEX]);

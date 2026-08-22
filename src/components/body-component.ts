@@ -1,3 +1,4 @@
+import { Component } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
 
 // What an entity collides as and what it collides with. A body is loaded for anything with a size, so the way
@@ -84,51 +85,52 @@ export function isContinuous(body: Uint32Array): boolean {
 	return (body[BODY_FLAGS_INDEX] & BODY_CCD_FLAG) !== 0;
 }
 
+class BodyComponentImpl extends Component<Uint32Array> implements BodyComponent {
+	get shape() {
+		return this.block[BODY_FLAGS_INDEX] & BODY_SHAPE_MASK;
+	}
+	set shape(value: number) {
+		this.block[BODY_FLAGS_INDEX] = (this.block[BODY_FLAGS_INDEX] & ~BODY_SHAPE_MASK) | (value & BODY_SHAPE_MASK);
+	}
+	get collideCategory() {
+		return this.block[BODY_CATEGORY_INDEX];
+	}
+	set collideCategory(value: number) {
+		this.block[BODY_CATEGORY_INDEX] = value;
+	}
+	get collideMask() {
+		return this.block[BODY_MASK_INDEX];
+	}
+	set collideMask(value: number) {
+		this.block[BODY_MASK_INDEX] = value;
+	}
+	get sensor() {
+		return (this.block[BODY_FLAGS_INDEX] & BODY_SENSOR_FLAG) !== 0;
+	}
+	set sensor(value: boolean) {
+		this.block[BODY_FLAGS_INDEX] = value ? (this.block[BODY_FLAGS_INDEX] | BODY_SENSOR_FLAG) : (this.block[BODY_FLAGS_INDEX] & ~BODY_SENSOR_FLAG);
+	}
+	get continuousCollisionDetection() {
+		return (this.block[BODY_FLAGS_INDEX] & BODY_CCD_FLAG) !== 0;
+	}
+	set continuousCollisionDetection(value: boolean) {
+		this.block[BODY_FLAGS_INDEX] = value ? (this.block[BODY_FLAGS_INDEX] | BODY_CCD_FLAG) : (this.block[BODY_FLAGS_INDEX] & ~BODY_CCD_FLAG);
+	}
+}
+
 export const bodyDefinition: ComponentDefinition<BodyComponent, Uint32Array, BodyConfig> = {
 	type: Uint32Array,
 	size: BODY_SIZE,
 	loadProperties: ['width', 'height', 'radius', 'shape', 'collideCategory', 'collideMask', 'sensor', 'continuousCollisionDetection'],
-	load(entity, memory, config) {
-		const index = memory.create([
+	toBlock(config) {
+		return [
 			toFlags(config),
 			config.collideCategory ?? DEFAULT_COLLIDE_CATEGORY,
 			config.collideMask ?? DEFAULT_COLLIDE_MASK,
-		]);
-		const block = memory.getBlock(index);
-
-		return {
-			index,
-			get shape() {
-				return block[BODY_FLAGS_INDEX] & BODY_SHAPE_MASK;
-			},
-			set shape(value: number) {
-				block[BODY_FLAGS_INDEX] = (block[BODY_FLAGS_INDEX] & ~BODY_SHAPE_MASK) | (value & BODY_SHAPE_MASK);
-			},
-			get collideCategory() {
-				return block[BODY_CATEGORY_INDEX];
-			},
-			set collideCategory(value: number) {
-				block[BODY_CATEGORY_INDEX] = value;
-			},
-			get collideMask() {
-				return block[BODY_MASK_INDEX];
-			},
-			set collideMask(value: number) {
-				block[BODY_MASK_INDEX] = value;
-			},
-			get sensor() {
-				return (block[BODY_FLAGS_INDEX] & BODY_SENSOR_FLAG) !== 0;
-			},
-			set sensor(value: boolean) {
-				block[BODY_FLAGS_INDEX] = value ? (block[BODY_FLAGS_INDEX] | BODY_SENSOR_FLAG) : (block[BODY_FLAGS_INDEX] & ~BODY_SENSOR_FLAG);
-			},
-			get continuousCollisionDetection() {
-				return (block[BODY_FLAGS_INDEX] & BODY_CCD_FLAG) !== 0;
-			},
-			set continuousCollisionDetection(value: boolean) {
-				block[BODY_FLAGS_INDEX] = value ? (block[BODY_FLAGS_INDEX] | BODY_CCD_FLAG) : (block[BODY_FLAGS_INDEX] & ~BODY_CCD_FLAG);
-			},
-		};
+		];
+	},
+	attach(entity, memory, index) {
+		return new BodyComponentImpl(memory.getBlock(index), index);
 	},
 };
 

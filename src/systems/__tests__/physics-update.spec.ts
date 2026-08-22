@@ -33,7 +33,7 @@ describe('physics-update', () => {
 		velocityBlock[VELOCITY_X_INDEX] = velocity[0];
 		velocityBlock[VELOCITY_Y_INDEX] = velocity[1];
 
-		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1 };
+		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, getString: () => '' };
 		physicsUpdate(world, 1, { transform, velocity: velocityBlock }, {}, callbacks);
 
 		return [transform[TRANSFORM_X_INDEX], transform[TRANSFORM_Y_INDEX]];
@@ -86,7 +86,7 @@ describe('physics-update', () => {
 			velocityBlock[VELOCITY_X_INDEX] = velocity[0];
 			velocityBlock[VELOCITY_Y_INDEX] = velocity[1];
 
-			physicsUpdate({ gameTime: 0, elapsedTime: 1000, tick: 1 }, 7, { transform, velocity: velocityBlock }, {}, {
+			physicsUpdate({ gameTime: 0, elapsedTime: 1000, tick: 1, getString: () => '' }, 7, { transform, velocity: velocityBlock }, {}, {
 				...callbacks,
 				emitSystemEvent(event, entityId) {
 					events.push(`${event}.${entityId}`);
@@ -129,7 +129,7 @@ describe('physics-update', () => {
 			velocity[VELOCITY_X_INDEX] = 3;
 
 			const events: Array<string> = [];
-			physicsUpdate({ gameTime: 0, elapsedTime: 1000, tick: 1, reportMoves: false }, 7, { transform, velocity }, {}, {
+			physicsUpdate({ gameTime: 0, elapsedTime: 1000, tick: 1, reportMoves: false, getString: () => '' }, 7, { transform, velocity }, {}, {
 				...callbacks,
 				emitSystemEvent(event, entityId) {
 					events.push(`${event}.${entityId}`);
@@ -221,7 +221,7 @@ describe('createPhysicsUpdate', () => {
 			},
 		});
 
-		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, reportMoves };
+		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, reportMoves, getString: () => '' };
 		const queries = { [COLLIDABLE_QUERY]: entities };
 		const recording: ComponentSystemCallbacks<PhysicsComponents> = {
 			entityComponentChanged(entityId, componentName, prop) {
@@ -429,7 +429,7 @@ describe('createPhysicsUpdate', () => {
 			const entities = units.map((unit, index) => createUnit(unit, index + 1));
 			const update = createPhysicsUpdate();
 
-			const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1 };
+			const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, getString: () => '' };
 			const queries = { [COLLIDABLE_QUERY]: entities };
 
 			update.preRun!(world, entities, queries, ignored);
@@ -515,7 +515,7 @@ describe('createPhysicsUpdate bounce', () => {
 		const entities = units.map((unit, index) => createUnit(unit, index + 1));
 		const update = createPhysicsUpdate();
 
-		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1 };
+		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, getString: () => '' };
 		const queries = { [COLLIDABLE_QUERY]: entities };
 		const ignored: ComponentSystemCallbacks = {
 			entityComponentChanged: () => {},
@@ -609,7 +609,7 @@ describe('createPhysicsUpdate bounce', () => {
 				},
 			});
 
-			const world: PhysicsWorld = { gameTime: 0, elapsedTime: 1000, tick: 1 };
+			const world: PhysicsWorld = { gameTime: 0, elapsedTime: 1000, tick: 1, getString: () => '' };
 			const queries = { [COLLIDABLE_QUERY]: entities };
 			const ignored: ComponentSystemCallbacks = {
 				entityComponentChanged: () => {},

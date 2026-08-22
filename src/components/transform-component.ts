@@ -1,3 +1,4 @@
+import { Component } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
 
 // Where an entity is, how big it is, and which way it faces: a position, its box, and the box's rotation.
@@ -38,12 +39,45 @@ export const TRANSFORM_HEIGHT_INDEX = 3;
 export const TRANSFORM_ANGLE_INDEX = 4;
 export const TRANSFORM_SIZE = 5;
 
+class TransformComponentImpl extends Component<Float32Array> implements TransformComponent {
+	get x() {
+		return this.block[TRANSFORM_X_INDEX];
+	}
+	set x(value: number) {
+		this.block[TRANSFORM_X_INDEX] = value;
+	}
+	get y() {
+		return this.block[TRANSFORM_Y_INDEX];
+	}
+	set y(value: number) {
+		this.block[TRANSFORM_Y_INDEX] = value;
+	}
+	get width() {
+		return this.block[TRANSFORM_WIDTH_INDEX];
+	}
+	set width(value: number) {
+		this.block[TRANSFORM_WIDTH_INDEX] = value;
+	}
+	get height() {
+		return this.block[TRANSFORM_HEIGHT_INDEX];
+	}
+	set height(value: number) {
+		this.block[TRANSFORM_HEIGHT_INDEX] = value;
+	}
+	get angle() {
+		return this.block[TRANSFORM_ANGLE_INDEX];
+	}
+	set angle(value: number) {
+		this.block[TRANSFORM_ANGLE_INDEX] = value;
+	}
+}
+
 export const transformDefinition: ComponentDefinition<TransformComponent, Float32Array, TransformConfig, TransformSerialization> = {
 	type: Float32Array,
 	size: TRANSFORM_SIZE,
 	// A size marks a config as having a transform. x/y are not listed: they come off a save, not the template.
 	loadProperties: ['width', 'height', 'radius'],
-	load(entity, memory, config) {
+	toBlock(config) {
 		// A radius is the same size said differently; turn it into width/height so nothing downstream cares. Both
 		// at once cannot be honoured, so it throws rather than picking a winner.
 		const radius = config.radius;
@@ -57,42 +91,10 @@ export const transformDefinition: ComponentDefinition<TransformComponent, Float3
 			width = height = radius * 2;
 		}
 
-		const index = memory.create([config.x, config.y, width, height, config.angle ?? 0]);
-		const block = memory.getBlock(index);
-
-		return {
-			index,
-			get x() {
-				return block[TRANSFORM_X_INDEX];
-			},
-			set x(value: number) {
-				block[TRANSFORM_X_INDEX] = value;
-			},
-			get y() {
-				return block[TRANSFORM_Y_INDEX];
-			},
-			set y(value: number) {
-				block[TRANSFORM_Y_INDEX] = value;
-			},
-			get width() {
-				return block[TRANSFORM_WIDTH_INDEX];
-			},
-			set width(value: number) {
-				block[TRANSFORM_WIDTH_INDEX] = value;
-			},
-			get height() {
-				return block[TRANSFORM_HEIGHT_INDEX];
-			},
-			set height(value: number) {
-				block[TRANSFORM_HEIGHT_INDEX] = value;
-			},
-			get angle() {
-				return block[TRANSFORM_ANGLE_INDEX];
-			},
-			set angle(value: number) {
-				block[TRANSFORM_ANGLE_INDEX] = value;
-			},
-		};
+		return [config.x, config.y, width, height, config.angle ?? 0];
+	},
+	attach(entity, memory, index) {
+		return new TransformComponentImpl(memory.getBlock(index), index);
 	},
 	save(component) {
 		return {

@@ -11,8 +11,10 @@ export const tagDefinition: ComponentDefinition<TagComponent, Int32Array, { tag:
 	type: Int32Array,
 	size: 1,
 	loadProperties: ['tag'],
-	load(entity, memory, config) {
-		const index = memory.create([config.tag]);
+	toBlock(config) {
+		return [config.tag];
+	},
+	attach(entity, memory, index) {
 		const block = memory.getBlock(index);
 
 		return {
@@ -37,8 +39,10 @@ export const healthDefinition: ComponentDefinition<HealthComponent, Float32Array
 	type: Float32Array,
 	size: 1,
 	loadProperties: ['health'],
-	load(entity, memory, config) {
-		const index = memory.create([config.health]);
+	toBlock(config) {
+		return [config.health];
+	},
+	attach(entity, memory, index) {
 		const block = memory.getBlock(index);
 
 		return {

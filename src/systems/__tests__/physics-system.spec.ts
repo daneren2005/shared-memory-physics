@@ -187,7 +187,7 @@ function noop(): void {}
 
 // What a system would tell this run's update about reporting, the only place the answer exists.
 function reportsMoves(system: PhysicsSystem<Components, CollisionUpdateComponents>): boolean | undefined {
-	const world: PhysicsWorld = { gameTime: 0, elapsedTime: 1000, tick: 0 };
+	const world: PhysicsWorld = { gameTime: 0, elapsedTime: 1000, tick: 0, getString: () => '' };
 	system.addDataToWorld(world);
 
 	return world.reportMoves;
