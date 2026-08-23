@@ -2,7 +2,7 @@ import Flatbush from 'flatbush';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsUpdateComponents } from '../components/registry';
-import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, bodyShape, isContinuous, isSensor, SHAPE_CAPSULE, SHAPE_RECTANGLE } from '../components/body-component';
+import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, bodyShape, isContinuous, isDying, isSensor, SHAPE_CAPSULE, SHAPE_RECTANGLE } from '../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import { shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap } from '../math/shapes';
@@ -69,6 +69,19 @@ export interface MoveResult<T extends PhysicsUpdateComponents> {
 
 // One shared empty array for the sweeps that find nothing, rather than one per entity per run.
 const NOTHING_BLOCKING: Array<never> = [];
+
+// The minimal read of the searching side a shape test needs: a body to be measured as, at a transform. Looser
+// than MovingEntity - no component map - so the geometry helpers below serve both the sweep and `contactPoint`,
+// which death interpolation calls with whichever side of a collision was fatal.
+interface ContactSource {
+	entityId: number
+	components: { transform: Float32Array, body?: Uint32Array }
+}
+// The other side of a shape test: only ever a body at a transform is looked at, so this is all that is required.
+// CollisionEntity satisfies it, as does anything else carrying the two blocks.
+interface ContactTarget {
+	components: { transform: Float32Array, body: Uint32Array }
+}
 
 // Packs a pair of entity ids into one key. Ids must stay under this for the key to be unique, which a pool an
 // ECS can address leaves untouchable, and it keeps the product inside the safe integer range.
@@ -243,6 +256,28 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 				handle(other);
 			}
 		});
+	}
+
+	// Where `self`'s centre sits the moment it first touches `other`, along the move it just took (moveX, moveY).
+	// Used by death interpolation to end a dying entity's last segment exactly on the thing it hit, rather than
+	// wherever its step happened to land - which for a fast continuous body is a stride past the target. `self`'s
+	// transform is read after the move, so the start it sweeps from is reconstructed as (end - move). Falls back to
+	// the current position for an entity that cannot collide or did not move.
+	contactPoint(self: ContactSource, other: ContactTarget, moveX: number, moveY: number): { x: number, y: number } {
+		const transform = self.components.transform;
+		const endX = transform[TRANSFORM_X_INDEX];
+		const endY = transform[TRANSFORM_Y_INDEX];
+		const distance = Math.sqrt(moveX * moveX + moveY * moveY);
+		const searcher = toSearcher(self);
+		if(!searcher || distance === 0) {
+			return { x: endX, y: endY };
+		}
+
+		searcher.x = endX - moveX;
+		searcher.y = endY - moveY;
+		const fraction = this.entryFraction(searcher, other, moveX, moveY, distance);
+
+		return { x: searcher.x + moveX * fraction, y: searcher.y + moveY * fraction };
 	}
 
 	// How much of the move `self` may take before it runs into something. The whole move is checked in one pass
@@ -471,7 +506,7 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 	// cannot assume here is that the far end is blocked: a continuous move may pass clean through, clear at both
 	// ends, so the blocked bracket is seeded from where the two centres pass closest - which for convex shapes that
 	// really cross lies inside the overlap - rather than from the end of the move.
-	private entryFraction(searcher: Searcher, other: CollisionEntity<T>, moveX: number, moveY: number, distance: number): number {
+	private entryFraction(searcher: Searcher, other: ContactTarget, moveX: number, moveY: number, distance: number): number {
 		let blocked: number;
 		if(this.blockedAtOne(searcher, other, moveX, moveY, 1)) {
 			blocked = 1;
@@ -507,7 +542,7 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 	// blockedAt for a single candidate, so the continuous refinement halves without allocating a one-item array per
 	// step. The position is rounded to float32 for the same reason blockedAt is - the resting place must stay clear
 	// once stored to the shared transform.
-	private blockedAtOne(searcher: Searcher, other: CollisionEntity<T>, moveX: number, moveY: number, fraction: number): boolean {
+	private blockedAtOne(searcher: Searcher, other: ContactTarget, moveX: number, moveY: number, fraction: number): boolean {
 		return overlapsAt(searcher, Math.fround(searcher.x + moveX * fraction), Math.fround(searcher.y + moveY * fraction), other);
 	}
 
@@ -552,6 +587,14 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 					continue;
 				}
 
+				// Struck what will kill it and playing out its final segment onto the impact point: it is a step from
+				// removal and must not be run into again, on this run or the next, or it would resolve a second contact
+				// and be killed twice. Skipped here rather than left out of the tree so it stays a candidate for nothing
+				// - the same way a dead entity is filtered at query time, not at build.
+				if(isDying(other.components.body)) {
+					continue;
+				}
+
 				handle(other);
 			}
 		}
@@ -579,7 +622,7 @@ function mergeBlocking<T extends PhysicsUpdateComponents>(a: Array<CollisionEnti
 }
 
 // Reads what a searching entity is measured by, or undefined for one that cannot collide.
-function toSearcher<T extends PhysicsUpdateComponents>(self: MovingEntity<T>): Searcher | undefined {
+function toSearcher(self: ContactSource): Searcher | undefined {
 	// No body means no collisions, though the system can still move it - the move query does not require a body.
 	const body = self.components.body;
 	if(!body) {
@@ -629,7 +672,7 @@ function toSearcher<T extends PhysicsUpdateComponents>(self: MovingEntity<T>): S
 //               path capsule falls short of.
 // Every shape's region is a superset of the true swept area, so a contact is only ever reported early, never
 // missed - which is the whole point of turning ccd on.
-function sweptOverlaps<T extends PhysicsUpdateComponents>(searcher: Searcher, startX: number, startY: number, moveX: number, moveY: number, other: CollisionEntity<T>): boolean {
+function sweptOverlaps(searcher: Searcher, startX: number, startY: number, moveX: number, moveY: number, other: ContactTarget): boolean {
 	const endX = startX + moveX;
 	const endY = startY + moveY;
 	const transform = other.components.transform;
@@ -689,7 +732,7 @@ function clamp01(value: number): number {
 
 // Whether the searcher, put down at (x, y) rather than its own block's position, overlaps `other`. Taking the
 // position as arguments lets a sweep try a whole path without writing any of it.
-function overlapsAt<T extends PhysicsUpdateComponents>(searcher: Searcher, x: number, y: number, other: CollisionEntity<T>): boolean {
+function overlapsAt(searcher: Searcher, x: number, y: number, other: ContactTarget): boolean {
 	const transform = other.components.transform;
 
 	return shapesOverlap(

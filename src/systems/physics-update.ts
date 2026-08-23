@@ -9,6 +9,7 @@ import {
 	INTERPOLATION_PREV_Y_INDEX,
 	INTERPOLATION_TICK_INDEX,
 } from '../components/interpolation-component';
+import { isDying, markDying } from '../components/body-component';
 import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import CollisionBroadphase, { COLLIDABLE_QUERY, type CollisionEntity, type CollisionFunction, type MovingEntity } from './collision';
@@ -25,6 +26,19 @@ export interface PhysicsWorld extends ComponentSystemWorld {
 	reportMoves?: boolean
 	// For a grouped update (see `group` on createPhysicsUpdate)
 	skipGroup?: number
+	dieAtImpact?(dying: DeathInterpolationEntity, other: DeathInterpolationEntity): void
+}
+
+// What `dieAtImpact` reads off each side. Everything is optional and guarded at runtime so both a MovingEntity
+// (the mover, whose body is only optional in the type) and a CollisionEntity (the thing hit, whose velocity is)
+// can be handed to it either way round - which side carries the fatal category is the game's to sort out.
+export interface DeathInterpolationEntity {
+	entityId: number
+	components: {
+		transform?: Float32Array
+		velocity?: Float32Array
+		body?: Uint32Array
+	}
 }
 
 // The event a move is reported through, emitted on the system on the main thread once the run completes,
@@ -113,6 +127,15 @@ export function createPhysicsUpdate<
 				return;
 			}
 
+			// Struck something fatal on an earlier run and marked to die a step later, once its final segment onto the
+			// impact point had a step to render (see dieAtImpact). That step is now, so this is where it actually dies -
+			// before it moves or sweeps again, so it neither drifts on nor resolves a second contact.
+			if(components.body !== undefined && isDying(components.body)) {
+				callbacks.entityDied(entityId);
+
+				return;
+			}
+
 			// A grouped entity in the skipped group is left entirely alone - another system owns it this run.
 			const groupId = group ? readGroup<C>(components, group) : 0;
 			if(group && world.skipGroup === groupId) {
@@ -191,6 +214,14 @@ export function createPhysicsUpdate<
 	// by group id and builds a tree per group, so an entity only ever sweeps against its own group - the skipped
 	// group gets none, since nothing in it will be stepped.
 	update.preRun = (world, entities, queries) => {
+		// Bound to the tree it strikes against and hung on the world so a collision callback can reach it. The tree
+		// is picked when it is called, not now, since the callback fires after the trees below are built; a dying
+		// entity and the thing it hit are always in the same group, so the dying side's group picks the right one.
+		world.dieAtImpact = (dying, other) => {
+			const tree = group ? broadphaseByGroup?.get(readGroup<C>(dying.components, group)) : broadphase;
+			applyDeathInterpolation<T>(world, tree, dying, other);
+		};
+
 		const seconds = world.elapsedTime / 1000;
 		const collidables = queries[COLLIDABLE_QUERY] ?? [];
 		if(!group) {
@@ -248,6 +279,53 @@ function resolveContact<
 	if(onCollision) {
 		onCollision(world, self, other, queries, callbacks);
 	}
+}
+
+// Backs `dieAtImpact`. Rather than remove `dying` on the spot - where a fast continuous mover has already stepped
+// a stride past what it hit, and its render, a step behind, has it short of the target - this ends its current
+// interpolation segment on the exact point it struck `other` and marks it to die one run later. That extra run is
+// the step the render needs to play the segment out, so the entity is drawn reaching the impact and only then
+// vanishes. Position only: the game still raises whatever hit/score event it wants, on the spot. A no-op tail for
+// an entity missing the blocks or that did not move leaves it marked dying, so it is still cleaned up next run.
+function applyDeathInterpolation<T extends PhysicsUpdateComponents>(
+	world: PhysicsWorld,
+	tree: CollisionBroadphase<T> | undefined,
+	dying: DeathInterpolationEntity,
+	other: DeathInterpolationEntity,
+): void {
+	const body = dying.components.body;
+	// Needs a body to carry the flag; already dying means a second contact this run, which is nothing to redo.
+	if(!body || isDying(body)) {
+		return;
+	}
+	markDying(body);
+
+	const transform = dying.components.transform;
+	const velocity = dying.components.velocity;
+	const otherTransform = other.components.transform;
+	const otherBody = other.components.body;
+	if(!tree || !transform || !velocity || !otherTransform || !otherBody) {
+		return;
+	}
+
+	const seconds = world.elapsedTime / 1000;
+	const moveX = velocity[VELOCITY_X_INDEX] * seconds;
+	const moveY = velocity[VELOCITY_Y_INDEX] * seconds;
+	if(moveX === 0 && moveY === 0) {
+		return;
+	}
+
+	const contact = tree.contactPoint(
+		{ entityId: dying.entityId, components: { transform, body } },
+		{ components: { transform: otherTransform, body: otherBody } },
+		moveX,
+		moveY,
+	);
+	// Retarget this run's segment: `prev` is still the step's start, so moving the transform back to the impact
+	// point makes the render play start -> impact instead of start -> overshoot. The tick was already stamped for
+	// this run and the interpolation reads the transform live, so the shortened end is picked up with no reseeding.
+	transform[TRANSFORM_X_INDEX] = contact.x;
+	transform[TRANSFORM_Y_INDEX] = contact.y;
 }
 
 // Movement only, and the only way to get movement with no collision detection: walks an entity straight through

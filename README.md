@@ -362,6 +362,39 @@ A no-op for an entity with no velocity or no interpolation, or while the system 
 by hand rather than through `PhysicsSystem`? Call the underlying `startSpawnInterpolation(entity, { stepMs,
 stepFraction, tick })` directly.
 
+### A moving death: `dieAtImpact`
+
+The same lag runs the other way at the end of a life. A fast entity moves a whole step at a time and, with
+`continuousCollisionDetection` on, is killed the run its *swept path* first crosses what it hits - which can be a
+near-full stride before its step actually lands there. Remove it on the spot and the render, itself a step behind,
+draws it blinking out well short of the target. A bullet dies in mid-air.
+
+`dieAtImpact` fixes it as the mirror of the spawn seeding: instead of `callbacks.entityDied`, a collision callback
+calls it to **end the dying entity's current segment on the exact point it struck** (`CollisionBroadphase.contactPoint`,
+the same entry fraction the sweep already refines) and **defer the kill by one run** - the one extra step the render
+needs to play that last stride onto the impact before the entity is gone:
+
+```ts
+onCollision(world, self, other, queries, callbacks) {
+  // `self` (a fast sensor bullet) just swept through `other`.  Draw it reaching `other`, then die - rather than
+  // vanishing a stride short.
+  world.dieAtImpact(self, other);
+
+  // Gameplay still happens now: the hit lands this run, only the visual removal waits.
+  callbacks.emitEntityEvent(other.entityId, 'hit');
+}
+```
+
+Either side of the pair can be the one to kill - `dieAtImpact(dying, other)` takes whichever carried the fatal
+role, working out that entity's own approach from its velocity. The struck entity is marked with a runtime `dying`
+bit (`BODY_DYING_FLAG`) that leaves it out of the broadphase at once, so nothing runs into it again while it plays
+out, and it is removed at the top of its next update. The bit lives in shared memory, so any worker stepping the
+entity honours it. Nothing clears it - a dying entity is gone a run later.
+
+`dieAtImpact` is set on the world every run by `createPhysicsUpdate`; keep a `callbacks.entityDied` fallback if you
+call `onCollision` by hand without a `preRun`. It moves position only - raise your own hit or score event on the
+spot, as above.
+
 ### The cost
 
 32 bytes per interpolated entity, three extra writes per entity per physics step, and a per-frame pass of one
@@ -458,7 +491,9 @@ value another thread also touches with the atomics from `@daneren2005/shared-mem
 the two entities in front of it - to credit a third for a kill, say - a callback can walk
 `queries[COLLIDABLE_QUERY]`, the full collidable list. Anything that has to happen on the main thread goes
 through `callbacks`: `entityDied`, `entityComponentChanged`, `createEntity`, and `emitEntityEvent` for an
-event of your own - the same one the move above reports itself through.
+event of your own - the same one the move above reports itself through. To kill a *fast* mover on impact and
+still have it drawn reaching what it hit, call `world.dieAtImpact(dying, other)` in place of `entityDied` - see
+[`dieAtImpact`](#a-moving-death-dieatimpact).
 
 **What collides.** Everything with a transform and a `body`, not only the entities the system moves, so a
 ship can run into a station that has no velocity of its own. Shapes that only just touch do not count as

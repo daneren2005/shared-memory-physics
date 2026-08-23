@@ -25,7 +25,7 @@ export type {
 	VelocitySerialization,
 } from './components/velocity-component';
 
-export { default as bodyDefinition, canCollide, isSensor, isContinuous, bodyShape } from './components/body-component';
+export { default as bodyDefinition, canCollide, isSensor, isContinuous, isDying, markDying, bodyShape } from './components/body-component';
 export {
 	SHAPE_RECTANGLE,
 	SHAPE_CIRCLE,
@@ -36,6 +36,7 @@ export {
 	BODY_SHAPE_MASK,
 	BODY_SENSOR_FLAG,
 	BODY_CCD_FLAG,
+	BODY_DYING_FLAG,
 	BODY_CATEGORY_INDEX,
 	BODY_MASK_INDEX,
 	BODY_SIZE,
@@ -107,7 +108,7 @@ export { default as SpatialIndex } from './systems/spatial-index';
 export type { SpatialComponents, SpatialEntity, SpatialFilter } from './systems/spatial-index';
 
 export { default as physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT } from './systems/physics-update';
-export type { PhysicsGroupConfig, PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions, PhysicsWorld } from './systems/physics-update';
+export type { DeathInterpolationEntity, PhysicsGroupConfig, PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions, PhysicsWorld } from './systems/physics-update';
 export { default as PhysicsSystem, DEFAULT_PHYSICS_STEP_MS } from './systems/physics-system';
 export type { PhysicsSystemConfig } from './systems/physics-system';
 

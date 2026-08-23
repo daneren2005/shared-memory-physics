@@ -5,7 +5,7 @@ import type { PhysicsComponents, PhysicsUpdateComponents } from '../../component
 import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
 import {
 	BODY_CATEGORY_INDEX, BODY_CCD_FLAG, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SENSOR_FLAG, BODY_SIZE,
-	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CIRCLE, SHAPE_RECTANGLE,
+	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, isDying, SHAPE_CIRCLE, SHAPE_RECTANGLE,
 } from '../../components/body-component';
 import { BOUNCINESS_INDEX, BOUNCINESS_SIZE } from '../../components/bounciness-component';
 import { TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
@@ -701,5 +701,95 @@ describe('createPhysicsUpdate bounce', () => {
 
 		expect(result.velocityX(1)).toBeCloseTo(-25, 3);
 		expect(result.velocityX(2)).toBeCloseTo(25, 3);
+	});
+});
+
+// Records the entityDied ids a run fired, with the rest of the callbacks inert.
+function deathRecordingCallbacks(died: Array<number>): ComponentSystemCallbacks<PhysicsComponents> {
+	return {
+		entityComponentChanged: () => {},
+		emitEntityEvent: () => {},
+		emitSystemEvent: () => {},
+		entityDied: id => died.push(id),
+		createEntity: () => {},
+	};
+}
+
+// One run of an update over the entities in order, driven like the worker: preRun, then each entity.
+function runOnce(
+	update: ReturnType<typeof createPhysicsUpdate>,
+	world: PhysicsWorld,
+	entities: Array<MovingEntity<PhysicsUpdateComponents>>,
+	callbacks: ComponentSystemCallbacks<PhysicsComponents>,
+) {
+	const queries = { [COLLIDABLE_QUERY]: entities };
+	update.preRun!(world, entities, queries, callbacks);
+	for(const entity of entities) {
+		update(world, entity.entityId, entity.components, queries, callbacks);
+	}
+}
+
+// A fast continuous sensor that steps clean past a solid target in one run: without ccd it would tunnel, with it
+// the swept path catches the target and the callback kills it.
+function bulletAndTarget(): Array<MovingEntity<PhysicsUpdateComponents>> {
+	const bullet = createUnit(circle({ x: 0, y: 0, velocityX: 100, sensor: true, continuousCollisionDetection: true }), 1);
+	const target = createUnit({ x: 50, y: 0, width: 10, height: 10 }, 2);
+
+	return [bullet, target];
+}
+
+// dieAtImpact defers a fatal contact by a run so the render plays the last stride onto the impact point, instead
+// of a fast continuous mover blinking out a step short of what it hit.
+describe('death interpolation', () => {
+	it('marks the mover dying and ends its move on the impact point rather than the overshoot', () => {
+		const died: Array<number> = [];
+		const update = createPhysicsUpdate({
+			onCollision(world, self, other) {
+				world.dieAtImpact?.(self, other);
+			},
+		});
+		const entities = bulletAndTarget();
+		const [bullet] = entities;
+
+		runOnce(update, { gameTime: 0, elapsedTime: 1000, tick: 1, getString: () => '' }, entities, deathRecordingCallbacks(died));
+
+		expect(isDying(bullet.components.body!)).toBe(true);
+		// Target left edge is 45, bullet radius 5, so first contact is at centre 40 - not the 100 the sensor swept to.
+		expect(bullet.components.transform[TRANSFORM_X_INDEX]).toBeCloseTo(40, 0);
+		// Death is deferred: it is not removed on the run it struck.
+		expect(died).toEqual([]);
+	});
+
+	it('kills the entity on its next run and never resolves a second contact against it', () => {
+		const died: Array<number> = [];
+		const update = createPhysicsUpdate({
+			onCollision(world, self, other) {
+				world.dieAtImpact?.(self, other);
+			},
+		});
+		const callbacks = deathRecordingCallbacks(died);
+		const entities = bulletAndTarget();
+
+		runOnce(update, { gameTime: 0, elapsedTime: 1000, tick: 1, getString: () => '' }, entities, callbacks);
+		runOnce(update, { gameTime: 0, elapsedTime: 1000, tick: 2, getString: () => '' }, entities, callbacks);
+
+		// Removed once, by id, on the run after impact - and only once, since a dying body is left out of the tree.
+		expect(died).toEqual([1]);
+	});
+
+	it('leaves an ordinary kill (no dieAtImpact) untouched', () => {
+		// The fallback path a game keeps for safety still removes on the spot.
+		const died: Array<number> = [];
+		const update = createPhysicsUpdate({
+			onCollision(_world, self, _other, _queries, callbacks) {
+				callbacks.entityDied(self.entityId);
+			},
+		});
+		const entities = bulletAndTarget();
+
+		runOnce(update, { gameTime: 0, elapsedTime: 1000, tick: 1, getString: () => '' }, entities, deathRecordingCallbacks(died));
+
+		expect(isDying(entities[0].components.body!)).toBe(false);
+		expect(died).toEqual([1]);
 	});
 });

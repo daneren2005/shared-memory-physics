@@ -73,6 +73,12 @@ export const BODY_SIZE = 3;
 export const BODY_SHAPE_MASK = 0b11;
 export const BODY_SENSOR_FLAG = 0b100;
 export const BODY_CCD_FLAG = 0b1000;
+// A runtime flag, not a config one: set when an entity has struck what will kill it and is playing out one last
+// interpolation segment onto the impact point before it is removed (see `dieAtImpact` in physics-update). Unlike
+// the bits above it is never loaded from config; it lives in the flags word so any thread stepping the entity
+// sees it and it survives to the next run, which is what defers the kill by a step. A dying body is left out of
+// collision and killed at the top of its next update.
+export const BODY_DYING_FLAG = 0b10000;
 
 // Readers off a raw body block, exported so the broadphase, bounce and game systems unpack the flags the same way.
 export function bodyShape(body: Uint32Array): number {
@@ -83,6 +89,14 @@ export function isSensor(body: Uint32Array): boolean {
 }
 export function isContinuous(body: Uint32Array): boolean {
 	return (body[BODY_FLAGS_INDEX] & BODY_CCD_FLAG) !== 0;
+}
+export function isDying(body: Uint32Array): boolean {
+	return (body[BODY_FLAGS_INDEX] & BODY_DYING_FLAG) !== 0;
+}
+// Sets the dying flag. One-way for the entity's remaining life - nothing clears it, since a dying entity is gone
+// a run later.
+export function markDying(body: Uint32Array): void {
+	body[BODY_FLAGS_INDEX] |= BODY_DYING_FLAG;
 }
 
 class BodyComponentImpl extends Component<Uint32Array> implements BodyComponent {

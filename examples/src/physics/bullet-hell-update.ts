@@ -1,4 +1,5 @@
 import { BODY_CATEGORY_INDEX, createPhysicsUpdate } from '@daneren2005/shared-memory-physics';
+import type { DeathInterpolationEntity, PhysicsWorld } from '@daneren2005/shared-memory-physics';
 import type { Components } from '../world';
 
 // The collide categories the bullet-hell example loads its entities with.  They are tags the collision callback
@@ -28,7 +29,7 @@ export const PLAYER_HIT_EVENT = 'player-hit';
 // function cannot be sent to a worker.  Anything it needs to do back on the main thread (remove a dead bullet,
 // raise the hit event) goes through `callbacks`.
 export const bulletHellUpdate = createPhysicsUpdate<Components>({
-	onCollision(_world, self, other, _queries, callbacks) {
+	onCollision(world, self, other, _queries, callbacks) {
 		const selfBody = self.components.body;
 		const otherBody = other.components.body;
 		// A collision callback only ever fires for two bodies, so both are present; the guard is for the type.
@@ -41,25 +42,33 @@ export const bulletHellUpdate = createPhysicsUpdate<Components>({
 		// other side is what it ran into.  Either can be `self`: the bullet if it reached the contact on its own
 		// move, the player if it moved into the bullet first - the outcome is the same either way.
 		if(selfBody[BODY_CATEGORY_INDEX] === BULLET_CATEGORY) {
-			killBullet(self.entityId, other.entityId, otherBody[BODY_CATEGORY_INDEX], callbacks);
+			killBullet(world, self, other, otherBody[BODY_CATEGORY_INDEX], callbacks);
 		} else if(otherBody[BODY_CATEGORY_INDEX] === BULLET_CATEGORY) {
-			killBullet(other.entityId, self.entityId, selfBody[BODY_CATEGORY_INDEX], callbacks);
+			killBullet(world, other, self, selfBody[BODY_CATEGORY_INDEX], callbacks);
 		}
 	},
 });
 
-// Kills the bullet and, when the thing it hit was the player, raises the hit event on the player.  `entityDied`
-// does not free anything on the spot - it flags the block and reports it, and the main thread removes it - so a
-// bullet that reaches the player and an obstacle in the same run is still only counted once, on the player side.
+// Kills the bullet and, when the thing it hit was the player, raises the hit event on the player.  The kill goes
+// through `dieAtImpact` rather than `entityDied` so a fast bullet is drawn reaching what it hit before it vanishes,
+// instead of blinking out a stride short: it ends the bullet's last interpolation segment on the impact point and
+// removes it a run later, once that segment has had a step to render (see the physics update).  The hit is still
+// raised on the spot, so the tally is unaffected by the deferred removal.  `dieAtImpact` is always present here -
+// createPhysicsUpdate sets it every run - but the plain `entityDied` fallback keeps this correct if it is not.
 function killBullet(
-	bulletId: number,
-	targetId: number,
+	world: PhysicsWorld,
+	bullet: DeathInterpolationEntity,
+	target: DeathInterpolationEntity,
 	targetCategory: number,
 	callbacks: { entityDied(id: number): void, emitEntityEvent(id: number, event: string): void },
 ): void {
-	callbacks.entityDied(bulletId);
+	if(world.dieAtImpact) {
+		world.dieAtImpact(bullet, target);
+	} else {
+		callbacks.entityDied(bullet.entityId);
+	}
 	if(targetCategory === PLAYER_CATEGORY) {
-		callbacks.emitEntityEvent(targetId, PLAYER_HIT_EVENT);
+		callbacks.emitEntityEvent(target.entityId, PLAYER_HIT_EVENT);
 	}
 }
 

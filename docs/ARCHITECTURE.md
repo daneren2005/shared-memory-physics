@@ -38,12 +38,12 @@ main thread                              worker thread (optional)
 | `components/registry.ts` | `physicsRegistry` map + the component-map type slices systems are generic over. | `physicsRegistry`, `PhysicsComponents`, `PhysicsUpdateComponents`, `InterpolationComponents`, `InterpolationUpdateComponents` |
 | `components/transform-component.ts` | Where/how big/facing. `x,y` = **centre**; `angle` radians CCW. | `transformDefinition`, `TRANSFORM_*_INDEX`, `TRANSFORM_SIZE` |
 | `components/velocity-component.ts` | World units per **second**. Keyed `velocityX/Y` in configs. | `velocityDefinition`, `VELOCITY_*_INDEX` |
-| `components/body-component.ts` | Shape + collide category/mask + sensor + continuous-collision flag. A body is what makes an entity collidable. Shape/sensor/ccd share one packed flags word (`BODY_FLAGS_INDEX`), read via `bodyShape`/`isSensor`/`isContinuous`. | `bodyDefinition`, `canCollide`, `isSensor`, `isContinuous`, `bodyShape`, `SHAPE_*`, `BODY_*` |
+| `components/body-component.ts` | Shape + collide category/mask + sensor + continuous-collision flag, plus a runtime-only `dying` bit. A body is what makes an entity collidable. Shape/sensor/ccd/dying share one packed flags word (`BODY_FLAGS_INDEX`), read via `bodyShape`/`isSensor`/`isContinuous`/`isDying`. | `bodyDefinition`, `canCollide`, `isSensor`, `isContinuous`, `isDying`, `markDying`, `bodyShape`, `SHAPE_*`, `BODY_*` |
 | `components/bounciness-component.ts` | Standalone bounce float (not part of body block). | `bouncinessDefinition`, `BOUNCINESS_INDEX` |
 | `components/interpolation-component.ts` | Render position + publication protocol fields (`prev`, `progress`, `tick`, `duration`), exposed on the block so a spawn can seed a first segment by hand. | `interpolationDefinition`, `snapEntity`, `startSpawnInterpolation`, `INTERPOLATION_*_INDEX` |
 | `systems/physics-system.ts` | Main-thread `ComponentSystem`: gathers entities, decides which queries/blocks travel, stamps `tick`, gates move-reporting. Fixed step default. `startInterpolation(entity)` seeds a just-spawned mover so it is drawn moving now (feeds its step + accumulator to `startSpawnInterpolation`). | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig` |
-| `systems/physics-update.ts` | The per-entity update run on either backend. `physicsUpdate` = movement only; `createPhysicsUpdate` = sweeping + native bounce + `onCollision`. Owns the interpolation publish protocol and the atomic move. | `physicsUpdate`, `createPhysicsUpdate`, `POSITION_UPDATED_EVENT`, `PhysicsWorld` |
-| `systems/collision.ts` | Broadphase (flatbush R-tree bucketed by collide category) + narrowphase sweep/overlap. | `CollisionBroadphase`, `COLLIDABLE_QUERY`, `MoveResult`, `SweepResult` |
+| `systems/physics-update.ts` | The per-entity update run on either backend. `physicsUpdate` = movement only; `createPhysicsUpdate` = sweeping + native bounce + `onCollision`. Owns the interpolation publish protocol and the atomic move. `world.dieAtImpact` (set per run in `preRun`) is the death-interpolation entry a callback calls instead of `entityDied`. | `physicsUpdate`, `createPhysicsUpdate`, `POSITION_UPDATED_EVENT`, `PhysicsWorld`, `DeathInterpolationEntity` |
+| `systems/collision.ts` | Broadphase (flatbush R-tree bucketed by collide category) + narrowphase sweep/overlap. `contactPoint` reports where a mover first touched a target, for death interpolation. | `CollisionBroadphase`, `COLLIDABLE_QUERY`, `MoveResult`, `SweepResult` |
 | `systems/bounce.ts` | Native reflect-off-contact used by the sweep when an entity has bounciness. Applied to both sides of a contact. | `bouncePair`, `bounce` (internal) |
 | `systems/spatial-index.ts` | Same R-tree without collide categories — targeting / range / nearest queries. Snapshot per run. | `SpatialIndex`, `SpatialFilter` |
 | `systems/interpolation-system.ts` | Main-thread system that runs the per-frame render-position lerp. | `InterpolationSystem`, `InterpolationSystemConfig` |
@@ -110,6 +110,17 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
   must not be skipped. The transform is jumped to the segment's end, so the render is still never drawn ahead of the
   simulation. The protocol fields (`progress`/`duration`/`syncedTick`/`tick`) are exposed on the interpolation
   block's wrapper for exactly this; `tick` round-trips through the release-store.
+- **Death interpolation is the spawn seeding run backwards, and defers the kill by a step.** A callback that
+  calls `world.dieAtImpact(dying, other)` instead of `callbacks.entityDied` retargets the dying entity's current
+  interpolation segment to end on the point it struck (`CollisionBroadphase.contactPoint`, the entry fraction the
+  CCD blocker path already refines) and sets the runtime-only `BODY_DYING_FLAG`. Nothing is removed on the spot;
+  the entity is killed at the top of its **next** update, which is the one extra step the render needs to play the
+  final stride onto the impact - otherwise a fast continuous mover, whose render lags a step and whose swept kill
+  can fire a stride early, blinks out well short of what it hit. A dying body is filtered out of the broadphase
+  (`forEachCandidate`), the same as a dead one, so it is never run into again on this run or the next. Gameplay
+  events (a hit, a score) still fire immediately in the callback; only the visual removal waits. The flag is set
+  in shared memory, not the update closure, so any worker stepping the entity sees it and it survives to the next
+  run.
 - **Render position (`interpolation`) is read-only for rendering.** Anything deterministic (AI,
   targeting, saves) must read `transform`; the render position depends on local frame timing.
 - **Only capsules must name their `shape`**; circle vs rectangle is inferred from `radius` vs
