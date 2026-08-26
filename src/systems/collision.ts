@@ -1,10 +1,9 @@
-import Flatbush from 'flatbush';
+import type SharedSpatialMap from '@daneren2005/shared-memory-objects/spatial/shared-spatial-map';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsUpdateComponents } from '../components/registry';
 import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, bodyShape, isContinuous, isDying, isSensor, SHAPE_CAPSULE, SHAPE_RECTANGLE } from '../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
-import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import { shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap } from '../math/shapes';
 
 // How close to contact a sweep settles for, in world units: below anything a game would draw, yet reached by
@@ -109,38 +108,23 @@ interface Searcher {
 	ccd: boolean
 }
 
-// One category's broadphase: every entity that collides as that category, plus an R-tree over them. A searcher
-// only visits buckets its mask accepts. Bucketed on the whole category value, so an entity that collides as two
-// things at once still lives in exactly one bucket and is never found twice by one search.
-interface CategoryBucket<T extends PhysicsUpdateComponents> {
-	category: number
-	entries: Array<CollisionEntity<T>>
-	index: Flatbush
-}
-
-// An R-tree over every collidable entity, built once at the top of a run and then asked, per entity as it
-// moves, what it might have hit.
+// A collision view over the world's live SharedSpatialMap, asked per entity what it might have hit.
 //
-// Everything is indexed where it stood at the start of the run - the only moment all entities agree on. To stay
-// a superset of what can collide, each box is grown by how far that entity could travel this run, both ways: a
-// callback may turn an entity around before its own move, so a box grown only forwards would point wrong.
+// Entries update after each move on the same physics worker, so every query uses current map membership.
 //
-// Split by collide category so most of what an entity cannot hit is ruled out a subtree at a time. An empty
-// category has no bucket, so Flatbush is never asked to index zero items.
 export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
-	private buckets: Array<CategoryBucket<T>> = [];
+	private map: SharedSpatialMap;
+	private candidateIds: Array<number> = [];
+	private entries = new Map<number, CollisionEntity<T>>();
 	// Whether anything in this run can bounce. Bounces are resolved for both sides of a contact, so an entity with
 	// no bounciness of its own still has to look at what it ran into - but only in a world where that can matter.
 	readonly hasBounciness: boolean = false;
-	// The pairs already resolved this run. Lives here rather than in the update because the tree is what a run is
+	// The pairs already resolved this run. Lives here rather than in the update because this view is what a run is
 	// scoped to: preRun builds a new one, so the set is empty again for the next run with nothing to clear.
 	private resolved = new Set<number>();
 
-	constructor(entities: Array<{ entityId: number, components: EntityUpdateComponents }>, seconds: number) {
-		// Collected per category first because Flatbush needs its item count up front, which is only known once
-		// everything that cannot collide has been dropped.
-		const pending = new Map<number, { entries: Array<CollisionEntity<T>>, bounds: Array<number> }>();
-
+	constructor(map: SharedSpatialMap, entities: Array<{ entityId: number, components: EntityUpdateComponents }>) {
+		this.map = map;
 		for(const entity of entities) {
 			// The ECS types blocks generically as ComponentTypedArray; narrow to the concrete arrays once here so
 			// neither the search nor the game's callback needs a cast.
@@ -161,49 +145,16 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			const shape = bodyShape(body);
 			const width = transform[TRANSFORM_WIDTH_INDEX];
 			const height = transform[TRANSFORM_HEIGHT_INDEX];
-			// A shape with no area can never overlap anything; dropping it keeps a sizeless entity out of the tree.
+			// A shape with no area can never overlap anything; dropping it keeps it out of this run's collision view.
 			if(shapeIsEmpty(shape, width, height)) {
 				continue;
 			}
-
-			const angle = transform[TRANSFORM_ANGLE_INDEX];
-			const halfWidth = shapeHalfWidth(shape, width, height, angle);
-			const halfHeight = shapeHalfHeight(shape, width, height, angle);
 
 			if(components.bounciness) {
 				this.hasBounciness = true;
 			}
 
-			const velocity = components.velocity;
-			const travelX = velocity ? Math.abs(velocity[VELOCITY_X_INDEX]) * seconds : 0;
-			const travelY = velocity ? Math.abs(velocity[VELOCITY_Y_INDEX]) * seconds : 0;
-
-			const x = transform[TRANSFORM_X_INDEX];
-			const y = transform[TRANSFORM_Y_INDEX];
-
-			let bucket = pending.get(category);
-			if(!bucket) {
-				bucket = { entries: [], bounds: [] };
-				pending.set(category, bucket);
-			}
-
-			bucket.entries.push({ entityId: entity.entityId, components });
-			bucket.bounds.push(
-				x - halfWidth - travelX,
-				y - halfHeight - travelY,
-				x + halfWidth + travelX,
-				y + halfHeight + travelY,
-			);
-		}
-
-		for(const [category, { entries, bounds }] of pending) {
-			const index = new Flatbush(entries.length);
-			for(let i = 0; i < entries.length; i++) {
-				index.add(bounds[i * 4], bounds[i * 4 + 1], bounds[i * 4 + 2], bounds[i * 4 + 3]);
-			}
-			index.finish();
-
-			this.buckets.push({ category, entries, index });
+			this.entries.set(entity.entityId, { entityId: entity.entityId, components });
 		}
 	}
 
@@ -565,38 +516,25 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 	// Runs `handle` for every collidable entity in the box that `searcher` may collide with: the tree search and
 	// the category masks, applied before any shape test so an impossible pair is settled by two ANDs.
 	private forEachCandidate(searcher: Searcher, minX: number, minY: number, maxX: number, maxY: number, handle: (other: CollisionEntity<T>) => void): void {
-		for(const bucket of this.buckets) {
-			// Half of canCollide, settled once per bucket: all entries share this category.
-			if((searcher.mask & bucket.category) === 0) {
+		const ids = this.candidateIds;
+		ids.length = 0;
+		this.map.retrieveInto(ids, minX, minY, maxX - minX, maxY - minY);
+		for(const id of ids) {
+			const other = this.entries.get(id);
+			if(!other || other.entityId === searcher.entityId) {
 				continue;
 			}
 
-			for(const found of bucket.index.search(minX, minY, maxX, maxY)) {
-				const other = bucket.entries[found];
-				if(other.entityId === searcher.entityId) {
-					continue;
-				}
-
-				// The other half of canCollide, per candidate: each entity carries its own mask.
-				if((other.components.body[BODY_MASK_INDEX] & searcher.category) === 0) {
-					continue;
-				}
-
-				// Already killed this run, or by another worker sharing this block.
-				if(other.components.entity?.[DEAD_INDEX] === 1) {
-					continue;
-				}
-
-				// Struck what will kill it and playing out its final segment onto the impact point: it is a step from
-				// removal and must not be run into again, on this run or the next, or it would resolve a second contact
-				// and be killed twice. Skipped here rather than left out of the tree so it stays a candidate for nothing
-				// - the same way a dead entity is filtered at query time, not at build.
-				if(isDying(other.components.body)) {
-					continue;
-				}
-
-				handle(other);
+			const body = other.components.body;
+			if((searcher.mask & body[BODY_CATEGORY_INDEX]) === 0 || (body[BODY_MASK_INDEX] & searcher.category) === 0) {
+				continue;
 			}
+
+			if(other.components.entity?.[DEAD_INDEX] === 1 || isDying(body)) {
+				continue;
+			}
+
+			handle(other);
 		}
 	}
 }

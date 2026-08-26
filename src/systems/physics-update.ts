@@ -1,5 +1,8 @@
 import { addAtomicFloat32 } from '@daneren2005/shared-memory-objects/utils/atomic-math';
 import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
+import SharedSpatialMap from '@daneren2005/shared-memory-objects/spatial/shared-spatial-map';
+import type { SharedSpatialMapMemory } from '@daneren2005/shared-memory-objects/spatial/shared-spatial-map';
+import MemoryHeap from '@daneren2005/shared-memory-objects/memory-heap';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents, EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
@@ -14,6 +17,7 @@ import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-co
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import CollisionBroadphase, { COLLIDABLE_QUERY, type CollisionEntity, type CollisionFunction, type MovingEntity } from './collision';
 import { bouncePair } from './bounce';
+import { spatialBounds } from './spatial-bounds';
 
 // The per-run data object every physics update is handed: the base one plus the step counter the interpolation
 // component is stamped with. PhysicsSystem fills `tick` from addDataToWorld, so a subclass adding data must
@@ -26,6 +30,8 @@ export interface PhysicsWorld extends ComponentSystemWorld {
 	reportMoves?: boolean
 	// For a grouped update (see `group` on createPhysicsUpdate)
 	skipGroup?: number
+	spatialMapMemory?: SharedSpatialMapMemory
+	spatialMap?: SharedSpatialMap
 	dieAtImpact?(dying: DeathInterpolationEntity, other: DeathInterpolationEntity): void
 }
 
@@ -50,6 +56,39 @@ export interface DeathInterpolationEntity {
 // position travels with the id: the transform is a SharedArrayBuffer block already on the main thread, so a
 // listener reads it off `entity.components.transform`.
 export const POSITION_UPDATED_EVENT = 'position-updated';
+
+function prepareSpatialMap(world: PhysicsWorld, entities: Array<{ entityId: number, components: EntityUpdateComponents }> = []): SharedSpatialMap {
+	if(world.spatialMap) {
+		return world.spatialMap;
+	}
+	if(world.heap && world.spatialMapMemory) {
+		world.spatialMap = new SharedSpatialMap(world.heap, world.spatialMapMemory);
+		return world.spatialMap;
+	}
+
+	world.spatialMap = new SharedSpatialMap(new MemoryHeap(), {
+		gridSize: 50,
+		maxEntities: Math.max(1_000, entities.length * 2),
+	});
+	for(const entity of entities) {
+		const components = entity.components as DeathInterpolationEntity['components'];
+		if(components.transform) {
+			updateSpatialMap(world, entity.entityId, components);
+		}
+	}
+
+	return world.spatialMap;
+}
+
+function updateSpatialMap(world: PhysicsWorld, entityId: number, components: DeathInterpolationEntity['components']): void {
+	const transform = components.transform;
+	if(!transform) {
+		return;
+	}
+
+	const bounds = spatialBounds({ transform, body: components.body });
+	prepareSpatialMap(world).update(entityId, bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+}
 
 // What a game asks createPhysicsUpdate for on top of plain movement.
 export interface PhysicsUpdateOptions<
@@ -158,6 +197,7 @@ export function createPhysicsUpdate<
 			const tree = group ? broadphaseByGroup?.get(groupId) : broadphase;
 			if(!tree) {
 				move(entityId, components.transform, moveX, moveY, callbacks, world.reportMoves);
+				updateSpatialMap(world, entityId, components);
 				finishInterpolationStep(interpolation, world.tick);
 
 				return;
@@ -173,6 +213,7 @@ export function createPhysicsUpdate<
 			// bouncing one does not, since it is about to turn around off the face it hit.
 			const moved = tree.resolveMove(self, moveX, moveY, !bouncing);
 			move(entityId, components.transform, moved.moveX, moved.moveY, callbacks, world.reportMoves);
+			updateSpatialMap(world, entityId, components);
 			// Before any callback, so the stamp covers exactly the pair physics produced. A callback that writes
 			// the transform is a game move, blended towards next frame like a teleport.
 			finishInterpolationStep(interpolation, world.tick);
@@ -209,23 +250,21 @@ export function createPhysicsUpdate<
 		},
 	);
 
-	// preRun sees every entity at once, so it is the only place the tree can be built from one consistent moment,
-	// before any of this run's movement. Ungrouped builds one tree over everything; grouped buckets the collidables
-	// by group id and builds a tree per group, so an entity only ever sweeps against its own group - the skipped
-	// group gets none, since nothing in it will be stepped.
+	// preRun maps each collidable id to its shared blocks. Grouped runs build one component view per group over the
+	// same live map, so an entity only ever sweeps against its own group.
 	update.preRun = (world, entities, queries) => {
-		// Bound to the tree it strikes against and hung on the world so a collision callback can reach it. The tree
-		// is picked when it is called, not now, since the callback fires after the trees below are built; a dying
+		// Bound to the collision view it strikes against and hung on the world so a callback can reach it. The view
+		// is picked when it is called, not now, since the callback fires after the views below are built; a dying
 		// entity and the thing it hit are always in the same group, so the dying side's group picks the right one.
 		world.dieAtImpact = (dying, other) => {
-			const tree = group ? broadphaseByGroup?.get(readGroup<C>(dying.components, group)) : broadphase;
-			applyDeathInterpolation<T>(world, tree, dying, other);
+			const collisionView = group ? broadphaseByGroup?.get(readGroup<C>(dying.components, group)) : broadphase;
+			applyDeathInterpolation<T>(world, collisionView, dying, other);
 		};
 
-		const seconds = world.elapsedTime / 1000;
 		const collidables = queries[COLLIDABLE_QUERY] ?? [];
+		const spatialMap = prepareSpatialMap(world, collidables);
 		if(!group) {
-			broadphase = new CollisionBroadphase<T>(collidables, seconds);
+			broadphase = new CollisionBroadphase<T>(spatialMap, collidables);
 			return;
 		}
 
@@ -246,7 +285,7 @@ export function createPhysicsUpdate<
 
 		broadphaseByGroup = new Map();
 		for(const [groupId, list] of byGroup) {
-			broadphaseByGroup.set(groupId, new CollisionBroadphase<T>(list, seconds));
+			broadphaseByGroup.set(groupId, new CollisionBroadphase<T>(spatialMap, list));
 		}
 	};
 
@@ -279,6 +318,8 @@ function resolveContact<
 	if(onCollision) {
 		onCollision(world, self, other, queries, callbacks);
 	}
+	updateSpatialMap(world, self.entityId, self.components);
+	updateSpatialMap(world, other.entityId, other.components);
 }
 
 // Backs `dieAtImpact`. Rather than remove `dying` on the spot - where a fast continuous mover has already stepped
@@ -349,6 +390,7 @@ export function physicsUpdate<
 		callbacks,
 		world.reportMoves,
 	);
+	updateSpatialMap(world, entityId, components);
 	finishInterpolationStep(interpolation, world.tick);
 }
 

@@ -1,6 +1,7 @@
 import { ComponentSystem } from '@daneren2005/shared-memory-ecs';
 import type { BaseWorld, ComponentDefinitionMap, EntityUpdateComponents, SystemConfig } from '@daneren2005/shared-memory-ecs';
-import { DEFAULT_PHYSICS_STEP_MS } from '@daneren2005/shared-memory-physics';
+import { addSpatialMapData, DEFAULT_PHYSICS_STEP_MS } from '@daneren2005/shared-memory-physics';
+import type { SpatialMapWorldSource } from '@daneren2005/shared-memory-physics';
 import type { Components } from '../world';
 import steeringUpdate from './steering-update';
 import type { SteeringBounds, SteeringParams, SteeringUpdateComponents, SteeringWorld } from './steering-update';
@@ -30,8 +31,9 @@ export interface SteeringSystemConfig extends Partial<SystemConfig> {
 export default class SteeringSystem extends ComponentSystem<Components, SteeringUpdateComponents & EntityUpdateComponents<Components>, SteeringWorld> {
 	params: SteeringParams;
 	bounds: SteeringBounds;
+	private spatialWorld: SpatialMapWorldSource;
 
-	constructor(world: BaseWorld<ComponentDefinitionMap, Components>, options: SteeringSystemConfig) {
+	constructor(world: BaseWorld<ComponentDefinitionMap, Components> & SpatialMapWorldSource, options: SteeringSystemConfig) {
 		super(world, {
 			name: options.name ?? 'SteeringSystem',
 			// The same step physics runs on by default, so the whole simulation moves in one rhythm and a boid gets
@@ -52,6 +54,7 @@ export default class SteeringSystem extends ComponentSystem<Components, Steering
 
 		this.params = options.params;
 		this.bounds = options.bounds;
+		this.spatialWorld = world;
 	}
 
 	// Hangs the two things the update cannot work out for itself on the per-run world object, which is the one
@@ -59,5 +62,6 @@ export default class SteeringSystem extends ComponentSystem<Components, Steering
 	addDataToWorld(world: SteeringWorld): void {
 		world.steering = this.params;
 		world.bounds = this.bounds;
+		addSpatialMapData(this.spatialWorld, world);
 	}
 }

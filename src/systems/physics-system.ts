@@ -4,6 +4,7 @@ import { startSpawnInterpolation, type SpawnableEntity } from '../components/int
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
 import physicsUpdate, { POSITION_UPDATED_EVENT, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
 import { COLLIDABLE_QUERY } from './collision';
+import type { SpatialMapWorldSource } from '../world';
 
 // Default physics step, in ms. 20Hz rather than every frame: cheaper for no loss of correctness, only
 // smoothness, which InterpolationSystem restores. `deltaBetweenRuns: 0` runs it every frame, which a game with
@@ -66,6 +67,7 @@ export default class PhysicsSystem<
 	T extends PhysicsUpdateComponents & EntityUpdateComponents<C> = PhysicsUpdateComponents & EntityUpdateComponents<C>,
 	W extends PhysicsWorld = PhysicsWorld,
 > extends ComponentSystem<C, T, W> {
+	private spatialWorld: SpatialMapWorldSource;
 	// Bumped per run and stamped onto every interpolated entity so a renderer can tell a blended position from one
 	// physics just replaced. Only has to change; a Float32 holds integers to 2^24, over nine days at a 50ms step.
 	tick = 0;
@@ -76,7 +78,7 @@ export default class PhysicsSystem<
 	// The group left untouched each run, sent to the worker per run via addDataToWorld
 	skipGroup: number | undefined;
 
-	constructor(world: BaseWorld<ComponentDefinitionMap, C>, options: PhysicsSystemConfig<C, T, W> = {}) {
+	constructor(world: BaseWorld<ComponentDefinitionMap, C> & SpatialMapWorldSource, options: PhysicsSystemConfig<C, T, W> = {}) {
 		const updateFunction: EntityUpdateFunction<C, T, W> & { physics?: PhysicsUpdateMetadata<C> } = options.updateFunction ?? physicsUpdate;
 		const optional = options.optional ?? updateFunction.physics?.optional ?? [];
 		const collision = options.collision ?? updateFunction.physics?.collision ?? false;
@@ -150,6 +152,7 @@ export default class PhysicsSystem<
 			}),
 		});
 
+		this.spatialWorld = world;
 		this.reportMoves = options.reportMoves;
 		this.skipGroup = options.skipGroup;
 	}
@@ -174,6 +177,7 @@ export default class PhysicsSystem<
 	// entity looks to a renderer like it has never had a physics step.
 	addDataToWorld(world: W): void {
 		world.tick = ++this.tick;
+		world.spatialMapMemory = this.spatialWorld.spatialMap.getSharedMemory();
 		// Asked per run so a game can attach and drop the listener freely.
 		world.reportMoves = this.reportMoves ?? this.listenerCount(POSITION_UPDATED_EVENT) > 0;
 		// Sent every run so a game can flip which group is handed off (a jump) between runs with no rebuild.

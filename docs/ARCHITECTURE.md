@@ -24,7 +24,7 @@ backends never drift.
 main thread                              worker thread (optional)
   PhysicsSystem ── posts entity blocks ──► ComponentWorker
     (gathers query, stamps tick)             runs physicsUpdate / createPhysicsUpdate closure
-  InterpolationSystem                          preRun: builds CollisionBroadphase (flatbush R-tree)
+  InterpolationSystem                          preRun: opens shared spatial map + collision view
     (per-frame lerp for render)                per entity: sweep → move → bounce/onCollision
                                                writes transform/interpolation into shared memory
   reads transform off shared block ◄───────────────────────────────┘  (no copy travels back)
@@ -41,11 +41,13 @@ main thread                              worker thread (optional)
 | `components/body-component.ts` | Shape + collide category/mask + sensor + continuous-collision flag, plus a runtime-only `dying` bit. A body is what makes an entity collidable. Shape/sensor/ccd/dying share one packed flags word (`BODY_FLAGS_INDEX`), read via `bodyShape`/`isSensor`/`isContinuous`/`isDying`. | `bodyDefinition`, `canCollide`, `isSensor`, `isContinuous`, `isDying`, `markDying`, `bodyShape`, `SHAPE_*`, `BODY_*` |
 | `components/bounciness-component.ts` | Standalone bounce float (not part of body block). | `bouncinessDefinition`, `BOUNCINESS_INDEX` |
 | `components/interpolation-component.ts` | Render position + publication protocol fields (`prev`, `progress`, `tick`, `duration`), exposed on the block so a spawn can seed a first segment by hand. | `interpolationDefinition`, `snapEntity`, `startSpawnInterpolation`, `INTERPOLATION_*_INDEX` |
+| `world.ts` | Physics-ready ECS world. Owns the live shared spatial map, keeps entity membership synchronized, exposes main-thread spatial queries, and transfers the map handle to workers. | `SpatialWorld`, `addSpatialMapData`, `getSpatialMap`, `SpatialMapSystemWorld` |
 | `systems/physics-system.ts` | Main-thread `ComponentSystem`: gathers entities, decides which queries/blocks travel, stamps `tick`, gates move-reporting. Fixed step default. `startInterpolation(entity)` seeds a just-spawned mover so it is drawn moving now (feeds its step + accumulator to `startSpawnInterpolation`). | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig` |
 | `systems/physics-update.ts` | The per-entity update run on either backend. `physicsUpdate` = movement only; `createPhysicsUpdate` = sweeping + native bounce + `onCollision`. Owns the interpolation publish protocol and the atomic move. `world.dieAtImpact` (set per run in `preRun`) is the death-interpolation entry a callback calls instead of `entityDied`. | `physicsUpdate`, `createPhysicsUpdate`, `POSITION_UPDATED_EVENT`, `PhysicsWorld`, `DeathInterpolationEntity` |
-| `systems/collision.ts` | Broadphase (flatbush R-tree bucketed by collide category) + narrowphase sweep/overlap. `contactPoint` reports where a mover first touched a target, for death interpolation. | `CollisionBroadphase`, `COLLIDABLE_QUERY`, `MoveResult`, `SweepResult` |
+| `systems/collision.ts` | Per-run collision view over the world's live `SharedSpatialMap` + narrowphase sweep/overlap. `contactPoint` reports where a mover first touched a target, for death interpolation. | `CollisionBroadphase`, `COLLIDABLE_QUERY`, `MoveResult`, `SweepResult` |
 | `systems/bounce.ts` | Native reflect-off-contact used by the sweep when an entity has bounciness. Applied to both sides of a contact. | `bouncePair`, `bounce` (internal) |
-| `systems/spatial-index.ts` | Same R-tree without collide categories — targeting / range / nearest queries. Snapshot per run. | `SpatialIndex`, `SpatialFilter` |
+| `systems/spatial-bounds.ts` | Shared shape-to-AABB and exact broadphase refinement helpers used by tree writers and query views. | `spatialBounds`, `boundsOverlap`, `distanceToBoundsSquared` |
+| `systems/spatial-index.ts` | Lightweight worker query view over the live shared map. It snapshots only which queried component blocks an id may return. | `SpatialIndex`, `SpatialFilter` |
 | `systems/interpolation-system.ts` | Main-thread system that runs the per-frame render-position lerp. | `InterpolationSystem`, `InterpolationSystemConfig` |
 | `systems/interpolation-update.ts` | The lerp itself (`render = prev + (current-prev)*alpha`), runnable in a worker too. | `interpolationUpdate` |
 | `math/shapes.ts` | Shape overlap, contact direction + distance primitives. All 3 shapes = an oriented core grown by a radius. | `shapesOverlap`, `contactNormal`, `orientedBoxesOverlap`, `segment*DistanceSquared`, `shapeHalfWidth/Height`, `shapeRadius`, `Vector` |
@@ -73,6 +75,14 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
   interpolation stops noticing steps.
 - **Moves use `addAtomicFloat32`, not `+=`.** The transform is shared memory another thread may add
   to in the same instant; a plain read-modify-write would drop a move.
+- **The spatial map is live and unbounded.** `SpatialWorld` inserts/removes entities and physics updates their
+  cells after each move. Main-thread code that writes a transform block directly must call
+  `world.updateSpatialEntity(entity)` afterward. Tune `gridSize` to the typical query/body size and `buckets`
+  to the expected occupied-cell count.
+- **A worker's collision/index object is only a component view, not another map.** It maps the ids in that
+  system's query to their shared blocks, then asks the one live `SharedSpatialMap` for candidates. The physics
+  worker is the sole position writer, so each move updates the map before the next entity searches; queries use
+  the actual destination/path bounds and require no velocity widening.
 - **`POSITION_UPDATED_EVENT` carries only ids**, as one array per run (never per entity — that's the
   whole point). The worker only pays for it when someone is listening (`reportMoves`).
 - **`filter` vs `scope` on `PhysicsSystem`.** Both are query filters the ECS applies at gather time
@@ -135,7 +145,8 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
 
 - `@daneren2005/shared-memory-ecs` and `-objects` are **peer deps** — a game must register these
   components against the same ECS copy it builds its world with.
-- `flatbush` is a real runtime dependency (the R-tree).
+- `@daneren2005/shared-memory-objects` supplies the live `SharedSpatialMap`; ECS 1.5.1+ supplies the shared heap
+  on worker world data so a worker can reconstruct its handle.
 - Never use barrel imports from the ECS/objects packages internally — import from the deep path
   (e.g. `.../utils/atomic-math`) for tree-shaking. See recent commit history.
 
@@ -149,8 +160,8 @@ npm run build        # dist/ (js + d.ts)
 npm start            # examples playground on http://127.0.0.1:8080
 ```
 
-- After editing the **ECS** copy in `node_modules`, rebuild + copy its dist (see memory:
-  ECS local dev workflow). The **game** consumes a published physics copy the same way — use
-  `npm run build:game` to build and copy dist into the game's `node_modules`.
+- Until the spatial-map release is published, build the sibling **shared-memory-objects** repository and copy its
+  `dist/` into this package's installed objects dependency. Do the same for the sibling **ECS** when changing
+  its worker data path. The **game** consumes a local physics build the same way: use `npm run build:game`.
 - Constraints (from AGENTS.md): no `any`, no `@ts-nocheck`, comments concise and rare, do not run
   git commands, do not modify `NOTES.md`.

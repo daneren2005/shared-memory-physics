@@ -7,7 +7,7 @@ reads positions straight off its entities.
 
 Examples at https://daneren2005.github.io/shared-memory-physics/
 
-The ECS (`>=1.1.1`) and the shared-memory primitives it is built on are **peer dependencies**: a game must
+The ECS (`>=1.5.1`) and the shared-memory primitives it is built on (`>=1.4.0`) are **peer dependencies**: a game must
 register these components against the same copy of the ECS it builds its world with.
 
 ```sh
@@ -104,18 +104,31 @@ Spread `physicsRegistry` into your own registry so the world allocates the memor
 alongside your game specific ones. The keys are what the systems query on, so keep them as they are:
 
 ```ts
-import { BaseWorld } from '@daneren2005/shared-memory-ecs';
-import { physicsRegistry } from '@daneren2005/shared-memory-physics';
+import { physicsRegistry, SpatialWorld } from '@daneren2005/shared-memory-physics';
 
 const registry = {
 	...physicsRegistry,
 	health: healthDefinition,
 };
-const world = new BaseWorld(registry);
+const world = new SpatialWorld(registry, {
+	spatial: {
+		gridSize: 50,
+		buckets: 8192,
+		maxEntities: 100_000,
+		maxSlots: 400_000,
+	},
+});
 
 const entity = world.loadEntity({ x: 0, y: 0, width: 10, height: 5, velocityX: 10, velocityY: 0, maxHealth: 100 });
 console.log(entity.components.transform!.x); // 0
 ```
+
+`SpatialWorld` is the physics-ready `BaseWorld`: it owns the one live `SharedSpatialMap` every physics and
+gameplay worker queries. The map is unbounded; `gridSize` controls its virtual cell size and `buckets` trades
+fixed memory for shorter hash chains. `maxEntities` and `maxSlots` are capacities, not up-front allocations of
+every record. Entities are inserted and removed with the world, and physics updates their cells after every
+move. If main-thread game code writes a transform directly, call
+`world.updateSpatialEntity(entity)` after the write.
 
 ## PhysicsSystem
 
@@ -167,8 +180,8 @@ class GamePhysicsSystem extends PhysicsSystem<Components, GameComponents, GameWo
 }
 ```
 
-`GameWorld` extends `PhysicsWorld` (which is `ComponentSystemWorld` plus that `tick`) rather than
-`ComponentSystemWorld` directly.
+The per-run worker data type still extends `PhysicsWorld` (which is `ComponentSystemWorld` plus the physics
+publication fields). The main-thread game world extends `SpatialWorld`.
 
 A run's moves are reported back to the main thread as a single `position-updated` event **on the system**,
 carrying the ids of everything that moved, so anything you keep keyed off position can follow the moves
@@ -588,17 +601,12 @@ want to run the same test yourself.
 Both fields live in the shared block, so a system on any thread can write them and the next run picks the
 change up - a unit that takes off becomes an air unit without anything being re-sent to the worker.
 
-The broadphase is bucketed by category rather than being one tree over everything, so a projectile that can
-only hit units never walks the tree the terrain is in.
-
-**How it is found.** `preRun` builds a [Flatbush](https://github.com/mourner/flatbush) R-tree over every
-collidable entity as it stands at the top of the run. That is the only moment they all agree on, so each
-entity's box is grown by however far its velocity could carry it before the run is out, keeping the tree a
-true superset of what can really collide - grown both ways rather than along the heading, since a callback
-can turn an entity around before it has had its own move. Then each entity, as it moves, searches the trees its
-mask accepts with where it has actually ended up, and every candidate that gets past the masks goes through the
-full [shape](#body-shapes) test. `CollisionBroadphase` is exported if you want the tree itself, and the
-geometry is all reachable on its own - see the end of [Body shapes](#body-shapes).
+**How it is found.** Every worker queries the live `SharedSpatialMap` owned by `SpatialWorld`; no worker rebuilds
+an R-tree at the top of a run. `preRun` only maps the collidable ids to the shared component blocks that worker
+already holds. The physics worker is the sole position writer, so each completed move updates the map before the
+next entity queries it; searches use their actual destination or swept-path bounds without speed padding.
+Category and mask checks happen before the full [shape](#body-shapes) test. The same current map serves collision, targeting and
+main-thread input queries.
 
 **One thing to know about the ordering.** Entities move one at a time, and the narrowphase reads live
 positions - so an entity that has not had its own move yet is still tested where it started. Two entities
@@ -622,8 +630,8 @@ world.addSystem(new PhysicsSystem<Components>(world, {
 ```
 
 Unlike a category rule - which every body in the world is still weighed against - a scoped-out body never
-enters this system's broadphase at all, so two groups whose boxes overlap around a shared origin cannot collide
-across the boundary, and the tree each run builds is only as big as its own group. `scope` is separate from the
+enters this system's collision view, so two groups whose boxes overlap around a shared origin cannot collide
+across the boundary. `scope` is separate from the
 sharding `filter` (which narrows only *which* movers a worker steps, still sweeping the whole world so one
 simulation can spread across cores); an entity handed both has to pass each to be moved.
 
@@ -637,13 +645,12 @@ import { physicsUpdate, TRANSFORM_X_INDEX, VELOCITY_X_INDEX } from '@daneren2005
 ```
 
 `CollisionBroadphase` is available the same way, for a system that wants the collision detection without the
-movement. Build one per run from a list of `{ entityId, components }` and how many **seconds** the run covers
-(that is what sizes the room left for movement), then ask it what any given entity is overlapping:
+movement. Build a per-run view from the shared map and a list of `{ entityId, components }`:
 
 ```ts
-import { CollisionBroadphase, COLLIDABLE_QUERY } from '@daneren2005/shared-memory-physics';
+import { CollisionBroadphase, COLLIDABLE_QUERY, getSpatialMap } from '@daneren2005/shared-memory-physics';
 
-const broadphase = new CollisionBroadphase(queries[COLLIDABLE_QUERY], world.elapsedTime / 1000);
+const broadphase = new CollisionBroadphase(getSpatialMap(world), queries[COLLIDABLE_QUERY]);
 broadphase.forEachOverlapping({ entityId, components }, other => { /* ... */ });
 ```
 
@@ -667,23 +674,34 @@ body just swept, while the two-argument form (and every non-continuous body) tes
 
 ## Spatial queries
 
-`SpatialIndex` answers the other kind of question about where things are - who is in this area, and what is
-the closest thing to this point - for the systems that are not about collisions at all: targeting, aggro
-range, spawning somewhere clear, area effects. It is the same R-tree the broadphase is built on, without the
-collide categories or the shape tests.
+`SpatialIndex` is a worker-side query view over the same live `SharedSpatialMap`: who is in this area, and what
+is closest to this point, for targeting, aggro range, clear-spawn checks and area effects. It captures which
+ids and component blocks belong to that system query, but does not build another spatial structure. Positions
+remain live shared-memory reads.
 
-Build one from anything shaped like a query result and it reads the transform (and the body, to know which
-outline that transform describes) off each entity. Only the transform is needed, so it indexes anything with
-a place in the world rather than only what collides:
+Send the map memory with `addSpatialMapData` in the system's `addDataToWorld`, reconstruct the worker-local
+handle with `getSpatialMap`, and build the lightweight query view in `preRun`:
 
 ```ts
-import { SpatialIndex } from '@daneren2005/shared-memory-physics';
+import {
+	addSpatialMapData,
+	getSpatialMap,
+	SpatialIndex,
+	type SpatialMapWorldSource,
+} from '@daneren2005/shared-memory-physics';
 
-const index = new SpatialIndex(queries.collidable);
+class TargetSystem extends ComponentSystem<Components, TargetComponents, TargetWorld> {
+	constructor(private readonly spatialWorld: SpatialMapWorldSource) {
+		super();
+	}
+
+	addDataToWorld(world: TargetWorld) {
+		addSpatialMapData(this.spatialWorld, world);
+	}
+}
+
+const index = new SpatialIndex(getSpatialMap(world), queries.collidable);
 ```
-
-Nothing reads the blocks after that, so the index is a **snapshot** of where everything was when it was
-built - build one per run, in `preRun`, and let every entity in that run search it.
 
 | Query                                              | Answers                                              |
 | -------------------------------------------------- | ---------------------------------------------------- |
@@ -692,7 +710,7 @@ built - build one per run, in `preRun`, and let every entity in that run search 
 | `findNearest(x, y, maxDistance?, filter?)`          | the closest one, or `undefined`                       |
 | `findNearby(x, y, maxResults, maxDistance?, filter?)` | the closest `maxResults`, nearest first             |
 
-Every one of them takes a `filter`, run per candidate the tree turns up, and hands it the whole entity -
+Every one of them takes a `filter`, run per candidate the map turns up, and hands it the whole entity -
 `{ entityId, components }` - so it can read back any block that came along with the query. That is where the
 things the index cannot know go: the searcher's own id, which side something is on, whether it is worth
 shooting at.
@@ -701,11 +719,20 @@ shooting at.
 const target = index.findNearest(x, y, 150, other => other.entityId !== entityId && isEnemy(other));
 ```
 
-`findNearest` walks the tree in distance order rather than searching a box and sorting what comes back, so
-ask it directly rather than building the sort yourself - it settles as soon as the nearest box is reached, and
-`maxDistance` stops it walking the rest of the world when the answer is that there is nobody. Distance is
-measured to an entity's **box**, not to its centre, so a large target is as near as its nearest edge and
-`maxDistance` reads as a range past the hull.
+Distance is measured to an entity's **box**, not to its centre, so a large target is as near as its nearest
+edge and `maxDistance` reads as a range past the hull.
+
+The main thread uses the same structure directly through `SpatialWorld`:
+
+```ts
+const clicked = world.searchSpatial(mouseX, mouseY, mouseX, mouseY);
+const closestEnemy = world.findNearestSpatial(mouseX, mouseY, 200, entity => isEnemy(entity));
+const inBlast = world.searchSpatialAround(x, y, radius, radius);
+```
+
+`searchSpatial`, `searchSpatialAround`, `findNearestSpatial`, and `findNearbySpatial` return live ECS entities.
+The searches refine the spatial map's broad-phase candidates against each entity's current axis-aligned shape
+bounds before applying the optional filter.
 
 ## Examples
 

@@ -84,6 +84,19 @@ export type {
 	InterpolationUpdateComponents,
 } from './components/registry';
 
+export { default as SpatialWorld, addSpatialMapData, getSpatialMap, addSpatialTreeData, getSpatialTree } from './world';
+export type {
+	SpatialMapSystemWorld,
+	SpatialMapWorldData,
+	SpatialMapWorldSource,
+	SpatialTreeSystemWorld,
+	SpatialTreeWorldData,
+	SpatialTreeWorldSource,
+	SpatialWorldEntity,
+	SpatialWorldFilter,
+	SpatialWorldOptions,
+} from './world';
+
 export {
 	shapesOverlap,
 	contactNormal,

@@ -612,8 +612,8 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 		expect(second.components.health?.health).toBeLessThan(FULL_HEALTH);
 	});
 
-	it('finds a pair the broadphase would lose without room for their velocity', async () => {
-		// 80 apart, closing at 40/s: only the velocity room keeps the pair in the running.
+	it('finds a pair through live map updates within the run', async () => {
+		// 80 apart, closing at 40/s: the first move updates the map before the second queries it.
 		let first = createShip({ x: 0, y: 0, velocityX: 40 });
 		let second = createShip({ x: 80, y: 0, velocityX: -40 });
 

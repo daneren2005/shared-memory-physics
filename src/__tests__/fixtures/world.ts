@@ -1,6 +1,6 @@
-import { BaseWorld } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition, ComponentsOf, EntityConfigOf } from '@daneren2005/shared-memory-ecs';
 import { physicsRegistry } from '../../components/registry';
+import SpatialWorld from '../../world';
 
 // A stand-in game component, so tests run against the same shape a game has, not a physics-only world.
 export interface TagComponent {
@@ -65,8 +65,10 @@ export const registry = {
 
 export type Components = ComponentsOf<typeof registry>;
 export type Config = EntityConfigOf<typeof registry>;
-export type TestWorld = BaseWorld<typeof registry>;
+export type TestWorld = SpatialWorld<typeof registry>;
 
 export function createTestWorld(): TestWorld {
-	return new BaseWorld(registry);
+	return new SpatialWorld(registry, {
+		spatial: { gridSize: 50, buckets: 1_024, maxEntities: 10_000, maxSlots: 40_000 },
+	});
 }

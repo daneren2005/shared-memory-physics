@@ -1,6 +1,9 @@
 import SpatialIndex, { type SpatialComponents } from '../spatial-index';
+import MemoryHeap from '@daneren2005/shared-memory-objects/memory-heap';
+import SharedSpatialMap from '@daneren2005/shared-memory-objects/spatial/shared-spatial-map';
 import { BODY_FLAGS_INDEX, BODY_SIZE, SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
+import { spatialBounds } from '../spatial-bounds';
 
 interface Box {
 	x: number
@@ -33,7 +36,22 @@ function createEntity(box: Box, entityId: number): { entityId: number, component
 
 // One entity per box, keyed by its position in the list + 1 as its entity id.
 function build(boxes: Array<Box>): SpatialIndex {
-	return new SpatialIndex(boxes.map((box, index) => createEntity(box, index + 1)));
+	return buildEntities(boxes.map((box, index) => createEntity(box, index + 1)));
+}
+
+function buildEntities(entities: Array<{ entityId: number, components: Partial<SpatialComponents> }>): SpatialIndex {
+	const map = new SharedSpatialMap(new MemoryHeap(), {
+		gridSize: 50,
+		maxEntities: 10_000,
+	});
+	for(const entity of entities) {
+		if(entity.components.transform) {
+			const bounds = spatialBounds(entity.components as SpatialComponents);
+			map.insert(entity.entityId, bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+		}
+	}
+
+	return new SpatialIndex(map, entities);
 }
 
 function ids(entities: Array<{ entityId: number }>): Array<number> {
@@ -159,7 +177,7 @@ describe('spatial-index', () => {
 		});
 
 		it('skips an entity with no transform', () => {
-			const index = new SpatialIndex([
+			const index = buildEntities([
 				{ entityId: 1, components: {} },
 				{ entityId: 2, components: createEntity({ x: 0, y: 0 }, 2).components },
 			]);

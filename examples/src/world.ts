@@ -1,6 +1,5 @@
-import { BaseWorld } from '@daneren2005/shared-memory-ecs';
 import type { ComponentsOf, EntityConfigOf, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
-import { physicsRegistry } from '@daneren2005/shared-memory-physics';
+import { physicsRegistry, SpatialWorld } from '@daneren2005/shared-memory-physics';
 import type { PhysicsUpdateComponents } from '@daneren2005/shared-memory-physics';
 
 // A game spreads `physicsRegistry` into its own registry alongside its game specific components.  The examples
@@ -12,7 +11,7 @@ export const registry = {
 
 export type Components = ComponentsOf<typeof registry>;
 export type Config = EntityConfigOf<typeof registry>;
-export type ExampleWorld = BaseWorld<typeof registry>;
+export type ExampleWorld = SpatialWorld<typeof registry>;
 
 // The blocks an example's physics update works on, which is what the collision callbacks below are typed
 // against.  With no components of our own it is exactly what the library needs, but it is spelled out here
@@ -24,5 +23,7 @@ export type ExampleUpdateComponents = PhysicsUpdateComponents & EntityUpdateComp
 // boids stress test at fifty thousand just grows itself a handful of buffers while it is being filled, before the
 // workers are started.
 export function createExampleWorld(): ExampleWorld {
-	return new BaseWorld(registry);
+	return new SpatialWorld(registry, {
+		spatial: { gridSize: 50, buckets: 8_192, maxEntities: 100_000, maxSlots: 400_000 },
+	});
 }

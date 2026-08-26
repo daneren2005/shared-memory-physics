@@ -40,8 +40,8 @@
 		"prepare": "husky"
 	},
 	"devDependencies": {
-		"@daneren2005/shared-memory-ecs": "^1.5.0",
-		"@daneren2005/shared-memory-objects": "^1.2.0",
+		"@daneren2005/shared-memory-ecs": "^1.5.1",
+		"@daneren2005/shared-memory-objects": "^1.4.0",
 		"@semantic-release/git": "^10.0.1",
 		"@stylistic/eslint-plugin": "^5.10.0",
 		"@types/node": "^26.1.1",
@@ -58,10 +58,7 @@
 		"vitest": "^4.1.10"
 	},
 	"peerDependencies": {
-		"@daneren2005/shared-memory-ecs": "^1.2.2",
-		"@daneren2005/shared-memory-objects": "^1.1.0"
-	},
-	"dependencies": {
-		"flatbush": "^4.6.2"
+		"@daneren2005/shared-memory-ecs": "^1.5.1",
+		"@daneren2005/shared-memory-objects": "^1.4.0"
 	}
 }

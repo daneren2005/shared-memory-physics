@@ -1,11 +1,13 @@
 import {
 	SpatialIndex,
+	getSpatialMap,
 	TRANSFORM_X_INDEX,
 	TRANSFORM_Y_INDEX,
 	VELOCITY_X_INDEX,
 	VELOCITY_Y_INDEX,
 } from '@daneren2005/shared-memory-physics';
 import type { ComponentSystemWorld, EntityUpdateComponents, EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
+import type { SpatialMapSystemWorld } from '@daneren2005/shared-memory-physics';
 import type { Components } from '../world';
 
 // Craig Reynolds' boids, as steering and nothing else.  Every boid looks at the flock around it and works three
@@ -54,7 +56,7 @@ export interface SteeringBounds {
 // The world object this update is handed: the base one the ECS always sends, plus the two things the steering
 // needs that only the main thread knows.  Both are optional because a run driven by hand may carry neither, in
 // which case nothing is steered at all.
-export interface SteeringWorld extends ComponentSystemWorld {
+export interface SteeringWorld extends ComponentSystemWorld, SpatialMapSystemWorld {
 	steering?: SteeringParams
 	bounds?: SteeringBounds
 }
@@ -103,8 +105,8 @@ export const steeringUpdate: EntityUpdateFunction<Components, SteeringUpdateComp
 // The entities it is built over are this system's *own* list - every boid in the world - so there is no separate
 // flock query to gather.  The blocks in it are the same shared memory the physics worker is writing positions
 // into, so what a boid steers off is where its neighbours are now rather than a copy of where they were.
-steeringUpdate.preRun = (_world, entities) => {
-	flock = new SpatialIndex<SteeringUpdateComponents>(entities);
+steeringUpdate.preRun = (world, entities) => {
+	flock = new SpatialIndex<SteeringUpdateComponents>(getSpatialMap(world), entities);
 };
 
 // One boid's steering: search the flock around it, work the three rules into an acceleration, add the edges'

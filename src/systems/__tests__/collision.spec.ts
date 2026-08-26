@@ -1,4 +1,6 @@
 import CollisionBroadphase, { type MoveResult, type MovingEntity, type SweepResult } from '../collision';
+import MemoryHeap from '@daneren2005/shared-memory-objects/memory-heap';
+import SharedSpatialMap from '@daneren2005/shared-memory-objects/spatial/shared-spatial-map';
 import type { PhysicsUpdateComponents } from '../../components/registry';
 import {
 	BODY_CATEGORY_INDEX, BODY_CCD_FLAG, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SENSOR_FLAG, BODY_SIZE,
@@ -7,8 +9,7 @@ import {
 } from '../../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
 import { VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component';
-
-const ONE_SECOND = 1;
+import { spatialBounds } from '../spatial-bounds';
 
 // Game-defined categories; the library reads them only as bits.
 const GROUND = 1 << 0;
@@ -56,8 +57,26 @@ function createEntities(boxes: Array<Box>): Array<MovingEntity<PhysicsUpdateComp
 	return boxes.map((box, index) => createEntity(box, index + 1));
 }
 
-function build(entities: Array<MovingEntity<PhysicsUpdateComponents>>, seconds = 0): CollisionBroadphase<PhysicsUpdateComponents> {
-	return new CollisionBroadphase<PhysicsUpdateComponents>(entities, seconds);
+const maps = new WeakMap<CollisionBroadphase<PhysicsUpdateComponents>, SharedSpatialMap>();
+
+function build(entities: Array<MovingEntity<PhysicsUpdateComponents>>): CollisionBroadphase<PhysicsUpdateComponents> {
+	const map = new SharedSpatialMap(new MemoryHeap(), {
+		gridSize: 50,
+		maxEntities: 10_000,
+	});
+	for(const entity of entities) {
+		const bounds = spatialBounds(entity.components);
+		map.insert(entity.entityId, bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+	}
+
+	const broadphase = new CollisionBroadphase<PhysicsUpdateComponents>(map, entities);
+	maps.set(broadphase, map);
+	return broadphase;
+}
+
+function sync(broadphase: CollisionBroadphase<PhysicsUpdateComponents>, entity: MovingEntity<PhysicsUpdateComponents>): void {
+	const bounds = spatialBounds(entity.components);
+	maps.get(broadphase)!.update(entity.entityId, bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
 }
 
 function overlapping(broadphase: CollisionBroadphase<PhysicsUpdateComponents>, self: MovingEntity<PhysicsUpdateComponents>): Array<number> {
@@ -139,7 +158,7 @@ describe('collision-broadphase', () => {
 	it('finds nothing when there is nothing collidable', () => {
 		const alone = createEntity({ x: 0, y: 0 }, 1);
 
-		// Flatbush cannot index zero items, so this must not blow up.
+		// An empty collision view must remain queryable.
 		expect(overlapping(build([]), alone)).toEqual([]);
 	});
 
@@ -293,38 +312,32 @@ describe('collision-broadphase', () => {
 		});
 	});
 
-	// The tree is built before anything moves, so its boxes must allow for the ground each entity will cover, or a
-	// pair that only meets mid-run is never looked at.
-	describe('allowing for movement', () => {
-		// Two entities closing at 40/s from 80 apart, both at x = 40 when the run ends.
-		function closeIn(seconds: number): Array<number> {
+	describe('live movement', () => {
+		function closeIn(): Array<number> {
 			const entities = createEntities([
 				{ x: 0, y: 0, velocityX: 40 },
 				{ x: 80, y: 0, velocityX: -40 },
 			]);
-			const broadphase = build(entities, seconds);
+			const broadphase = build(entities);
 
 			entities[0].components.transform[TRANSFORM_X_INDEX] = 40;
+			sync(broadphase, entities[0]);
 			entities[1].components.transform[TRANSFORM_X_INDEX] = 40;
+			sync(broadphase, entities[1]);
 
 			return overlapping(broadphase, entities[0]);
 		}
 
-		it('still finds an entity that has moved out from under its own box', () => {
-			expect(closeIn(ONE_SECOND)).toEqual([2]);
+		it('finds an entity at its live map position', () => {
+			expect(closeIn()).toEqual([2]);
 		});
 
-		it('would lose that pair without the room the velocity buys', () => {
-			// Indexed as though the run covered no time: the second box stays at x = 80 and is never reached.
-			expect(closeIn(0)).toEqual([]);
-		});
-
-		it('allows for an entity being turned around before it moves', () => {
-			// Room is left on both sides, since a callback can flip velocity before the entity's own move.
+		it('finds an entity moved after its velocity changes', () => {
 			const entities = createEntities([{ x: 0, y: 0 }, { x: 40, y: 0, velocityX: 40 }]);
-			const broadphase = build(entities, ONE_SECOND);
+			const broadphase = build(entities);
 
 			entities[1].components.transform[TRANSFORM_X_INDEX] = 0;
+			sync(broadphase, entities[1]);
 
 			expect(overlapping(broadphase, entities[0])).toEqual([2]);
 		});
@@ -337,10 +350,10 @@ describe('collision-broadphase', () => {
 
 	// 10x10 boxes unless said otherwise, so two meet when their centres are 10 apart.
 	describe('sweeping a move', () => {
-		function sweep(boxes: Array<Box>, entityId: number, moveX: number, moveY: number, seconds = 0): SweepResult<PhysicsUpdateComponents> {
+		function sweep(boxes: Array<Box>, entityId: number, moveX: number, moveY: number): SweepResult<PhysicsUpdateComponents> {
 			const entities = createEntities(boxes);
 
-			return build(entities, seconds).sweep(entities[entityId - 1], moveX, moveY);
+			return build(entities).sweep(entities[entityId - 1], moveX, moveY);
 		}
 
 		it('takes the whole move when nothing is in the way', () => {
@@ -478,14 +491,14 @@ describe('collision-broadphase', () => {
 			expect(build(entities).sweep(entities[0], 25, 0).fraction).toEqual(1);
 		});
 
-		it('stops on an entity that has moved out from under its own box', () => {
-			// Both closing at 40/s from 80 apart. The second has already moved 40 in, which its velocity room covers.
+		it('stops on an entity at its live map position', () => {
 			const entities = createEntities([
 				{ x: 0, y: 0, velocityX: 40 },
 				{ x: 80, y: 0, velocityX: -40 },
 			]);
-			const broadphase = build(entities, ONE_SECOND);
+			const broadphase = build(entities);
 			entities[1].components.transform[TRANSFORM_X_INDEX] = 40;
+			sync(broadphase, entities[1]);
 
 			const result = broadphase.sweep(entities[0], 40, 0);
 
@@ -634,7 +647,7 @@ describe('collision-broadphase', () => {
 				}
 
 				const speed = Math.min(260, distance / seconds);
-				const broadphase = build([player, circle], seconds);
+				const broadphase = build([player, circle]);
 				const moved = broadphase.resolveMove(player, (dx / distance) * speed * seconds, (dy / distance) * speed * seconds, true);
 				transform[TRANSFORM_X_INDEX] += moved.moveX;
 				transform[TRANSFORM_Y_INDEX] += moved.moveY;
