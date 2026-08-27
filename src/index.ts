@@ -84,6 +84,16 @@ export type {
 	InterpolationUpdateComponents,
 } from './components/registry';
 
+export { default as PhysicalWorld, addPhysicalWorldData, getSpatialMap } from './world';
+export type {
+	PhysicalSystemWorld,
+	PhysicalWorldData,
+	PhysicalWorldSource,
+	PhysicalWorldEntity,
+	PhysicalWorldFilter,
+	PhysicalWorldOptions,
+} from './world';
+
 export {
 	shapesOverlap,
 	contactNormal,
@@ -107,7 +117,7 @@ export type { CollisionComponents, CollisionEntity, CollisionFunction, MoveResul
 export { default as SpatialIndex } from './systems/spatial-index';
 export type { SpatialComponents, SpatialEntity, SpatialFilter } from './systems/spatial-index';
 
-export { default as physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT } from './systems/physics-update';
+export { default as physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT, updateSpatialMap } from './systems/physics-update';
 export type { DeathInterpolationEntity, PhysicsGroupConfig, PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions, PhysicsWorld } from './systems/physics-update';
 export { default as PhysicsSystem, DEFAULT_PHYSICS_STEP_MS } from './systems/physics-system';
 export type { PhysicsSystemConfig } from './systems/physics-system';

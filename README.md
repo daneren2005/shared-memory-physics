@@ -667,14 +667,44 @@ body just swept, while the two-argument form (and every non-continuous body) tes
 
 ## Spatial queries
 
-`SpatialIndex` answers the other kind of question about where things are - who is in this area, and what is
-the closest thing to this point - for the systems that are not about collisions at all: targeting, aggro
-range, spawning somewhere clear, area effects. It is the same R-tree the broadphase is built on, without the
-collide categories or the shape tests.
+`PhysicalWorld` keeps every transformed entity in a live, shared `SharedSpatialMap`. The physics worker updates
+the entry immediately after it writes a final position, while entity add/remove and transform/body component
+changes are tracked on the main thread. That makes the same index available for occasional main-thread checks
+such as picking an entity under the mouse, and for worker systems that would otherwise rebuild an index for only
+a few queries:
 
-Build one from anything shaped like a query result and it reads the transform (and the body, to know which
-outline that transform describes) off each entity. Only the transform is needed, so it indexes anything with
-a place in the world rather than only what collides:
+```ts
+import { PhysicalWorld, physicsRegistry } from '@daneren2005/shared-memory-physics';
+
+const world = new PhysicalWorld(physicsRegistry, {
+  spatial: { gridSize: 50, maxEntities: 100_000 },
+});
+
+const clicked = world.findNearestSpatial(mouseX, mouseY, 0);
+const nearby = world.searchSpatialAround(x, y, 100, 100);
+```
+
+`searchSpatial`, `searchSpatialAround`, `findNearestSpatial`, and `findNearbySpatial` return live entities and
+accept entity filters. Shape-aware axis-aligned bounds are stored: rotated rectangles and capsules occupy the
+box around their actual outline. A direct transform/body edit outside the physics update must be followed by
+`world.updateSpatialEntity(entity)`. A custom physics wrapper that changes a transform after calling the library
+update can call `updateSpatialMap(workerWorld, entityId, components)` instead.
+
+`PhysicsSystem` requires a `PhysicalWorld` (or another `BaseWorld` that implements `PhysicalWorldSource`) and
+automatically shares its map with the physics worker. Another worker system can receive the same map by calling
+`addPhysicalWorldData(sourceWorld, runWorld)` from its system's `addDataToWorld`, then `getSpatialMap(runWorld)` in
+its update. The worker world must come from `@daneren2005/shared-memory-ecs` 1.5.1 or newer so it carries the
+shared heap used to reconstruct the map handle.
+
+The live map is intentionally not the collision or bulk-query hot path. `CollisionBroadphase` and
+`SpatialIndex` still use Flatbush snapshots: packing one immutable R-tree per run is faster when that run will
+make a large number of queries. Use the live map for continuous availability and sparse queries; use
+`SpatialIndex` for query-heavy systems such as targeting every entity every tick.
+
+`SpatialIndex` is the same R-tree the collision broadphase is built on, without collide categories or shape
+tests. Build one from anything shaped like a query result and it reads the transform (and the body, to know which
+outline that transform describes) off each entity. Only the transform is needed, so it indexes anything with a
+place in the world rather than only what collides:
 
 ```ts
 import { SpatialIndex } from '@daneren2005/shared-memory-physics';

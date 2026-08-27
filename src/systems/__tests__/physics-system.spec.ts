@@ -102,6 +102,21 @@ describe.each(MODES)('physics-system velocity movement (%s)', (mode) => {
 		expect(entity.components.transform?.y).toEqual(16);
 	});
 
+	it('publishes the final position to the shared spatial map', async () => {
+		// Directly constructed test worlds do not call BaseWorld.load, which normally sends the shared heap.
+		await system.finishLoading();
+		const entity = createEntity({ x: 0, y: 0, velocityX: 100, velocityY: 0 });
+		expect(world.searchSpatial(-2, -2, 2, 2).map(found => found.eid)).toEqual([entity.eid]);
+
+		system.run(ONE_SECOND);
+		await system.waitForRunToComplete();
+
+		expect(world.searchSpatial(-2, -2, 2, 2).map(found => found.eid)).toEqual([]);
+		expect(world.spatialMap.neighbors(100, 0, 1, Infinity)).toEqual([entity.eid]);
+		expect(world.spatialMap.search(98, -2, 4, 4)).toEqual([entity.eid]);
+		expect(world.searchSpatial(98, -2, 102, 2).map(found => found.eid)).toEqual([entity.eid]);
+	});
+
 	it('scales movement by the elapsed time of the run', async () => {
 		let entity = createEntity({ x: 0, y: 0, velocityX: 8, velocityY: 4 });
 

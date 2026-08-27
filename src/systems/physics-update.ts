@@ -1,5 +1,6 @@
 import { addAtomicFloat32 } from '@daneren2005/shared-memory-objects/utils/atomic-math';
 import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
+import type SharedSpatialMap from '@daneren2005/shared-memory-objects/spatial/shared-spatial-map';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents, EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
@@ -14,11 +15,13 @@ import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-co
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import CollisionBroadphase, { COLLIDABLE_QUERY, type CollisionEntity, type CollisionFunction, type MovingEntity } from './collision';
 import { bouncePair } from './bounce';
+import { spatialBounds, type SpatialBlockComponents } from './spatial-bounds';
+import { getSpatialMap, type PhysicalSystemWorld } from '../world';
 
 // The per-run data object every physics update is handed: the base one plus the step counter the interpolation
 // component is stamped with. PhysicsSystem fills `tick` from addDataToWorld, so a subclass adding data must
 // call `super.addDataToWorld(world)` or nothing gets a tick and interpolation stops noticing new steps.
-export interface PhysicsWorld extends ComponentSystemWorld {
+export interface PhysicsWorld extends ComponentSystemWorld, PhysicalSystemWorld {
 	// Which physics step this is, bumped per run. Only compared for equality - a publication stamp, not a clock.
 	tick: number
 	// Whether to report this run's moves. Set by PhysicsSystem from whether anything is listening, since the cost
@@ -27,6 +30,16 @@ export interface PhysicsWorld extends ComponentSystemWorld {
 	// For a grouped update (see `group` on createPhysicsUpdate)
 	skipGroup?: number
 	dieAtImpact?(dying: DeathInterpolationEntity, other: DeathInterpolationEntity): void
+}
+
+export function updateSpatialMap(world: PhysicalSystemWorld, entityId: number, components: SpatialBlockComponents): void {
+	if(!world.spatialMap && (!world.heap || !world.spatialMapMemory)) {
+		return;
+	}
+
+	const spatialMap: SharedSpatialMap = getSpatialMap(world);
+	const bounds = spatialBounds(components);
+	spatialMap.update(entityId, bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
 }
 
 // What `dieAtImpact` reads off each side. Everything is optional and guarded at runtime so both a MovingEntity
@@ -158,6 +171,7 @@ export function createPhysicsUpdate<
 			const tree = group ? broadphaseByGroup?.get(groupId) : broadphase;
 			if(!tree) {
 				move(entityId, components.transform, moveX, moveY, callbacks, world.reportMoves);
+				updateSpatialMap(world, entityId, components);
 				finishInterpolationStep(interpolation, world.tick);
 
 				return;
@@ -173,6 +187,7 @@ export function createPhysicsUpdate<
 			// bouncing one does not, since it is about to turn around off the face it hit.
 			const moved = tree.resolveMove(self, moveX, moveY, !bouncing);
 			move(entityId, components.transform, moved.moveX, moved.moveY, callbacks, world.reportMoves);
+			updateSpatialMap(world, entityId, components);
 			// Before any callback, so the stamp covers exactly the pair physics produced. A callback that writes
 			// the transform is a game move, blended towards next frame like a teleport.
 			finishInterpolationStep(interpolation, world.tick);
@@ -276,8 +291,26 @@ function resolveContact<
 	onCollision?: CollisionFunction<C, T, W>,
 ): void {
 	bouncePair(self, other);
-	if(onCollision) {
-		onCollision(world, self, other, queries, callbacks);
+	if(!onCollision) {
+		return;
+	}
+
+	const selfBounds = spatialBounds(self.components);
+	const otherBounds = spatialBounds(other.components);
+	onCollision(world, self, other, queries, callbacks);
+	updateSpatialMapIfBoundsChanged(world, self.entityId, self.components, selfBounds);
+	updateSpatialMapIfBoundsChanged(world, other.entityId, other.components, otherBounds);
+}
+
+function updateSpatialMapIfBoundsChanged(
+	world: PhysicalSystemWorld,
+	entityId: number,
+	components: SpatialBlockComponents,
+	before: ReturnType<typeof spatialBounds>,
+): void {
+	const after = spatialBounds(components);
+	if(after.minX !== before.minX || after.minY !== before.minY || after.maxX !== before.maxX || after.maxY !== before.maxY) {
+		updateSpatialMap(world, entityId, components);
 	}
 }
 
@@ -349,6 +382,7 @@ export function physicsUpdate<
 		callbacks,
 		world.reportMoves,
 	);
+	updateSpatialMap(world, entityId, components);
 	finishInterpolationStep(interpolation, world.tick);
 }
 

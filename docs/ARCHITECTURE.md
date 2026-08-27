@@ -10,7 +10,8 @@ sections rather than repeating them. For the **roadmap / scratch notes**, see `N
 
 ## Mental model
 
-A 2D physics layer built on `@daneren2005/shared-memory-ecs`. All state lives in the ECS's
+A 2D physics layer built on `@daneren2005/shared-memory-ecs`. `PhysicalWorld` also owns a live
+`SharedSpatialMap` that client code and workers can query without rebuilding an index. All state lives in the ECS's
 `SharedArrayBuffer` component blocks, so the simulation can run on a **worker thread** while the
 main thread reads positions straight off its entities with no message-passing per entity.
 
@@ -46,6 +47,8 @@ main thread                              worker thread (optional)
 | `systems/collision.ts` | Broadphase (flatbush R-tree bucketed by collide category) + narrowphase sweep/overlap. `contactPoint` reports where a mover first touched a target, for death interpolation. | `CollisionBroadphase`, `COLLIDABLE_QUERY`, `MoveResult`, `SweepResult` |
 | `systems/bounce.ts` | Native reflect-off-contact used by the sweep when an entity has bounciness. Applied to both sides of a contact. | `bouncePair`, `bounce` (internal) |
 | `systems/spatial-index.ts` | Same R-tree without collide categories — targeting / range / nearest queries. Snapshot per run. | `SpatialIndex`, `SpatialFilter` |
+| `systems/spatial-bounds.ts` | Converts transform/body shapes to the axis-aligned bounds stored in the live spatial map. | `spatialBounds` (internal) |
+| `world.ts` | `BaseWorld` subclass that owns the live `SharedSpatialMap`, tracks entity/component lifecycle, exposes entity-level searches, and supplies map handles to worker worlds. | `PhysicalWorld`, `addPhysicalWorldData`, `getSpatialMap` |
 | `systems/interpolation-system.ts` | Main-thread system that runs the per-frame render-position lerp. | `InterpolationSystem`, `InterpolationSystemConfig` |
 | `systems/interpolation-update.ts` | The lerp itself (`render = prev + (current-prev)*alpha`), runnable in a worker too. | `interpolationUpdate` |
 | `math/shapes.ts` | Shape overlap, contact direction + distance primitives. All 3 shapes = an oriented core grown by a radius. | `shapesOverlap`, `contactNormal`, `orientedBoxesOverlap`, `segment*DistanceSquared`, `shapeHalfWidth/Height`, `shapeRadius`, `Vector` |
@@ -73,6 +76,10 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
   interpolation stops noticing steps.
 - **Moves use `addAtomicFloat32`, not `+=`.** The transform is shared memory another thread may add
   to in the same instant; a plain read-modify-write would drop a move.
+- **Flatbush remains the hot path.** `CollisionBroadphase` and `SpatialIndex` are packed snapshots for many
+  queries in one run. `PhysicalWorld.spatialMap` is updated after each finalized physics move so clients and
+  low-query workers always have an index without rebuilding Flatbush. A custom update that changes a transform
+  after the library physics call must use `updateSpatialMap`; a main-thread edit uses `updateSpatialEntity`.
 - **`POSITION_UPDATED_EVENT` carries only ids**, as one array per run (never per entity — that's the
   whole point). The worker only pays for it when someone is listening (`reportMoves`).
 - **`filter` vs `scope` on `PhysicsSystem`.** Both are query filters the ECS applies at gather time
@@ -133,7 +140,7 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
 
 ## Thread / dependency notes
 
-- `@daneren2005/shared-memory-ecs` and `-objects` are **peer deps** — a game must register these
+- `@daneren2005/shared-memory-ecs` (1.5.1+) and `-objects` are **peer deps** — a game must register these
   components against the same ECS copy it builds its world with.
 - `flatbush` is a real runtime dependency (the R-tree).
 - Never use barrel imports from the ECS/objects packages internally — import from the deep path
