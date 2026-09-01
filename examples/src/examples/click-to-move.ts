@@ -1,5 +1,6 @@
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
-import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '@daneren2005/shared-memory-physics';
+import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '@daneren2005/shared-memory-physics';
+import type { PolygonVertex } from '@daneren2005/shared-memory-physics';
 import type { Control } from '../controls';
 import type { Example, ExampleRuntime } from '../example';
 import Random from '../random';
@@ -20,8 +21,20 @@ const MARGIN = 12;
 // A perfect bounce, so the ricochet off an obstacle is unmistakable when the toggle is on.
 const BOUNCINESS = 1;
 
-// Cycled through as targets are placed so even a handful still shows one of each of the three shapes.
-const SHAPES = [SHAPE_RECTANGLE, SHAPE_CIRCLE, SHAPE_CAPSULE];
+// Polygons recur more often than the primitive shapes so the default target count has room to show several
+// different outlines, while still putting every primitive in the scene.
+const SHAPES = [
+	SHAPE_RECTANGLE,
+	SHAPE_CIRCLE,
+	SHAPE_CAPSULE,
+	SHAPE_POLYGON,
+	SHAPE_RECTANGLE,
+	SHAPE_POLYGON,
+	SHAPE_CIRCLE,
+	SHAPE_POLYGON,
+	SHAPE_CAPSULE,
+	SHAPE_POLYGON,
+];
 
 const settings = {
 	targets: 9,
@@ -47,7 +60,7 @@ export const clickToMove: Example = {
 		+ 'going along whichever single axis is still clear, so the square runs along the face of an obstacle and '
 		+ 'off its corner instead of sticking to it. On, the square bounces off instead - and because a bouncing '
 		+ 'entity is going to turn around off the face anyway, physics turns the sliding off for it, so the two are '
-		+ 'never fighting over the same contact. The rectangles, circles and capsules scattered about have a size '
+		+ 'never fighting over the same contact. The rectangles, circles, capsules and convex polygons scattered about have a size '
 		+ 'but no velocity, so physics never moves them - they are just there to run into.',
 	backend: 'sweep',
 
@@ -75,6 +88,7 @@ export const clickToMove: Example = {
 				value: settings.targets,
 				change(value) {
 					settings.targets = value;
+					host.restart();
 				},
 			},
 			{
@@ -98,6 +112,7 @@ export const clickToMove: Example = {
 		const { world, level } = runtime;
 		const random = new Random(SEED);
 		const placed: Array<Placed> = [];
+		let polygonVariant = 0;
 
 		const startX = level.width / 2;
 		const startY = level.height / 2;
@@ -124,10 +139,12 @@ export const clickToMove: Example = {
 		placed.push({ x: startX, y: startY, reach: PLAYER_SIZE / 2 });
 
 		for(let i = 0; i < settings.targets; i++) {
-			// Round-robin through the three shapes so even a low count still shows one of each, then random sizes
-			// on top so no two of a kind are quite alike.
+			// Follow the mixed sequence above, then vary sizes so no two of a kind are quite alike.
 			const shape = SHAPES[i % SHAPES.length];
-			const target = makeTarget(shape, random);
+			const target = makeTarget(shape, random, polygonVariant);
+			if(shape === SHAPE_POLYGON) {
+				polygonVariant++;
+			}
 
 			const spot = findSpot(runtime, random, target.reach, placed);
 			if(!spot) {
@@ -135,16 +152,22 @@ export const clickToMove: Example = {
 			}
 
 			placed.push({ x: spot.x, y: spot.y, reach: target.reach });
-			world.loadEntity({
+			const targetConfig: Config = {
 				x: spot.x,
 				y: spot.y,
-				width: target.width,
-				height: target.height,
-				radius: target.radius,
 				shape: target.shape,
 				angle: target.angle,
 				interpolate: true,
-			});
+			};
+			if(target.vertices) {
+				targetConfig.vertices = target.vertices;
+			} else if(target.radius !== undefined) {
+				targetConfig.radius = target.radius;
+			} else {
+				targetConfig.width = target.width;
+				targetConfig.height = target.height;
+			}
+			world.loadEntity(targetConfig);
 		}
 	},
 
@@ -236,6 +259,7 @@ interface Target {
 	width?: number
 	height?: number
 	radius?: number
+	vertices?: ReadonlyArray<PolygonVertex>
 	angle?: number
 	reach: number
 }
@@ -246,7 +270,7 @@ interface Placed {
 	reach: number
 }
 
-function makeTarget(shape: number, random: Random): Target {
+function makeTarget(shape: number, random: Random, polygonVariant: number): Target {
 	if(shape === SHAPE_CIRCLE) {
 		const radius = random.between(14, 30);
 
@@ -261,6 +285,28 @@ function makeTarget(shape: number, random: Random): Target {
 		const width = height + random.between(24, 60);
 
 		return { shape, width, height, angle: random.between(0, Math.PI), reach: width / 2 };
+	}
+
+	if(shape === SHAPE_POLYGON) {
+		// Deliberately cycle triangle through octagon instead of leaving the count to chance. An affine shear keeps
+		// each one convex while making them read as more than regular polygons stretched into ellipses.
+		const count = 3 + polygonVariant % 6;
+		const radiusX = random.between(24, 40);
+		const radiusY = random.between(20, 36);
+		const shear = random.between(-0.4, 0.4);
+		const vertices: Array<PolygonVertex> = [];
+		for(let i = 0; i < count; i++) {
+			const vertexAngle = (Math.PI * 2 * i) / count;
+			const y = Math.sin(vertexAngle) * radiusY;
+			vertices.push([Math.cos(vertexAngle) * radiusX + y * shear, y]);
+		}
+
+		return {
+			shape,
+			vertices,
+			angle: random.between(0, Math.PI),
+			reach: Math.max(...vertices.map(([x, y]) => Math.hypot(x, y))),
+		};
 	}
 
 	// A rectangle, drawn square to the world - the reach is the half-diagonal, the corner being its furthest

@@ -235,11 +235,11 @@ describe('physics-system collision setup', () => {
 		// createPhysicsUpdate stamps both on, so a game declares them once in the shared module.
 		const system = createSystem({ updateFunction: collisionUpdate });
 
-		// body/bounciness/interpolation/entity all travel with movers on the collision path - see PhysicsSystem.
-		expect(system.options.optional).toEqual(['body', 'bounciness', 'interpolation', 'entity', 'health']);
+		// Collision-owned blocks travel with movers on the collision path - see PhysicsSystem.
+		expect(system.options.optional).toEqual(['body', 'bounciness', 'polygon', 'interpolation', 'entity', 'health']);
 		expect(system.options.queries?.collidable).toEqual({
 			required: ['transform', 'body'],
-			optional: ['velocity', 'entity', 'bounciness', 'health'],
+			optional: ['velocity', 'entity', 'bounciness', 'health', 'polygon'],
 		});
 	});
 
@@ -501,6 +501,21 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 
 		expect(box.components.health?.health).toBeLessThan(FULL_HEALTH);
 		expect(other.components.health?.health).toBeLessThan(FULL_HEALTH);
+	});
+
+	it('carries polygon vertices through the collision worker query', async () => {
+		const polygon = world.loadEntity({
+			x: 0,
+			y: 0,
+			vertices: [[-5, -5], [5, 0], [-5, 5]],
+			health: FULL_HEALTH,
+		});
+		const ship = createShip({ x: 2, y: 0 });
+
+		await run(ONE_SECOND);
+
+		expect(ship.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE);
+		expect(polygon.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
 	});
 
 	it('collides a capsule along its length', async () => {

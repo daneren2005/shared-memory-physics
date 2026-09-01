@@ -1,5 +1,6 @@
 import { Component } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
+import type { PolygonVertex } from './polygon-component';
 
 // What an entity collides as and what it collides with. A body is loaded for anything with a size, so the way
 // to opt out is `collideCategory: 0`, not leaving the component off. Categories are the game's to name; the
@@ -20,12 +21,14 @@ export interface BodyComponent {
 //   SHAPE_RECTANGLE - a width x height box turned to `angle`
 //   SHAPE_CIRCLE    - a circle of diameter `width`, unaffected by `angle`
 //   SHAPE_CAPSULE   - `width` end to end and `height` thick, lying along the way it faces
+//   SHAPE_POLYGON   - a convex outline from the entity's polygon component
 // See src/math/shapes.ts for the geometry.
 export const SHAPE_RECTANGLE = 1;
 export const SHAPE_CIRCLE = 2;
 export const SHAPE_CAPSULE = 3;
+export const SHAPE_POLYGON = 4;
 
-const KNOWN_SHAPES = [SHAPE_RECTANGLE, SHAPE_CIRCLE, SHAPE_CAPSULE];
+const KNOWN_SHAPES = [SHAPE_RECTANGLE, SHAPE_CIRCLE, SHAPE_CAPSULE, SHAPE_POLYGON];
 
 // Default category: a single bit, so a world that sets no categories behaves as before they existed.
 export const DEFAULT_COLLIDE_CATEGORY = 1;
@@ -52,6 +55,7 @@ export interface BodyConfig {
 	shape?: number
 	// Not read here - the transform turns it into width/height - but a `radius` config decides the default shape.
 	radius?: number
+	vertices?: ReadonlyArray<PolygonVertex>
 	// The bits this entity collides as, and the bits it collides with. See canCollide.
 	collideCategory?: number
 	collideMask?: number
@@ -68,17 +72,16 @@ export const BODY_CATEGORY_INDEX = 1;
 export const BODY_MASK_INDEX = 2;
 export const BODY_SIZE = 3;
 
-// The flags word holds the shape in its low bits and the boolean body flags above them. Shapes are 1..3, so
-// two bits cover them; the sensor/ccd bits sit clear of that.
-export const BODY_SHAPE_MASK = 0b11;
-export const BODY_SENSOR_FLAG = 0b100;
-export const BODY_CCD_FLAG = 0b1000;
+// The flags word holds the shape in its low bits and the boolean body flags above them.
+export const BODY_SHAPE_MASK = 0b111;
+export const BODY_SENSOR_FLAG = 0b1000;
+export const BODY_CCD_FLAG = 0b10000;
 // A runtime flag, not a config one: set when an entity has struck what will kill it and is playing out one last
 // interpolation segment onto the impact point before it is removed (see `dieAtImpact` in physics-update). Unlike
 // the bits above it is never loaded from config; it lives in the flags word so any thread stepping the entity
 // sees it and it survives to the next run, which is what defers the kill by a step. A dying body is left out of
 // collision and killed at the top of its next update.
-export const BODY_DYING_FLAG = 0b10000;
+export const BODY_DYING_FLAG = 0b100000;
 
 // Readers off a raw body block, exported so the broadphase, bounce and game systems unpack the flags the same way.
 export function bodyShape(body: Uint32Array): number {
@@ -135,7 +138,7 @@ class BodyComponentImpl extends Component<Uint32Array> implements BodyComponent 
 export const bodyDefinition: ComponentDefinition<BodyComponent, Uint32Array, BodyConfig> = {
 	type: Uint32Array,
 	size: BODY_SIZE,
-	loadProperties: ['width', 'height', 'radius', 'shape', 'collideCategory', 'collideMask', 'sensor', 'continuousCollisionDetection'],
+	loadProperties: ['width', 'height', 'radius', 'vertices', 'shape', 'collideCategory', 'collideMask', 'sensor', 'continuousCollisionDetection'],
 	toBlock(config) {
 		return [
 			toFlags(config),
@@ -166,9 +169,12 @@ function toFlags(config: BodyConfig): number {
 function toShape(config: BodyConfig): number {
 	const shape = config.shape;
 	if(shape === undefined) {
-		return config.radius !== undefined ? SHAPE_CIRCLE : SHAPE_RECTANGLE;
+		return config.vertices !== undefined ? SHAPE_POLYGON : config.radius !== undefined ? SHAPE_CIRCLE : SHAPE_RECTANGLE;
 	} else if(!KNOWN_SHAPES.includes(shape)) {
 		throw new Error(`Unknown body shape: ${shape}`);
+	}
+	if(shape === SHAPE_POLYGON && config.vertices === undefined) {
+		throw new Error('A polygon body requires vertices');
 	}
 
 	return shape;

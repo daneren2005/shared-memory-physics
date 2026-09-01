@@ -1,5 +1,6 @@
 import { bouncePair, default as bounce } from '../bounce';
-import { BODY_SENSOR_FLAG, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../../components/body-component';
+import { BODY_SENSOR_FLAG, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../../components/body-component';
+import { POLYGON_SIZE, preparePolygon, type PolygonVertex } from '../../components/polygon-component';
 
 const EIGHTH_TURN = Math.PI / 4;
 
@@ -12,10 +13,17 @@ interface EntityOptions {
 	velocityY?: number
 	bounciness?: number
 	sensor?: boolean
+	vertices?: ReadonlyArray<PolygonVertex>
 }
 
 function entity(x: number, y: number, options: EntityOptions = {}) {
 	const width = options.width ?? 10;
+	let polygon: Float32Array | undefined;
+	if(options.vertices) {
+		const prepared = preparePolygon(options.vertices);
+		polygon = new Float32Array(POLYGON_SIZE);
+		polygon.set([prepared.vertices.length / 2, ...prepared.vertices]);
+	}
 
 	return {
 		components: {
@@ -23,11 +31,25 @@ function entity(x: number, y: number, options: EntityOptions = {}) {
 			velocity: new Float32Array([options.velocityX ?? 0, options.velocityY ?? 0]),
 			bounciness: new Float32Array([options.bounciness ?? 1]),
 			body: new Uint32Array([(options.shape ?? SHAPE_RECTANGLE) | (options.sensor ? BODY_SENSOR_FLAG : 0), 1, 0xffffffff]),
+			polygon,
 		},
 	};
 }
 
 describe('bounce', () => {
+	it('turns a mover back off a polygon edge', () => {
+		const self = entity(-6, 0, { shape: SHAPE_CIRCLE, width: 2, velocityX: 100 });
+		const polygon = entity(0, 0, {
+			shape: SHAPE_POLYGON,
+			vertices: [[-5, -5], [5, 0], [-5, 5]],
+			bounciness: 0,
+		});
+		bounce(self, polygon);
+
+		expect(self.components.velocity[0]).toBeCloseTo(-100);
+		expect(self.components.velocity[1]).toBeCloseTo(0);
+	});
+
 	it('turns a mover back off the face it ran into', () => {
 		const self = entity(0, 0, { velocityX: 100 });
 		bounce(self, entity(10, 0));

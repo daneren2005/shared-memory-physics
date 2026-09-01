@@ -1,8 +1,9 @@
-import { bodyShape, isSensor, SHAPE_RECTANGLE } from '../components/body-component';
+import { bodyShape, isSensor, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component';
 import { BOUNCINESS_INDEX } from '../components/bounciness-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import { contactNormal } from '../math/shapes';
+import { polygonContactNormal } from '../math/polygons';
 import type { Vector } from '../math/shapes';
 
 interface BounceEntity {
@@ -11,6 +12,7 @@ interface BounceEntity {
 		velocity?: Float32Array
 		bounciness?: Float32Array
 		body?: Uint32Array
+		polygon?: Float32Array
 	}
 }
 
@@ -85,11 +87,25 @@ function collisionNormal(self: BounceEntity, other: BounceEntity, out: Vector): 
 	const selfTransform = self.components.transform;
 	const otherTransform = other.components.transform;
 
+	const selfShape = shapeOf(self.components.body);
+	const otherShape = shapeOf(other.components.body);
+	if(selfShape === SHAPE_POLYGON || otherShape === SHAPE_POLYGON) {
+		return polygonContactNormal(
+			selfShape, self.components.polygon,
+			selfTransform[TRANSFORM_X_INDEX], selfTransform[TRANSFORM_Y_INDEX],
+			selfTransform[TRANSFORM_WIDTH_INDEX], selfTransform[TRANSFORM_HEIGHT_INDEX], selfTransform[TRANSFORM_ANGLE_INDEX],
+			otherShape, other.components.polygon,
+			otherTransform[TRANSFORM_X_INDEX], otherTransform[TRANSFORM_Y_INDEX],
+			otherTransform[TRANSFORM_WIDTH_INDEX], otherTransform[TRANSFORM_HEIGHT_INDEX], otherTransform[TRANSFORM_ANGLE_INDEX],
+			out,
+		);
+	}
+
 	return contactNormal(
-		shapeOf(self.components.body),
+		selfShape,
 		selfTransform[TRANSFORM_X_INDEX], selfTransform[TRANSFORM_Y_INDEX],
 		selfTransform[TRANSFORM_WIDTH_INDEX], selfTransform[TRANSFORM_HEIGHT_INDEX], selfTransform[TRANSFORM_ANGLE_INDEX],
-		shapeOf(other.components.body),
+		otherShape,
 		otherTransform[TRANSFORM_X_INDEX], otherTransform[TRANSFORM_Y_INDEX],
 		otherTransform[TRANSFORM_WIDTH_INDEX], otherTransform[TRANSFORM_HEIGHT_INDEX], otherTransform[TRANSFORM_ANGLE_INDEX],
 		out,

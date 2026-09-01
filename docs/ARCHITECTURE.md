@@ -40,6 +40,7 @@ main thread                              worker thread (optional)
 | `components/transform-component.ts` | Where/how big/facing. `x,y` = **centre**; `angle` radians CCW. | `transformDefinition`, `TRANSFORM_*_INDEX`, `TRANSFORM_SIZE` |
 | `components/velocity-component.ts` | World units per **second**. Keyed `velocityX/Y` in configs. | `velocityDefinition`, `VELOCITY_*_INDEX` |
 | `components/body-component.ts` | Shape + collide category/mask + sensor + continuous-collision flag, plus a runtime-only `dying` bit. A body is what makes an entity collidable. Shape/sensor/ccd/dying share one packed flags word (`BODY_FLAGS_INDEX`), read via `bodyShape`/`isSensor`/`isContinuous`/`isDying`. | `bodyDefinition`, `canCollide`, `isSensor`, `isContinuous`, `isDying`, `markDying`, `bodyShape`, `SHAPE_*`, `BODY_*` |
+| `components/polygon-component.ts` | Fixed-capacity sidecar block for convex polygon vertices. Validates 3-16 boundary vertices and stores them normalized around their source bounds, so transform size scales the outline. Only polygon entities allocate it. | `polygonDefinition`, `preparePolygon`, `MAX_POLYGON_VERTICES`, `POLYGON_*` |
 | `components/bounciness-component.ts` | Standalone bounce float (not part of body block). | `bouncinessDefinition`, `BOUNCINESS_INDEX` |
 | `components/interpolation-component.ts` | Render position + publication protocol fields (`prev`, `progress`, `tick`, `duration`), exposed on the block so a spawn can seed a first segment by hand. | `interpolationDefinition`, `snapEntity`, `startSpawnInterpolation`, `INTERPOLATION_*_INDEX` |
 | `systems/physics-system.ts` | Main-thread `ComponentSystem`: gathers entities, decides which queries/blocks travel, stamps `tick`, gates move-reporting. Fixed step default. `startInterpolation(entity)` seeds a just-spawned mover so it is drawn moving now (feeds its step + accumulator to `startSpawnInterpolation`). | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig` |
@@ -51,13 +52,18 @@ main thread                              worker thread (optional)
 | `world.ts` | `BaseWorld` subclass that owns the live `SharedSpatialMap`, tracks entity/component lifecycle, exposes entity-level searches, and supplies map handles to worker worlds. | `PhysicalWorld`, `addPhysicalWorldData`, `getSpatialMap` |
 | `systems/interpolation-system.ts` | Main-thread system that runs the per-frame render-position lerp. | `InterpolationSystem`, `InterpolationSystemConfig` |
 | `systems/interpolation-update.ts` | The lerp itself (`render = prev + (current-prev)*alpha`), runnable in a worker too. | `interpolationUpdate` |
-| `math/shapes.ts` | Shape overlap, contact direction + distance primitives. All 3 shapes = an oriented core grown by a radius. | `shapesOverlap`, `contactNormal`, `orientedBoxesOverlap`, `segment*DistanceSquared`, `shapeHalfWidth/Height`, `shapeRadius`, `Vector` |
+| `math/shapes.ts` | Primitive-shape overlap, contact direction + distance functions. Rectangle/circle/capsule remain an oriented core grown by a radius. | `shapesOverlap`, `contactNormal`, `orientedBoxesOverlap`, `segment*DistanceSquared`, `shapeHalfWidth/Height`, `shapeRadius`, `Vector` |
+| `math/polygons.ts` | Convex SAT used only when at least one side is a polygon; projects the other polygon or primitive analytically and supplies the matching contact normal. | `polygonShapesOverlap`, `polygonContactNormal` |
 
 Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures live in
 `src/__tests__/fixtures/`. `examples/` is a Phaser-rendered playground (Phaser is a dev dep only).
 
 ## Invariants & gotchas (the non-obvious rules)
 
+- **Polygon bodies are convex and capped at 16 vertices.** `vertices` loads a separate fixed-size polygon block,
+  so primitive bodies pay no vertex storage. Loading recentres and normalizes the outline to its source bounds;
+  the transform's width/height scale it thereafter. Primitive pairs stay on `math/shapes.ts`; only a pair with
+  `SHAPE_POLYGON` enters `math/polygons.ts`. Concave outlines must be split into convex bodies.
 - **Fixed 50ms step by default** (`DEFAULT_PHYSICS_STEP_MS`). A move is swept where it *ends*, so a
   step longer than an obstacle is thick lets a fast entity tunnel through it. `deltaBetweenRuns: 0`
   = every frame. (README → "The step")

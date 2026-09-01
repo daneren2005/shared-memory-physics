@@ -2,10 +2,11 @@ import Flatbush from 'flatbush';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsUpdateComponents } from '../components/registry';
-import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, bodyShape, isContinuous, isDying, isSensor, SHAPE_CAPSULE, SHAPE_RECTANGLE } from '../components/body-component';
+import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, bodyShape, isContinuous, isDying, isSensor, SHAPE_CAPSULE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
 import { shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap } from '../math/shapes';
+import { polygonShapesOverlap } from '../math/polygons';
 
 // How close to contact a sweep settles for, in world units: below anything a game would draw, yet reached by
 // the halving below in a handful of steps.
@@ -23,6 +24,7 @@ export const COLLIDABLE_QUERY = 'collidable';
 export type CollisionComponents<T extends PhysicsUpdateComponents> = Partial<T> & {
 	transform: Float32Array
 	body: Uint32Array
+	polygon?: Float32Array
 	entity?: Uint32Array
 };
 
@@ -75,12 +77,12 @@ const NOTHING_BLOCKING: Array<never> = [];
 // which death interpolation calls with whichever side of a collision was fatal.
 interface ContactSource {
 	entityId: number
-	components: { transform: Float32Array, body?: Uint32Array }
+	components: { transform: Float32Array, body?: Uint32Array, polygon?: Float32Array }
 }
 // The other side of a shape test: only ever a body at a transform is looked at, so this is all that is required.
 // CollisionEntity satisfies it, as does anything else carrying the two blocks.
 interface ContactTarget {
-	components: { transform: Float32Array, body: Uint32Array }
+	components: { transform: Float32Array, body: Uint32Array, polygon?: Float32Array }
 }
 
 // Packs a pair of entity ids into one key. Ids must stay under this for the key to be unique, which a pool an
@@ -95,6 +97,7 @@ const CLEAR = { fraction: 1, blocking: NOTHING_BLOCKING };
 interface Searcher {
 	entityId: number
 	shape: number
+	polygon?: Float32Array
 	x: number
 	y: number
 	width: number
@@ -645,10 +648,15 @@ function toSearcher(self: ContactSource): Searcher | undefined {
 	}
 
 	const angle = transform[TRANSFORM_ANGLE_INDEX];
+	const polygon = self.components.polygon;
+	if(shape === SHAPE_POLYGON && !polygon) {
+		return undefined;
+	}
 
 	return {
 		entityId: self.entityId,
 		shape,
+		polygon,
 		x: transform[TRANSFORM_X_INDEX],
 		y: transform[TRANSFORM_Y_INDEX],
 		width,
@@ -683,7 +691,7 @@ function sweptOverlaps(searcher: Searcher, startX: number, startY: number, moveX
 	const otherHeight = transform[TRANSFORM_HEIGHT_INDEX];
 	const otherAngle = transform[TRANSFORM_ANGLE_INDEX];
 
-	if(searcher.shape === SHAPE_RECTANGLE) {
+	if(searcher.shape === SHAPE_RECTANGLE || searcher.shape === SHAPE_POLYGON) {
 		// The move measured in the box's own frame, where the box is axis aligned and merely slides by it. Growing
 		// each side by that slide over-covers the two corners the slid hexagon leaves open, which reports early, not
 		// short.
@@ -692,10 +700,10 @@ function sweptOverlaps(searcher: Searcher, startX: number, startY: number, moveX
 		const localX = moveX * cos + moveY * sin;
 		const localY = -moveX * sin + moveY * cos;
 
-		return shapesOverlap(
-			SHAPE_RECTANGLE, (startX + endX) / 2, (startY + endY) / 2,
+		return overlapShapes(
+			SHAPE_RECTANGLE, undefined, (startX + endX) / 2, (startY + endY) / 2,
 			searcher.width + Math.abs(localX), searcher.height + Math.abs(localY), searcher.angle,
-			otherShape, otherX, otherY, otherWidth, otherHeight, otherAngle,
+			otherShape, other.components.polygon, otherX, otherY, otherWidth, otherHeight, otherAngle,
 		);
 	}
 
@@ -705,17 +713,17 @@ function sweptOverlaps(searcher: Searcher, startX: number, startY: number, moveX
 	const radius = shapeRadius(searcher.shape, searcher.width, searcher.height);
 	const distance = Math.sqrt(moveX * moveX + moveY * moveY);
 	const pathAngle = distance > 0 ? Math.atan2(moveY, moveX) : searcher.angle;
-	const alongPath = shapesOverlap(
-		SHAPE_CAPSULE, (startX + endX) / 2, (startY + endY) / 2, distance + radius * 2, radius * 2, pathAngle,
-		otherShape, otherX, otherY, otherWidth, otherHeight, otherAngle,
+	const alongPath = overlapShapes(
+		SHAPE_CAPSULE, undefined, (startX + endX) / 2, (startY + endY) / 2, distance + radius * 2, radius * 2, pathAngle,
+		otherShape, other.components.polygon, otherX, otherY, otherWidth, otherHeight, otherAngle,
 	);
 	if(alongPath) {
 		return true;
 	}
 
-	return shapesOverlap(
-		searcher.shape, endX, endY, searcher.width, searcher.height, searcher.angle,
-		otherShape, otherX, otherY, otherWidth, otherHeight, otherAngle,
+	return overlapShapes(
+		searcher.shape, searcher.polygon, endX, endY, searcher.width, searcher.height, searcher.angle,
+		otherShape, other.components.polygon, otherX, otherY, otherWidth, otherHeight, otherAngle,
 	);
 }
 
@@ -735,10 +743,29 @@ function clamp01(value: number): number {
 function overlapsAt(searcher: Searcher, x: number, y: number, other: ContactTarget): boolean {
 	const transform = other.components.transform;
 
-	return shapesOverlap(
-		searcher.shape, x, y, searcher.width, searcher.height, searcher.angle,
-		bodyShape(other.components.body),
+	return overlapShapes(
+		searcher.shape, searcher.polygon, x, y, searcher.width, searcher.height, searcher.angle,
+		bodyShape(other.components.body), other.components.polygon,
 		transform[TRANSFORM_X_INDEX], transform[TRANSFORM_Y_INDEX],
 		transform[TRANSFORM_WIDTH_INDEX], transform[TRANSFORM_HEIGHT_INDEX], transform[TRANSFORM_ANGLE_INDEX],
+	);
+}
+
+function overlapShapes(
+	aShape: number, aPolygon: Float32Array | undefined,
+	aX: number, aY: number, aWidth: number, aHeight: number, aAngle: number,
+	bShape: number, bPolygon: Float32Array | undefined,
+	bX: number, bY: number, bWidth: number, bHeight: number, bAngle: number,
+): boolean {
+	if(aShape !== SHAPE_POLYGON && bShape !== SHAPE_POLYGON) {
+		return shapesOverlap(
+			aShape, aX, aY, aWidth, aHeight, aAngle,
+			bShape, bX, bY, bWidth, bHeight, bAngle,
+		);
+	}
+
+	return polygonShapesOverlap(
+		aShape, aPolygon, aX, aY, aWidth, aHeight, aAngle,
+		bShape, bPolygon, bX, bY, bWidth, bHeight, bAngle,
 	);
 }

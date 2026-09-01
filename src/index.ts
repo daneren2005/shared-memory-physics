@@ -30,6 +30,7 @@ export {
 	SHAPE_RECTANGLE,
 	SHAPE_CIRCLE,
 	SHAPE_CAPSULE,
+	SHAPE_POLYGON,
 	DEFAULT_COLLIDE_CATEGORY,
 	DEFAULT_COLLIDE_MASK,
 	BODY_FLAGS_INDEX,
@@ -45,6 +46,15 @@ export type {
 	BodyComponent,
 	BodyConfig,
 } from './components/body-component';
+
+export { default as polygonDefinition, preparePolygon } from './components/polygon-component';
+export {
+	MAX_POLYGON_VERTICES,
+	POLYGON_VERTEX_COUNT_INDEX,
+	POLYGON_VERTICES_INDEX,
+	POLYGON_SIZE,
+} from './components/polygon-component';
+export type { PolygonComponent, PolygonConfig, PolygonVertex, PreparedPolygon } from './components/polygon-component';
 
 export { default as bouncinessDefinition } from './components/bounciness-component';
 export {
@@ -110,6 +120,7 @@ export {
 	pointSegmentDistanceSquared,
 } from './math/shapes';
 export type { Vector } from './math/shapes';
+export { polygonShapesOverlap, polygonContactNormal } from './math/polygons';
 
 export { default as CollisionBroadphase, COLLIDABLE_QUERY } from './systems/collision';
 export type { CollisionComponents, CollisionEntity, CollisionFunction, MoveResult, MovingEntity, SweepResult } from './systems/collision';

@@ -1,8 +1,9 @@
 import { createTestWorld, type TestWorld } from '../../__tests__/fixtures/world';
 import {
 	BODY_CATEGORY_INDEX, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SHAPE_MASK,
-	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE,
+	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE,
 } from '../body-component';
+import { MAX_POLYGON_VERTICES } from '../polygon-component';
 
 describe('components', () => {
 	let world: TestWorld;
@@ -127,6 +128,38 @@ describe('components', () => {
 	});
 
 	describe('body', () => {
+		it('loads convex vertices as a polygon with dimensions derived from their bounds', () => {
+			const entity = world.loadEntity({ x: 0, y: 0, vertices: [[-4, -2], [4, 0], [-4, 2]] });
+
+			expect(entity.components.body?.shape).toEqual(SHAPE_POLYGON);
+			expect(entity.components.transform?.width).toEqual(8);
+			expect(entity.components.transform?.height).toEqual(4);
+			expect(entity.components.polygon?.vertexCount).toEqual(3);
+			expect(Array.from(entity.components.polygon!.block.slice(1, 7))).toEqual([-0.5, -0.5, 0.5, 0, -0.5, 0.5]);
+		});
+
+		it('accepts clockwise vertices and stores them counter-clockwise', () => {
+			const entity = world.loadEntity({ vertices: [[-4, 2], [4, 0], [-4, -2]] });
+
+			expect(Array.from(entity.components.polygon!.block.slice(1, 7))).toEqual([-0.5, -0.5, 0.5, 0, -0.5, 0.5]);
+		});
+
+		it('rejects concave, degenerate and oversized polygons', () => {
+			expect(() => world.loadEntity({ vertices: [[0, 0], [2, 0], [1, 0.5], [2, 2], [0, 2]] }))
+				.toThrow('Polygon vertices must describe a convex polygon in boundary order');
+			expect(() => world.loadEntity({ vertices: [[0, 0], [1, 0], [2, 0]] }))
+				.toThrow('A polygon must have nonzero width and height');
+			expect(() => world.loadEntity({ vertices: Array.from({ length: MAX_POLYGON_VERTICES + 1 }, (_, i) => [i, i % 2] as const) }))
+				.toThrow(`A polygon needs between 3 and ${MAX_POLYGON_VERTICES} vertices`);
+			expect(() => world.loadEntity({ vertices: [[0, -5], [3, 4], [-5, -1], [5, -1], [-3, 4]] }))
+				.toThrow('Polygon edges cannot cross or share non-adjacent vertices');
+		});
+
+		it('does not allow polygon vertices to compete with another size', () => {
+			expect(() => world.loadEntity({ width: 10, height: 10, vertices: [[-1, -1], [1, 0], [-1, 1]] }))
+				.toThrow('A transform takes polygon vertices, a radius, or a width and height');
+		});
+
 		it('is loaded for anything with a size, so everything in the world collides by default', () => {
 			const entity = world.loadEntity({ x: 0, y: 0, width: 8, height: 4 });
 

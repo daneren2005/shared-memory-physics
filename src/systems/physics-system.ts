@@ -95,6 +95,9 @@ export default class PhysicsSystem<
 		if(collision && !optional.includes('bounciness')) {
 			extraOptional.push('bounciness');
 		}
+		if(collision && !optional.includes('polygon')) {
+			extraOptional.push('polygon');
+		}
 		if(!optional.includes('interpolation')) {
 			extraOptional.push('interpolation');
 		}
@@ -115,6 +118,9 @@ export default class PhysicsSystem<
 		// sides around by their own bounciness, and the broadphase decides from these blocks whether anything in the
 		// run can bounce at all. Left off, hasBounciness is never true and nothing ever bounces.
 		const collidableOptional = optional.includes('bounciness') ? [...optional] : ['bounciness', ...optional];
+		if(!collidableOptional.includes('polygon')) {
+			collidableOptional.push('polygon');
+		}
 		// The group block on the collidable side too, so preRun can bucket the broadphase by group.
 		if(group && !collidableOptional.includes(group.component)) {
 			collidableOptional.push(group.component);

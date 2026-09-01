@@ -1,5 +1,11 @@
 import { AUTO, Game, Math as PhaserMath, Scale, Scene } from 'phaser';
-import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '@daneren2005/shared-memory-physics';
+import {
+	POLYGON_VERTICES_INDEX,
+	SHAPE_CAPSULE,
+	SHAPE_CIRCLE,
+	SHAPE_POLYGON,
+	SHAPE_RECTANGLE,
+} from '@daneren2005/shared-memory-physics';
 import type { TransformComponent } from '@daneren2005/shared-memory-physics';
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import type { EntityStyle, HudText, ExampleRuntime } from './example';
@@ -164,7 +170,13 @@ class ExampleScene extends Scene {
 			// never asked to interpolate - the walls - has no interpolation block and falls back to the one
 			// place a position always exists.
 			const interpolation = this.host.interpolate ? entity.components.interpolation : undefined;
-			drawShape(graphics, interpolation ?? transform, transform, entity.components.body?.shape ?? SHAPE_RECTANGLE);
+			drawShape(
+				graphics,
+				interpolation ?? transform,
+				transform,
+				entity.components.body?.shape ?? SHAPE_RECTANGLE,
+				entity.components.polygon?.block,
+			);
 		}
 	}
 
@@ -209,7 +221,13 @@ class ExampleScene extends Scene {
 // `position` is what to draw it at - the render position when the page is interpolating, the transform when it
 // is not - and both are getters straight onto shared blocks a physics run or the interpolation system wrote,
 // so neither is a copy something had to keep in step.
-function drawShape(graphics: Phaser.GameObjects.Graphics, position: Position, transform: TransformComponent, shape: number): void {
+function drawShape(
+	graphics: Phaser.GameObjects.Graphics,
+	position: Position,
+	transform: TransformComponent,
+	shape: number,
+	polygon?: Float32Array,
+): void {
 	const { x, y } = position;
 	const { width, height, angle } = transform;
 
@@ -229,6 +247,12 @@ function drawShape(graphics: Phaser.GameObjects.Graphics, position: Position, tr
 		return;
 	}
 
+	if(shape === SHAPE_POLYGON && polygon) {
+		drawPolygon(graphics, x, y, width, height, angle, polygon);
+
+		return;
+	}
+
 	// x/y is the *centre* of the box, and Phaser draws from a corner, so the box is drawn around the origin and
 	// the origin is moved to the entity.  Nothing in these examples turns anything, but the rotation is honoured
 	// so that anything drawn here matches what the library would collide it as.
@@ -239,6 +263,31 @@ function drawShape(graphics: Phaser.GameObjects.Graphics, position: Position, tr
 	}
 	graphics.fillRect(-width / 2, -height / 2, width, height);
 	graphics.strokeRect(-width / 2, -height / 2, width, height);
+	graphics.restore();
+}
+
+function drawPolygon(
+	graphics: Phaser.GameObjects.Graphics,
+	x: number,
+	y: number,
+	width: number,
+	height: number,
+	angle: number,
+	polygon: Float32Array,
+): void {
+	const points: Array<PhaserMath.Vector2> = [];
+	for(let i = 0; i < polygon[0]; i++) {
+		const offset = POLYGON_VERTICES_INDEX + i * 2;
+		points.push(new PhaserMath.Vector2(polygon[offset] * width, polygon[offset + 1] * height));
+	}
+
+	graphics.save();
+	graphics.translateCanvas(x, y);
+	if(angle !== 0) {
+		graphics.rotateCanvas(angle);
+	}
+	graphics.fillPoints(points, true);
+	graphics.strokePoints(points, true);
 	graphics.restore();
 }
 

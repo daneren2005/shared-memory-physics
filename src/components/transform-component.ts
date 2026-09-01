@@ -1,5 +1,6 @@
 import { Component } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
+import { preparePolygon, type PolygonVertex } from './polygon-component';
 
 // Where an entity is, how big it is, and which way it faces: a position, its box, and the box's rotation.
 export interface TransformComponent {
@@ -20,6 +21,7 @@ export interface TransformConfig {
 	height: number
 	angle?: number
 	radius?: number
+	vertices?: ReadonlyArray<PolygonVertex>
 }
 // The live runtime half: the physics system moves the position and can turn the box every run, so both round-trip
 // through `save`. Size comes back from the template. `x`/`y` are the centre of the box, not a corner; `angle` is
@@ -76,13 +78,23 @@ export const transformDefinition: ComponentDefinition<TransformComponent, Float3
 	type: Float32Array,
 	size: TRANSFORM_SIZE,
 	// A size marks a config as having a transform. x/y are not listed: they come off a save, not the template.
-	loadProperties: ['width', 'height', 'radius'],
+	loadProperties: ['width', 'height', 'radius', 'vertices'],
 	toBlock(config) {
 		// A radius is the same size said differently; turn it into width/height so nothing downstream cares. Both
 		// at once cannot be honoured, so it throws rather than picking a winner.
 		const radius = config.radius;
+		const vertices = config.vertices;
 		let width = config.width;
 		let height = config.height;
+		if(vertices !== undefined) {
+			if(radius !== undefined || width !== undefined || height !== undefined) {
+				throw new Error('A transform takes polygon vertices, a radius, or a width and height');
+			}
+
+			const prepared = preparePolygon(vertices);
+			width = prepared.width;
+			height = prepared.height;
+		}
 		if(radius !== undefined) {
 			if(width !== undefined || height !== undefined) {
 				throw new Error('A transform takes either a radius or a width and height, not both');

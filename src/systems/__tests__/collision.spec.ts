@@ -3,8 +3,9 @@ import type { PhysicsUpdateComponents } from '../../components/registry';
 import {
 	BODY_CATEGORY_INDEX, BODY_CCD_FLAG, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SENSOR_FLAG, BODY_SIZE,
 	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK,
-	SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE,
+	SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE,
 } from '../../components/body-component';
+import { POLYGON_SIZE, preparePolygon, type PolygonVertex } from '../../components/polygon-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
 import { VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component';
 
@@ -28,6 +29,7 @@ interface Box {
 	collideMask?: number
 	sensor?: boolean
 	continuousCollisionDetection?: boolean
+	vertices?: ReadonlyArray<PolygonVertex>
 }
 
 // Boxes default to 10x10, still, colliding with everything, so most tests only give a position.
@@ -47,8 +49,14 @@ function createEntity(box: Box, entityId: number): MovingEntity<PhysicsUpdateCom
 	body[BODY_FLAGS_INDEX] = (box.shape ?? SHAPE_RECTANGLE) | (box.sensor ? BODY_SENSOR_FLAG : 0) | (box.continuousCollisionDetection ? BODY_CCD_FLAG : 0);
 	body[BODY_CATEGORY_INDEX] = box.collideCategory ?? DEFAULT_COLLIDE_CATEGORY;
 	body[BODY_MASK_INDEX] = box.collideMask ?? DEFAULT_COLLIDE_MASK;
+	let polygon: Float32Array | undefined;
+	if(box.vertices) {
+		const prepared = preparePolygon(box.vertices);
+		polygon = new Float32Array(POLYGON_SIZE);
+		polygon.set([prepared.vertices.length / 2, ...prepared.vertices]);
+	}
 
-	return { entityId, components: { transform, velocity, body } };
+	return { entityId, components: { transform, velocity, body, polygon } };
 }
 
 // One entry per box, keyed by its list position + 1 as its entity id.
@@ -156,6 +164,37 @@ describe('collision-broadphase', () => {
 
 	// Each entity is indexed and tested as the shape its body says, not the rectangle its width and height imply.
 	describe('body shapes', () => {
+		const triangle: Box = {
+			x: 0,
+			y: 0,
+			shape: SHAPE_POLYGON,
+			width: 10,
+			height: 10,
+			vertices: [[-5, -5], [5, 0], [-5, 5]],
+		};
+
+		it('tests a convex polygon instead of its containing rectangle', () => {
+			expect(hits([triangle, { x: 4, y: 4, width: 2, height: 2 }], 1)).toEqual([]);
+			expect(hits([triangle, { x: 2, y: 0, width: 2, height: 2 }], 1)).toEqual([2]);
+		});
+
+		it('sweeps a mover to the polygon edge', () => {
+			const entities = createEntities([{ x: -10, y: 0, width: 2, height: 2 }, triangle]);
+			const result = build(entities).sweep(entities[0], 10, 0);
+
+			expect(result.fraction).toBeCloseTo(0.4, 3);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('tests polygon pairs symmetrically and follows their angles', () => {
+			const other = { ...triangle, x: 7 };
+			expect(hits([triangle, other], 1)).toEqual([2]);
+			expect(hits([triangle, other], 2)).toEqual([1]);
+			const corner = { x: 4, y: 4, width: 2, height: 2 };
+			expect(hits([triangle, corner], 1)).toEqual([]);
+			expect(hits([{ ...triangle, angle: Math.PI }, corner], 1)).toEqual([2]);
+		});
+
 		it('rounds off the corner a rectangle of the same size would keep', () => {
 			// Offset along the diagonal: boxes still overlap while circles have parted - only true if the circle
 			// test ran.
@@ -751,6 +790,22 @@ describe('collision-broadphase', () => {
 			const result = sweep(ccd, 1, 60, 0);
 			// Near face at 49.5, the box's half-width 1: contact when its centre reaches 48.5.
 			expect(result.fraction).toBeCloseTo(48.5 / 60, 3);
+			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('refines a continuous move against the polygon outline', () => {
+			const mover: Box = { x: 0, y: 0, width: 2, height: 2, continuousCollisionDetection: true };
+			const polygon: Box = {
+				x: 50,
+				y: 0,
+				width: 10,
+				height: 10,
+				shape: SHAPE_POLYGON,
+				vertices: [[-5, -5], [5, 0], [-5, 5]],
+			};
+			const result = sweep([mover, polygon], 1, 60, 0);
+
+			expect(result.fraction).toBeCloseTo(44 / 60, 3);
 			expect(blocking(result)).toEqual([2]);
 		});
 

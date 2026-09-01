@@ -1,6 +1,7 @@
 import bodyDefinition, { type BodyComponent } from './body-component';
 import bouncinessDefinition, { type BouncinessComponent } from './bounciness-component';
 import interpolationDefinition, { type InterpolationComponent } from './interpolation-component';
+import polygonDefinition, { type PolygonComponent } from './polygon-component';
 import transformDefinition, { type TransformComponent } from './transform-component';
 import velocityDefinition, { type VelocityComponent } from './velocity-component';
 
@@ -13,6 +14,7 @@ export const physicsRegistry = {
 	transform: transformDefinition,
 	velocity: velocityDefinition,
 	body: bodyDefinition,
+	polygon: polygonDefinition,
 	bounciness: bouncinessDefinition,
 	interpolation: interpolationDefinition,
 };
@@ -23,6 +25,7 @@ export type PhysicsComponents = {
 	transform: TransformComponent
 	velocity: VelocityComponent
 	body: BodyComponent
+	polygon: PolygonComponent
 	bounciness: BouncinessComponent
 	interpolation: InterpolationComponent
 };
@@ -43,6 +46,7 @@ export type PhysicsUpdateComponents = {
 	transform: Float32Array
 	velocity: Float32Array
 	body?: Uint32Array
+	polygon?: Float32Array
 	bounciness?: Float32Array
 	interpolation?: Float32Array
 	// For checking if entity is dead during run

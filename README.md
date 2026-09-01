@@ -52,14 +52,15 @@ its shape and categories back from the template rather than from the save. See
 
 ## Body shapes
 
-An entity is one of three shapes, and all three live in the same transform - so which one it is changes what
-that width and height *mean* rather than where they are kept:
+An entity is one of four shapes. The transform still owns its position, size and angle; a polygon additionally
+has a `polygon` component holding its outline:
 
 | `shape`           | Config                                | What it is                                                    |
 | ----------------- | ------------------------------------- | ------------------------------------------------------------- |
 | `SHAPE_RECTANGLE` | `width`, `height`                     | a `width` x `height` box turned to `angle` – the default      |
 | `SHAPE_CIRCLE`    | `radius`                              | a circle of diameter `width`, which `angle` does not affect   |
 | `SHAPE_CAPSULE`   | `width`, `height`, `shape`             | `width` from end to end, `height` thick, lying along `angle`  |
+| `SHAPE_POLYGON`   | `vertices`                             | a convex 3-16 vertex outline, scaled and turned by its transform |
 
 ```ts
 import { SHAPE_CAPSULE } from '@daneren2005/shared-memory-physics';
@@ -67,21 +68,30 @@ import { SHAPE_CAPSULE } from '@daneren2005/shared-memory-physics';
 world.loadEntity({ x: 0, y: 0, width: 10, height: 4 });                          // a rectangle
 world.loadEntity({ x: 0, y: 0, radius: 5 });                                     // a circle
 world.loadEntity({ x: 0, y: 0, width: 40, height: 10, shape: SHAPE_CAPSULE });   // a capsule
+world.loadEntity({ x: 0, y: 0, vertices: [[-8, -6], [10, 0], [-8, 6]] });       // a triangle
 ```
+
+Polygon vertices are local to the entity. They must describe a convex boundary in clockwise or counter-clockwise
+order; concave, collinear, non-finite, and out-of-range outlines throw during loading. Their bounding box becomes
+the transform's initial `width` and `height`, and the stored vertices are normalized around that box's centre.
+Changing the transform size therefore scales the polygon, while `angle` rotates it around that centre. Give
+`vertices` by themselves rather than alongside `radius` or `width`/`height`.
 
 `radius` is the same size said differently: it loads as a `width` and a `height` of the diameter, so there is
 still only one size in the block however the config spelled it. Giving both a `radius` and a `width` throws
 rather than one quietly winning. A config that says nothing about its `shape` is read off the size it gave - a
-`radius` describes a circle, anything else a rectangle - so **only capsules have to name their shape**, and an
+`vertices` describes a polygon, `radius` describes a circle, and anything else a rectangle - so **only capsules
+have to name their shape**, and an
 unrecognised one throws rather than quietly becoming a rectangle.
 
 A capsule's `width` is its **whole** length, caps included, and it lies along the way the entity faces: a 40x10
 capsule is a 30-long core with a 5 radius cap at each end, and it is the same 10 thick all the way down. One
 told it is no longer than it is wide collapses to a circle rather than turning itself inside out.
 
-Because a circle is a capsule whose core has no length, all three shapes are *an oriented core grown by a
+Because a circle is a capsule whose core has no length, the three primitive shapes are *an oriented core grown by a
 radius* - a box with no radius, a point, or a segment - which leaves only three overlap tests rather than one
-per pairing: box against box (the separating axis test), core against core, and core against box. Touching
+per primitive pairing: box against box (the separating axis test), core against core, and core against box.
+Those fast paths remain unchanged; only a pair involving a polygon enters the polygon separating-axis test. Touching
 exactly still counts as **not** overlapping, whichever pair it is, and a shape with no area never overlaps
 anything. Which of the two sizes decides that depends on the shape: a circle with no height is a perfectly
 good circle, while a rectangle with no height is nothing at all.
@@ -92,7 +102,9 @@ such direction. It splits the same three ways off the same geometry, so the dire
 actually hit at the angle the pair is turned to - not the nearest world axis. This is what the native bounce
 reflects around; a game reaching for its own response can use it the same way.
 
-`shapesOverlap` is exported, along with `shapeHalfWidth` / `shapeHalfHeight` (the axis-aligned box a shape is
+`shapesOverlap` and `contactNormal` are the allocation-free primitive-shape functions. Their polygon counterparts
+are `polygonShapesOverlap` and `polygonContactNormal`, which additionally take the polygon component blocks.
+`shapeHalfWidth` / `shapeHalfHeight` (the axis-aligned box a shape is
 indexed under), `shapeRadius`, `shapeIsEmpty`, `capsuleHalfLength`, and the distance primitives underneath -
 `segmentSegmentDistanceSquared`, `segmentBoxDistanceSquared` and `pointSegmentDistanceSquared`, each of which
 takes an optional `out` vector and fills it with the gap it measured. `orientedBoxesOverlap`, `boundsHalfWidth`
