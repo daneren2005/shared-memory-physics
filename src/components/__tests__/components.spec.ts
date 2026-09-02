@@ -4,6 +4,11 @@ import {
 	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE,
 } from '../body-component';
 import { MAX_POLYGON_VERTICES } from '../polygon-component';
+import {
+	DYNAMICS_ACCELERATION_X_INDEX,
+	DYNAMICS_ACCELERATION_Y_INDEX,
+	DYNAMICS_INVERSE_MASS_INDEX,
+} from '../dynamics-component';
 
 describe('components', () => {
 	let world: TestWorld;
@@ -124,6 +129,73 @@ describe('components', () => {
 			entity.components.velocity!.velocityX = 100;
 
 			expect(entity.save()).toMatchObject({ velocityX: 100, velocityY: 2 });
+		});
+	});
+
+	describe('dynamics', () => {
+		it('loads acceleration and mass, defaulting omitted values', () => {
+			const accelerated = world.loadEntity({ accelerationY: 1_600 });
+			expect(accelerated.components.dynamics?.accelerationX).toEqual(0);
+			expect(accelerated.components.dynamics?.accelerationY).toEqual(1_600);
+			expect(accelerated.components.dynamics?.mass).toEqual(1);
+
+			const massive = world.loadEntity({ mass: 4 });
+			expect(massive.components.dynamics?.accelerationX).toEqual(0);
+			expect(massive.components.dynamics?.accelerationY).toEqual(0);
+			expect(massive.components.dynamics?.mass).toEqual(4);
+		});
+
+		it('is absent when no dynamics property is configured', () => {
+			expect(world.loadEntity({ velocityX: 1 }).components.dynamics).toBeUndefined();
+		});
+
+		it('stores inverse mass while exposing mass', () => {
+			const entity = world.loadEntity({ accelerationX: 2, accelerationY: 3, mass: 4 });
+			const dynamics = entity.components.dynamics!;
+			const block = world.registry.dynamics.memoryComponent.getBlock(dynamics.index);
+
+			expect(block[DYNAMICS_ACCELERATION_X_INDEX]).toEqual(2);
+			expect(block[DYNAMICS_ACCELERATION_Y_INDEX]).toEqual(3);
+			expect(block[DYNAMICS_INVERSE_MASS_INDEX]).toEqual(0.25);
+
+			dynamics.mass = 2;
+			expect(block[DYNAMICS_INVERSE_MASS_INDEX]).toEqual(0.5);
+			block[DYNAMICS_INVERSE_MASS_INDEX] = 0.125;
+			expect(dynamics.mass).toEqual(8);
+		});
+
+		it('writes acceleration through to shared memory', () => {
+			const entity = world.loadEntity({ accelerationX: 0 });
+			const dynamics = entity.components.dynamics!;
+			const block = world.registry.dynamics.memoryComponent.getBlock(dynamics.index);
+
+			dynamics.accelerationX = 42;
+			block[DYNAMICS_ACCELERATION_Y_INDEX] = 24;
+			expect(block[DYNAMICS_ACCELERATION_X_INDEX]).toEqual(42);
+			expect(dynamics.accelerationY).toEqual(24);
+		});
+
+		it('rejects invalid mass and non-finite acceleration', () => {
+			expect(() => world.loadEntity({ mass: 0 })).toThrow('Mass must be a finite number greater than zero');
+			expect(() => world.loadEntity({ mass: Infinity })).toThrow('Mass must be a finite number greater than zero');
+			expect(() => world.loadEntity({ accelerationX: Number.NaN })).toThrow('Acceleration must be a finite number');
+
+			const dynamics = world.loadEntity({ mass: 1 }).components.dynamics!;
+			expect(() => {
+				dynamics.mass = -1;
+			}).toThrow('Mass must be a finite number greater than zero');
+			expect(() => {
+				dynamics.accelerationY = Infinity;
+			}).toThrow('Acceleration must be a finite number');
+		});
+
+		it('saves its current acceleration and mass', () => {
+			const entity = world.loadEntity({ accelerationX: 1, accelerationY: 2, mass: 3 });
+			entity.components.dynamics!.accelerationX = 10;
+			const saved = entity.save();
+
+			expect(saved).toMatchObject({ accelerationX: 10, accelerationY: 2 });
+			expect(saved.mass).toBeCloseTo(3);
 		});
 	});
 

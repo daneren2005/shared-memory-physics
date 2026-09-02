@@ -5,8 +5,24 @@ import type { PhysicsUpdateComponents } from '../components/registry';
 import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, bodyShape, isContinuous, isDying, isSensor, SHAPE_CAPSULE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
-import { shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap } from '../math/shapes';
-import { polygonShapesOverlap } from '../math/polygons';
+import { DYNAMICS_ACCELERATION_X_INDEX, DYNAMICS_ACCELERATION_Y_INDEX, DYNAMICS_INVERSE_MASS_INDEX } from '../components/dynamics-component';
+import { contactNormal as shapeContactNormal, shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap } from '../math/shapes';
+import type { Vector } from '../math/shapes';
+import { polygonContactNormal, polygonShapesOverlap } from '../math/polygons';
+import {
+	DYNAMICS_COMMAND_FORCE_X_OFFSET,
+	DYNAMICS_COMMAND_FORCE_Y_OFFSET,
+	DYNAMICS_COMMAND_IMPULSE_X_OFFSET,
+	DYNAMICS_COMMAND_IMPULSE_Y_OFFSET,
+	DYNAMICS_COMMAND_VELOCITY_MASK_OFFSET,
+	DYNAMICS_COMMAND_VELOCITY_X_FLAG,
+	DYNAMICS_COMMAND_VELOCITY_X_OFFSET,
+	DYNAMICS_COMMAND_VELOCITY_Y_FLAG,
+	DYNAMICS_COMMAND_VELOCITY_Y_OFFSET,
+	findDynamicsCommand,
+	findDynamicsCommandOffset,
+} from './dynamics';
+import type { DynamicsCommands } from './dynamics';
 
 // How close to contact a sweep settles for, in world units: below anything a game would draw, yet reached by
 // the halving below in a handful of steps.
@@ -40,17 +56,25 @@ export interface CollisionEntity<T extends PhysicsUpdateComponents> {
 	components: CollisionComponents<T>
 }
 
+// Geometry at the first touch. The normal always points from `other` towards `self`, so negating it gives the
+// direction for the other side. Exact coincident centres can have no unique direction and report (0, 0).
+export interface CollisionContact {
+	normalX: number
+	normalY: number
+}
+
 // What a game runs when one entity moves into another. Runs on the physics thread, so it is a plain function
 // over the raw blocks and reaches the main thread only through `callbacks`. Called once per pair per run, right
 // after the mover is put down: `self` is whichever side reached the contact first, `other` is the other. Because
 // the other side gets no call of its own, a callback has to decide for both. A velocity-less entity is never
-// `self` but is found as `other`.
+// `self` but is found as `other`. `contact` is oriented from `other` towards `self` at first touch.
 export type CollisionFunction<C extends ComponentMap, T extends PhysicsUpdateComponents & EntityUpdateComponents<C>, W extends ComponentSystemWorld = ComponentSystemWorld> = (
 	world: W,
 	self: MovingEntity<T>,
 	other: CollisionEntity<T>,
 	queries: EntityQueryComponents<C>,
 	callbacks: ComponentSystemCallbacks<C>,
+	contact: CollisionContact,
 ) => void;
 
 // How much of a move an entity may make and what stopped it. `fraction` is how far along it got (1 clear, 0
@@ -139,10 +163,16 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 	// scoped to: preRun builds a new one, so the set is empty again for the next run with nothing to clear.
 	private resolved = new Set<number>();
 
-	constructor(entities: Array<{ entityId: number, components: EntityUpdateComponents }>, seconds: number) {
+	constructor(
+		entities: Array<{ entityId: number, components: EntityUpdateComponents }>,
+		seconds: number,
+		dynamicsCommands?: DynamicsCommands,
+	) {
 		// Collected per category first because Flatbush needs its item count up front, which is only known once
 		// everything that cannot collide has been dropped.
 		const pending = new Map<number, { entries: Array<CollisionEntity<T>>, bounds: Array<number> }>();
+		const flatCommands = dynamicsCommands instanceof Float64Array ? dynamicsCommands : undefined;
+		const recordCommands = dynamicsCommands && !(dynamicsCommands instanceof Float64Array) ? dynamicsCommands : undefined;
 
 		for(const entity of entities) {
 			// The ECS types blocks generically as ComponentTypedArray; narrow to the concrete arrays once here so
@@ -178,8 +208,39 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			}
 
 			const velocity = components.velocity;
-			const travelX = velocity ? Math.abs(velocity[VELOCITY_X_INDEX]) * seconds : 0;
-			const travelY = velocity ? Math.abs(velocity[VELOCITY_Y_INDEX]) * seconds : 0;
+			const dynamics = components.dynamics;
+			const command = findDynamicsCommand(recordCommands, entity.entityId);
+			const commandOffset = flatCommands ? findDynamicsCommandOffset(flatCommands, entity.entityId) : -1;
+			const inverseMass = dynamics?.[DYNAMICS_INVERSE_MASS_INDEX] ?? 1;
+			const forceX = commandOffset < 0 ? command?.forceX ?? 0 : flatCommands![commandOffset + DYNAMICS_COMMAND_FORCE_X_OFFSET];
+			const forceY = commandOffset < 0 ? command?.forceY ?? 0 : flatCommands![commandOffset + DYNAMICS_COMMAND_FORCE_Y_OFFSET];
+			const impulseX = commandOffset < 0 ? command?.impulseX ?? 0 : flatCommands![commandOffset + DYNAMICS_COMMAND_IMPULSE_X_OFFSET];
+			const impulseY = commandOffset < 0 ? command?.impulseY ?? 0 : flatCommands![commandOffset + DYNAMICS_COMMAND_IMPULSE_Y_OFFSET];
+			const velocityMask = commandOffset < 0 ? 0 : flatCommands![commandOffset + DYNAMICS_COMMAND_VELOCITY_MASK_OFFSET];
+			const assignedVelocityX = commandOffset < 0
+				? command?.velocityX
+				: velocityMask & DYNAMICS_COMMAND_VELOCITY_X_FLAG
+					? flatCommands![commandOffset + DYNAMICS_COMMAND_VELOCITY_X_OFFSET]
+					: undefined;
+			const assignedVelocityY = commandOffset < 0
+				? command?.velocityY
+				: velocityMask & DYNAMICS_COMMAND_VELOCITY_Y_FLAG
+					? flatCommands![commandOffset + DYNAMICS_COMMAND_VELOCITY_Y_OFFSET]
+					: undefined;
+			const velocityX = velocity?.[VELOCITY_X_INDEX] ?? 0;
+			const velocityY = velocity?.[VELOCITY_Y_INDEX] ?? 0;
+			const integratedVelocityX = velocityX
+				+ (dynamics?.[DYNAMICS_ACCELERATION_X_INDEX] ?? 0) * seconds
+				+ forceX * inverseMass * seconds
+				+ impulseX * inverseMass;
+			const integratedVelocityY = velocityY
+				+ (dynamics?.[DYNAMICS_ACCELERATION_Y_INDEX] ?? 0) * seconds
+				+ forceY * inverseMass * seconds
+				+ impulseY * inverseMass;
+			const endVelocityX = assignedVelocityX ?? integratedVelocityX;
+			const endVelocityY = assignedVelocityY ?? integratedVelocityY;
+			const travelX = Math.max(Math.abs(velocityX), Math.abs(endVelocityX)) * seconds;
+			const travelY = Math.max(Math.abs(velocityY), Math.abs(endVelocityY)) * seconds;
 
 			const x = transform[TRANSFORM_X_INDEX];
 			const y = transform[TRANSFORM_Y_INDEX];
@@ -281,6 +342,21 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 		const fraction = this.entryFraction(searcher, other, moveX, moveY, distance);
 
 		return { x: searcher.x + moveX * fraction, y: searcher.y + moveY * fraction };
+	}
+
+	// The direction `self` leaves `other` at first touch. For a swept sensor this is evaluated where its path
+	// entered the target, not at the far end of the move after it may already have passed through.
+	contactNormal(self: ContactSource, other: ContactTarget, moveX: number, moveY: number, out: Vector): boolean {
+		const searcher = toSearcher(self);
+		if(!searcher) {
+			return false;
+		}
+
+		const point = moveX === 0 && moveY === 0
+			? { x: searcher.x, y: searcher.y }
+			: this.contactPoint(self, other, moveX, moveY);
+
+		return contactNormalAt(searcher, point.x, point.y, other, out);
 	}
 
 	// How much of the move `self` may take before it runs into something. The whole move is checked in one pass
@@ -602,6 +678,31 @@ export default class CollisionBroadphase<T extends PhysicsUpdateComponents> {
 			}
 		}
 	}
+}
+
+function contactNormalAt(searcher: Searcher, x: number, y: number, other: ContactTarget, out: Vector): boolean {
+	const transform = other.components.transform;
+	const otherShape = bodyShape(other.components.body);
+	const otherX = transform[TRANSFORM_X_INDEX];
+	const otherY = transform[TRANSFORM_Y_INDEX];
+	const otherWidth = transform[TRANSFORM_WIDTH_INDEX];
+	const otherHeight = transform[TRANSFORM_HEIGHT_INDEX];
+	const otherAngle = transform[TRANSFORM_ANGLE_INDEX];
+	if(searcher.shape === SHAPE_POLYGON || otherShape === SHAPE_POLYGON) {
+		return polygonContactNormal(
+			searcher.shape, searcher.polygon,
+			x, y, searcher.width, searcher.height, searcher.angle,
+			otherShape, other.components.polygon,
+			otherX, otherY, otherWidth, otherHeight, otherAngle,
+			out,
+		);
+	}
+
+	return shapeContactNormal(
+		searcher.shape, x, y, searcher.width, searcher.height, searcher.angle,
+		otherShape, otherX, otherY, otherWidth, otherHeight, otherAngle,
+		out,
+	);
 }
 
 // Merges what stopped each axis of a slide, without repeating an entity that stopped both. Either side empty is

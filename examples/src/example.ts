@@ -14,6 +14,9 @@ export interface EntityStyle {
 	// Fill opacity from 0 to 1, so a zone can be drawn see-through with the shapes passing through it still
 	// visible on top.  Left off, the renderer uses the same fill alpha it draws everything else at.
 	alpha?: number
+	// A small example-specific drawing layered into the shared renderer. Most entities use their physics shape;
+	// game examples can opt into one of these appearances without changing what they collide as.
+	appearance?: 'stick-figure' | 'coin' | 'enemy'
 }
 
 // Text an example wants drawn over the canvas, on top of the shapes.  The renderer's own job is the world -

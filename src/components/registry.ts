@@ -1,5 +1,6 @@
 import bodyDefinition, { type BodyComponent } from './body-component';
 import bouncinessDefinition, { type BouncinessComponent } from './bounciness-component';
+import dynamicsDefinition, { type DynamicsComponent } from './dynamics-component';
 import interpolationDefinition, { type InterpolationComponent } from './interpolation-component';
 import polygonDefinition, { type PolygonComponent } from './polygon-component';
 import transformDefinition, { type TransformComponent } from './transform-component';
@@ -16,6 +17,7 @@ export const physicsRegistry = {
 	body: bodyDefinition,
 	polygon: polygonDefinition,
 	bounciness: bouncinessDefinition,
+	dynamics: dynamicsDefinition,
 	interpolation: interpolationDefinition,
 };
 
@@ -27,6 +29,7 @@ export type PhysicsComponents = {
 	body: BodyComponent
 	polygon: PolygonComponent
 	bounciness: BouncinessComponent
+	dynamics: DynamicsComponent
 	interpolation: InterpolationComponent
 };
 
@@ -37,8 +40,8 @@ export type InterpolationComponents = {
 	interpolation: InterpolationComponent
 };
 
-// The same components as their backing arrays, the form an update sees on the worker thread. `body`, `bounciness`
-// and `interpolation` are optional because an entity may lack them; the collidable query requires `body`, so
+// The same components as their backing arrays, the form an update sees on the worker thread. `body`, `bounciness`,
+// `dynamics` and `interpolation` are optional because an entity may lack them; the collidable query requires `body`, so
 // CollisionComponents narrows it back to guaranteed there. A game widens this for extra callback components:
 //
 //   type GameUpdateComponents = PhysicsUpdateComponents & { health?: Float32Array };
@@ -48,6 +51,7 @@ export type PhysicsUpdateComponents = {
 	body?: Uint32Array
 	polygon?: Float32Array
 	bounciness?: Float32Array
+	dynamics?: Float32Array
 	interpolation?: Float32Array
 	// For checking if entity is dead during run
 	entity?: Uint32Array

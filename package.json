@@ -36,6 +36,7 @@
 		"lint": "cross-env NODE_ENV=production oxlint .",
 		"lint:fix": "cross-env NODE_ENV=production oxlint --fix .",
 		"test": "vitest run",
+		"benchmark": "vitest bench --run",
 		"release": "semantic-release",
 		"prepare": "husky"
 	},

@@ -3,7 +3,12 @@ import { createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import { createTestWorld, type Components, type Config, type TestWorld } from '../../__tests__/fixtures/world';
 import { SHAPE_CAPSULE } from '../../components/body-component';
-import collisionUpdate, { type CollisionUpdateComponents, OTHER_DAMAGE, SELF_DAMAGE } from '../../__tests__/fixtures/collision-update';
+import collisionUpdate, {
+	type CollisionUpdateComponents,
+	COMMAND_VELOCITY_CATEGORY,
+	OTHER_DAMAGE,
+	SELF_DAMAGE,
+} from '../../__tests__/fixtures/collision-update';
 
 // Worker entry points loaded by @vitest/web-worker for the 'worker' mode below.
 const PHYSICS_WORKER_URL = new URL('../../__tests__/fixtures/physics.worker.ts', import.meta.url);
@@ -53,6 +58,29 @@ describe('physics-system', () => {
 
 		entity.removeComponent('velocity');
 		expect(system.isEntityInSystem(entity)).toEqual(false);
+	});
+
+	it('snapshots queued dynamics commands in entity order and consumes the snapshot', () => {
+		system.queueForce(10, 1, 2);
+		system.queueImpulse(2, 3, 4);
+		system.queueVelocity(10, { velocityX: 7 });
+		system.queueVelocity(2, { velocityY: -9 });
+		const firstWorld: PhysicsWorld = { gameTime: 0, elapsedTime: ONE_SECOND, tick: 0, getString: () => '' };
+		system.addDataToWorld(firstWorld);
+
+		const snapshot = firstWorld.dynamicsCommands;
+		expect(snapshot).toBeInstanceOf(Float64Array);
+		if(!(snapshot instanceof Float64Array)) {
+			throw new Error('Expected a flat dynamics command snapshot');
+		}
+		expect(Array.from(snapshot)).toEqual([
+			2, 0, 0, 3, 4, 2, 0, -9,
+			10, 1, 2, 0, 0, 1, 7, 0,
+		]);
+
+		const secondWorld: PhysicsWorld = { gameTime: 0, elapsedTime: ONE_SECOND, tick: 0, getString: () => '' };
+		system.addDataToWorld(secondWorld);
+		expect(secondWorld.dynamicsCommands).toBeUndefined();
 	});
 });
 
@@ -125,6 +153,141 @@ describe.each(MODES)('physics-system velocity movement (%s)', (mode) => {
 
 		expect(entity.components.transform?.x).toEqual(2);
 		expect(entity.components.transform?.y).toEqual(1);
+	});
+
+	it('integrates persistent acceleration on the selected backend', async () => {
+		const entity = createEntity({ x: 0, y: 0, velocityX: 0, velocityY: 0, accelerationX: 4, accelerationY: -2 });
+
+		await run(ONE_SECOND / 2);
+
+		expect(entity.components.velocity?.velocityX).toEqual(2);
+		expect(entity.components.velocity?.velocityY).toEqual(-1);
+		expect(entity.components.transform?.x).toEqual(1);
+		expect(entity.components.transform?.y).toEqual(-0.5);
+	});
+
+	it('applies a queued force for one run and scales it by mass', async () => {
+		const entity = createEntity({ x: 0, y: 0, velocityX: 0, velocityY: 0, mass: 2 });
+		system.queueForce(entity, 8, -4);
+
+		await run(ONE_SECOND / 2);
+
+		expect(entity.components.velocity?.velocityX).toEqual(2);
+		expect(entity.components.velocity?.velocityY).toEqual(-1);
+		expect(entity.components.transform?.x).toEqual(1);
+		expect(entity.components.transform?.y).toEqual(-0.5);
+	});
+
+	it('applies a queued impulse once and independently of step duration', async () => {
+		const entity = createEntity({ x: 0, y: 0, velocityX: 0, velocityY: 0, mass: 2 });
+		system.queueImpulse(entity.eid, 8, -4);
+
+		await run(ONE_SECOND / 4);
+		expect(entity.components.velocity?.velocityX).toEqual(4);
+		expect(entity.components.velocity?.velocityY).toEqual(-2);
+		expect(entity.components.transform?.x).toEqual(1);
+		expect(entity.components.transform?.y).toEqual(-0.5);
+
+		await run(ONE_SECOND / 4);
+		expect(entity.components.velocity?.velocityX).toEqual(4);
+		expect(entity.components.velocity?.velocityY).toEqual(-2);
+	});
+
+	it('sums force and impulse commands queued for the same run', async () => {
+		const entity = createEntity({ x: 0, y: 0, velocityX: 0, velocityY: 0 });
+		system.queueForce(entity, 2, 3);
+		system.queueForce(entity, 4, 5);
+		system.queueImpulse(entity, 6, 7);
+		system.queueImpulse(entity, 8, 9);
+
+		await run(ONE_SECOND);
+
+		expect(entity.components.velocity?.velocityX).toEqual(20);
+		expect(entity.components.velocity?.velocityY).toEqual(24);
+	});
+
+	it('combines persistent acceleration, force, and impulse before movement', async () => {
+		const entity = createEntity({
+			x: 0,
+			y: 0,
+			velocityX: 0,
+			velocityY: 0,
+			accelerationX: 1,
+			mass: 2,
+		});
+		system.queueForce(entity, 2, 0);
+		system.queueImpulse(entity, 3, 0);
+
+		await run(ONE_SECOND);
+
+		expect(entity.components.velocity?.velocityX).toEqual(3.5);
+		expect(entity.components.transform?.x).toEqual(3.5);
+	});
+
+	it('assigns queued velocity axes after other dynamics without changing omitted axes', async () => {
+		const entity = createEntity({
+			x: 0,
+			y: 0,
+			velocityX: 1,
+			velocityY: 2,
+			accelerationX: 1,
+			accelerationY: 1,
+			mass: 2,
+		});
+		system.queueForce(entity, 2, 2);
+		system.queueImpulse(entity, 2, 2);
+		system.queueVelocity(entity, { velocityY: -7 });
+
+		await run(ONE_SECOND);
+
+		expect(entity.components.velocity?.velocityX).toEqual(4);
+		expect(entity.components.velocity?.velocityY).toEqual(-7);
+		expect(entity.components.transform?.x).toEqual(4);
+		expect(entity.components.transform?.y).toEqual(-7);
+	});
+
+	it('uses the last queued assignment independently on each velocity axis', async () => {
+		const entity = createEntity({ x: 0, y: 0, velocityX: 0, velocityY: 0 });
+		system.queueVelocity(entity, { velocityX: 3 });
+		system.queueVelocity(entity, { velocityY: 4 });
+		system.queueVelocity(entity, { velocityX: 5 });
+
+		await run(ONE_SECOND);
+
+		expect(entity.components.velocity?.velocityX).toEqual(5);
+		expect(entity.components.velocity?.velocityY).toEqual(4);
+	});
+
+	it('defers a command queued after dispatch until the following run', async () => {
+		const entity = createEntity({ x: 0, y: 0, velocityX: 0, velocityY: 0 });
+
+		system.run(ONE_SECOND);
+		system.queueImpulse(entity, 4, 0);
+		await system.waitForRunToComplete();
+		expect(entity.components.velocity?.velocityX).toEqual(0);
+
+		await run(ONE_SECOND);
+		expect(entity.components.velocity?.velocityX).toEqual(4);
+	});
+
+	it('consumes a command even when its entity is not selected for the run', async () => {
+		const entity = createEntity({ x: 0, y: 0 });
+		system.queueImpulse(entity, 4, 0);
+
+		await run(ONE_SECOND);
+		entity.loadComponent('velocity', { velocityX: 0, velocityY: 0 });
+		await run(ONE_SECOND);
+
+		expect(entity.components.velocity?.velocityX).toEqual(0);
+	});
+
+	it('rejects non-finite dynamics commands', () => {
+		const entity = createEntity({ x: 0, y: 0, velocityX: 0, velocityY: 0 });
+
+		expect(() => system.queueForce(entity, Number.NaN, 0)).toThrow('Force must contain finite numbers');
+		expect(() => system.queueImpulse(entity, 0, Number.POSITIVE_INFINITY)).toThrow('Impulse must contain finite numbers');
+		expect(() => system.queueVelocity(entity, { velocityY: Number.NEGATIVE_INFINITY }))
+			.toThrow('Velocity assignment must contain finite numbers');
 	});
 
 	it('accumulates movement across repeated runs', async () => {
@@ -236,16 +399,16 @@ describe('physics-system collision setup', () => {
 		const system = createSystem({ updateFunction: collisionUpdate });
 
 		// Collision-owned blocks travel with movers on the collision path - see PhysicsSystem.
-		expect(system.options.optional).toEqual(['body', 'bounciness', 'polygon', 'interpolation', 'entity', 'health']);
+		expect(system.options.optional).toEqual(['body', 'bounciness', 'polygon', 'interpolation', 'dynamics', 'entity', 'health']);
 		expect(system.options.queries?.collidable).toEqual({
 			required: ['transform', 'body'],
-			optional: ['velocity', 'entity', 'bounciness', 'health', 'polygon'],
+			optional: ['velocity', 'entity', 'bounciness', 'health', 'polygon', 'dynamics'],
 		});
 	});
 
 	it('leaves the body out of a system that only moves things', () => {
-		// Nothing reads a category. Interpolation stays, since publishing a step is not turned on by collision.
-		expect(createSystem({ optional: ['health'] }).options.optional).toEqual(['interpolation', 'health']);
+		// Nothing reads a category. Interpolation publishes movement; dynamics may change velocity before it.
+		expect(createSystem({ optional: ['health'] }).options.optional).toEqual(['interpolation', 'dynamics', 'health']);
 	});
 
 	// Reporting moves costs per worker run, so it is decided per run off whether anything is listening.
@@ -656,6 +819,46 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 		expect(second.components.health?.health).toBeLessThan(FULL_HEALTH);
 	});
 
+	it('grows the broadphase for velocity acceleration will add this run', async () => {
+		const first = createShip({ x: 0, y: 0, velocityX: 0, accelerationX: 40 });
+		const second = createShip({ x: 80, y: 0, velocityX: 0, accelerationX: -40 });
+
+		await run(ONE_SECOND);
+
+		expect(first.components.transform?.x).toEqual(40);
+		expect(second.components.transform?.x).toBeCloseTo(50);
+		expect(first.components.health?.health).toBeLessThan(FULL_HEALTH);
+		expect(second.components.health?.health).toBeLessThan(FULL_HEALTH);
+	});
+
+	it('grows the broadphase for velocity queued impulses will add this run', async () => {
+		const first = createShip({ x: 0, y: 0, velocityX: 0, mass: 2 });
+		const second = createShip({ x: 80, y: 0, velocityX: 0, mass: 2 });
+		system.queueImpulse(first, 80, 0);
+		system.queueImpulse(second, -80, 0);
+
+		await run(ONE_SECOND);
+
+		expect(first.components.transform?.x).toEqual(40);
+		expect(second.components.transform?.x).toBeCloseTo(50);
+		expect(first.components.health?.health).toBeLessThan(FULL_HEALTH);
+		expect(second.components.health?.health).toBeLessThan(FULL_HEALTH);
+	});
+
+	it('grows the broadphase for velocity assignments queued for this run', async () => {
+		const first = createShip({ x: 0, y: 0, velocityX: 0 });
+		const second = createShip({ x: 80, y: 0, velocityX: 0 });
+		system.queueVelocity(first, { velocityX: 40 });
+		system.queueVelocity(second, { velocityX: -40 });
+
+		await run(ONE_SECOND);
+
+		expect(first.components.transform?.x).toEqual(40);
+		expect(second.components.transform?.x).toBeCloseTo(50);
+		expect(first.components.health?.health).toBeLessThan(FULL_HEALTH);
+		expect(second.components.health?.health).toBeLessThan(FULL_HEALTH);
+	});
+
 	it('stops an entity on the edge of what it moves into rather than inside it', async () => {
 		// 30 apart, 10 wide each, so edges meet at 20 - short of the 25 asked for.
 		let ship = createShip({ x: 0, y: 0, velocityX: 25 });
@@ -667,6 +870,20 @@ describe.each(MODES)('physics-system collisions (%s)', (mode) => {
 		// The callback still ran, even though the two are only touching.
 		expect(ship.components.health?.health).toEqual(FULL_HEALTH - SELF_DAMAGE);
 		expect(station.components.health?.health).toEqual(FULL_HEALTH - OTHER_DAMAGE);
+	});
+
+	it('applies a callback command without requiring a separate load phase', async () => {
+		const ship = createShip({ x: 0, y: 0, velocityX: 25, collideCategory: COMMAND_VELOCITY_CATEGORY });
+		createStation({ x: 30, y: 0 });
+
+		await run(ONE_SECOND);
+		expect(ship.components.transform?.x).toBeCloseTo(20, 3);
+		expect(ship.components.body?.collideCategory).toEqual(COMMAND_VELOCITY_CATEGORY);
+		expect(ship.components.health?.health).toBeLessThan(FULL_HEALTH);
+
+		await run(ONE_SECOND);
+		expect(ship.components.velocity?.velocityX).toEqual(-12);
+		expect(ship.components.transform?.x).toBeCloseTo(8, 3);
 	});
 
 	it('does not stop inside the near entity because the far one collided first', async () => {

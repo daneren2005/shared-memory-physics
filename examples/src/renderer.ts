@@ -176,6 +176,7 @@ class ExampleScene extends Scene {
 				transform,
 				entity.components.body?.shape ?? SHAPE_RECTANGLE,
 				entity.components.polygon?.block,
+				style?.appearance,
 			);
 		}
 	}
@@ -227,9 +228,25 @@ function drawShape(
 	transform: TransformComponent,
 	shape: number,
 	polygon?: Float32Array,
+	appearance?: EntityStyle['appearance'],
 ): void {
 	const { x, y } = position;
 	const { width, height, angle } = transform;
+	if(appearance === 'stick-figure') {
+		drawStickFigure(graphics, x, y, width, height);
+
+		return;
+	}
+	if(appearance === 'coin') {
+		drawCoin(graphics, x, y, width);
+
+		return;
+	}
+	if(appearance === 'enemy') {
+		drawEnemy(graphics, x, y, width, height);
+
+		return;
+	}
 
 	// A circle is a width and a height like everything else, and its angle means nothing to it.
 	if(shape === SHAPE_CIRCLE) {
@@ -264,6 +281,35 @@ function drawShape(
 	graphics.fillRect(-width / 2, -height / 2, width, height);
 	graphics.strokeRect(-width / 2, -height / 2, width, height);
 	graphics.restore();
+}
+
+function drawStickFigure(graphics: Phaser.GameObjects.Graphics, x: number, y: number, width: number, height: number): void {
+	const headRadius = Math.min(width * 0.28, height * 0.14);
+	const headY = y - height * 0.32;
+	const shoulderY = y - height * 0.12;
+	const hipY = y + height * 0.18;
+	graphics.fillCircle(x, headY, headRadius);
+	graphics.strokeCircle(x, headY, headRadius);
+	graphics.lineBetween(x, headY + headRadius, x, hipY);
+	graphics.lineBetween(x, shoulderY, x - width * 0.45, y + height * 0.02);
+	graphics.lineBetween(x, shoulderY, x + width * 0.45, y + height * 0.02);
+	graphics.lineBetween(x, hipY, x - width * 0.38, y + height * 0.48);
+	graphics.lineBetween(x, hipY, x + width * 0.38, y + height * 0.48);
+}
+
+function drawCoin(graphics: Phaser.GameObjects.Graphics, x: number, y: number, width: number): void {
+	const radius = width / 2;
+	graphics.fillCircle(x, y, radius);
+	graphics.strokeCircle(x, y, radius);
+	graphics.strokeEllipse(x, y, radius * 0.65, radius * 1.45);
+}
+
+function drawEnemy(graphics: Phaser.GameObjects.Graphics, x: number, y: number, width: number, height: number): void {
+	graphics.fillRoundedRect(x - width / 2, y - height / 2, width, height, Math.min(width, height) * 0.2);
+	graphics.strokeRoundedRect(x - width / 2, y - height / 2, width, height, Math.min(width, height) * 0.2);
+	graphics.fillStyle(0x0B1120, 1);
+	graphics.fillCircle(x - width * 0.18, y - height * 0.1, width * 0.07);
+	graphics.fillCircle(x + width * 0.18, y - height * 0.1, width * 0.07);
 }
 
 function drawPolygon(

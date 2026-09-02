@@ -4,6 +4,7 @@ import type { EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { Components, ExampleUpdateComponents } from '../world';
 import { breakoutUpdate } from './breakout-update';
 import { bulletHellUpdate } from './bullet-hell-update';
+import { platformerUpdate } from './platformer-update';
 import { sweepUpdate } from './sweep-update';
 
 // An update function and the worker that runs it, kept together because they have to agree: whatever a game
@@ -42,6 +43,10 @@ export const PHYSICS_BACKENDS = {
 	bulletHell: {
 		updateFunction: bulletHellUpdate,
 		getWorker: () => new Worker(new URL('./bullet-hell.worker.ts', import.meta.url), { type: 'module' }),
+	},
+	platformer: {
+		updateFunction: platformerUpdate,
+		getWorker: () => new Worker(new URL('./platformer.worker.ts', import.meta.url), { type: 'module' }),
 	},
 	movement: {
 		updateFunction: physicsUpdate,

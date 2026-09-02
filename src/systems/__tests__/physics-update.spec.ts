@@ -10,6 +10,12 @@ import {
 import { BOUNCINESS_INDEX, BOUNCINESS_SIZE } from '../../components/bounciness-component';
 import { TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
 import { VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component';
+import {
+	DYNAMICS_ACCELERATION_X_INDEX,
+	DYNAMICS_ACCELERATION_Y_INDEX,
+	DYNAMICS_INVERSE_MASS_INDEX,
+	DYNAMICS_SIZE,
+} from '../../components/dynamics-component';
 
 // Drives the update against raw blocks with no world or system, pinning down the integration math itself;
 // physics-system.spec.ts covers the same end to end.
@@ -39,6 +45,66 @@ describe('physics-update', () => {
 		return [transform[TRANSFORM_X_INDEX], transform[TRANSFORM_Y_INDEX]];
 	}
 
+	function acceleratedMove(
+		position: [number, number],
+		velocity: [number, number],
+		acceleration: [number, number],
+		elapsedTime: number,
+	): { position: [number, number], velocity: [number, number] } {
+		const transform = new Float32Array(TRANSFORM_SIZE);
+		transform[TRANSFORM_X_INDEX] = position[0];
+		transform[TRANSFORM_Y_INDEX] = position[1];
+		const velocityBlock = new Float32Array(VELOCITY_SIZE);
+		velocityBlock[VELOCITY_X_INDEX] = velocity[0];
+		velocityBlock[VELOCITY_Y_INDEX] = velocity[1];
+		const dynamics = new Float32Array(DYNAMICS_SIZE);
+		dynamics[DYNAMICS_ACCELERATION_X_INDEX] = acceleration[0];
+		dynamics[DYNAMICS_ACCELERATION_Y_INDEX] = acceleration[1];
+		dynamics[DYNAMICS_INVERSE_MASS_INDEX] = 1;
+
+		physicsUpdate(
+			{ gameTime: 0, elapsedTime, tick: 1, getString: () => '' },
+			1,
+			{ transform, velocity: velocityBlock, dynamics },
+			{},
+			callbacks,
+		);
+
+		return {
+			position: [transform[TRANSFORM_X_INDEX], transform[TRANSFORM_Y_INDEX]],
+			velocity: [velocityBlock[VELOCITY_X_INDEX], velocityBlock[VELOCITY_Y_INDEX]],
+		};
+	}
+
+	function commandedMove(
+		mass: number | undefined,
+		elapsedTime: number,
+		force: [number, number],
+		impulse: [number, number],
+	): { position: [number, number], velocity: [number, number] } {
+		const transform = new Float32Array(TRANSFORM_SIZE);
+		const velocity = new Float32Array(VELOCITY_SIZE);
+		let dynamics: Float32Array | undefined;
+		if(mass !== undefined) {
+			dynamics = new Float32Array(DYNAMICS_SIZE);
+			dynamics[DYNAMICS_INVERSE_MASS_INDEX] = 1 / mass;
+		}
+		const world: PhysicsWorld = {
+			gameTime: 0,
+			elapsedTime,
+			tick: 1,
+			getString: () => '',
+			dynamicsCommands: [{ entityId: 1, forceX: force[0], forceY: force[1], impulseX: impulse[0], impulseY: impulse[1] }],
+		};
+
+		physicsUpdate(world, 1, { transform, velocity, dynamics }, {}, callbacks);
+
+		return {
+			position: [transform[TRANSFORM_X_INDEX], transform[TRANSFORM_Y_INDEX]],
+			velocity: [velocity[VELOCITY_X_INDEX], velocity[VELOCITY_Y_INDEX]],
+		};
+	}
+
 	it('adds one second of velocity to the position', () => {
 		expect(move([0, 0], [3, 4], 1000)).toEqual([3, 4]);
 	});
@@ -66,6 +132,50 @@ describe('physics-update', () => {
 	it('keeps each axis independent', () => {
 		expect(move([0, 0], [5, 0], 1000)).toEqual([5, 0]);
 		expect(move([0, 0], [0, 5], 1000)).toEqual([0, 5]);
+	});
+
+	it('integrates acceleration into velocity before moving', () => {
+		const result = acceleratedMove([0, 0], [2, -1], [3, 5], 1000);
+
+		expect(result.velocity).toEqual([5, 4]);
+		expect(result.position).toEqual([5, 4]);
+	});
+
+	it('scales acceleration by elapsed time with semi-implicit movement', () => {
+		const result = acceleratedMove([10, 20], [2, 4], [6, -2], 500);
+
+		expect(result.velocity).toEqual([5, 3]);
+		expect(result.position).toEqual([12.5, 21.5]);
+	});
+
+	it('does not integrate acceleration over zero elapsed time', () => {
+		const result = acceleratedMove([10, 20], [2, 4], [6, -2], 0);
+
+		expect(result.velocity).toEqual([2, 4]);
+		expect(result.position).toEqual([10, 20]);
+	});
+
+	it('integrates a force for the duration of the step and scales it by mass', () => {
+		const result = commandedMove(2, 500, [8, -4], [0, 0]);
+
+		expect(result.velocity).toEqual([2, -1]);
+		expect(result.position).toEqual([1, -0.5]);
+	});
+
+	it('applies an impulse independently of step duration and scales it by mass', () => {
+		const result = commandedMove(2, 250, [0, 0], [8, -4]);
+		const longerStep = commandedMove(2, 1000, [0, 0], [8, -4]);
+
+		expect(result.velocity).toEqual([4, -2]);
+		expect(result.position).toEqual([1, -0.5]);
+		expect(longerStep.velocity).toEqual(result.velocity);
+	});
+
+	it('treats an entity without dynamics as mass one for commands', () => {
+		const result = commandedMove(undefined, 1000, [3, 4], [5, 6]);
+
+		expect(result.velocity).toEqual([8, 10]);
+		expect(result.position).toEqual([8, 10]);
 	});
 
 	it('reads velocity from the same block offsets the component writes', () => {
@@ -156,6 +266,8 @@ interface Unit {
 	bounciness?: number
 	sensor?: boolean
 	continuousCollisionDetection?: boolean
+	accelerationX?: number
+	accelerationY?: number
 	dead?: boolean
 }
 
@@ -186,6 +298,13 @@ function createUnit(unit: Unit, entityId: number): MovingEntity<PhysicsUpdateCom
 		bounciness[BOUNCINESS_INDEX] = unit.bounciness;
 		components.bounciness = bounciness;
 	}
+	if(unit.accelerationX !== undefined || unit.accelerationY !== undefined) {
+		const dynamics = new Float32Array(DYNAMICS_SIZE);
+		dynamics[DYNAMICS_ACCELERATION_X_INDEX] = unit.accelerationX ?? 0;
+		dynamics[DYNAMICS_ACCELERATION_Y_INDEX] = unit.accelerationY ?? 0;
+		dynamics[DYNAMICS_INVERSE_MASS_INDEX] = 1;
+		components.dynamics = dynamics;
+	}
 
 	return { entityId, components };
 }
@@ -202,6 +321,8 @@ describe('createPhysicsUpdate', () => {
 		other: number
 		selfX: number
 		selfY: number
+		normalX: number
+		normalY: number
 	}
 
 	// One run over the list in order; entity ids are list positions + 1.
@@ -211,12 +332,14 @@ describe('createPhysicsUpdate', () => {
 		const changes: Array<string> = [];
 
 		const update = createPhysicsUpdate({
-			onCollision(world, self, other) {
+			onCollision(world, self, other, _queries, _callbacks, contact) {
 				collisions.push({
 					self: self.entityId,
 					other: other.entityId,
 					selfX: self.components.transform[TRANSFORM_X_INDEX],
 					selfY: self.components.transform[TRANSFORM_Y_INDEX],
+					normalX: contact.normalX,
+					normalY: contact.normalY,
 				});
 			},
 		});
@@ -261,6 +384,13 @@ describe('createPhysicsUpdate', () => {
 		expect(result.x(1)).toBeCloseTo(20, 3);
 	});
 
+	it('uses accelerated velocity for collision movement', () => {
+		const result = run([{ x: 0, y: 0, accelerationX: 25 }, { x: 30, y: 0 }]);
+
+		expect(result.x(1)).toBeCloseTo(20, 3);
+		expect(result.pairs()).toEqual([[1, 2]]);
+	});
+
 	it('still runs the callback for what it stopped against', () => {
 		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0 }]);
 
@@ -274,6 +404,16 @@ describe('createPhysicsUpdate', () => {
 		// The callback sees the resting position, not the 25 it would have reached.
 		expect(result.collisions[0].selfX).toBeCloseTo(20, 3);
 		expect(result.collisions[0].selfY).toEqual(0);
+	});
+
+	it('reports the contact normal pointing from other towards self', () => {
+		const fromLeft = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0 }]).collisions[0];
+		expect(fromLeft.normalX).toBeCloseTo(-1);
+		expect(fromLeft.normalY).toBeCloseTo(0);
+
+		const fromAbove = run([{ x: 0, y: 0, velocityY: 25 }, { x: 0, y: 30 }]).collisions[0];
+		expect(fromAbove.normalX).toBeCloseTo(0);
+		expect(fromAbove.normalY).toBeCloseTo(-1);
 	});
 
 	it('reports the position it stopped at rather than the one it asked for', () => {
@@ -361,6 +501,9 @@ describe('createPhysicsUpdate', () => {
 
 		expect(result.x(1)).toEqual(60);
 		expect(result.hits()).toEqual([2]);
+		// Evaluated where the sensor first touched the wall, not at x=60 after it had passed to the far side.
+		expect(result.collisions[0].normalX).toBeCloseTo(-1);
+		expect(result.collisions[0].normalY).toBeCloseTo(0);
 	});
 
 	it('says nothing about the same sensor when it is not continuous', () => {
@@ -511,9 +654,9 @@ describe('createPhysicsUpdate', () => {
 // The native bounce from a bounciness block, no onCollision: physics turning an entity around on contact.
 describe('createPhysicsUpdate bounce', () => {
 	// One run of a bounce-only update. Returns each entity's ending velocity, where the flip shows up.
-	function run(units: Array<Unit>, elapsedTime = 1000) {
+	function run(units: Array<Unit>, elapsedTime = 1000, stopVelocityOnContact = false) {
 		const entities = units.map((unit, index) => createUnit(unit, index + 1));
-		const update = createPhysicsUpdate();
+		const update = createPhysicsUpdate({ stopVelocityOnContact });
 
 		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, getString: () => '' };
 		const queries = { [COLLIDABLE_QUERY]: entities };
@@ -578,6 +721,25 @@ describe('createPhysicsUpdate bounce', () => {
 	it('leaves a unit with no bounciness block moving as it was, merely stopped short', () => {
 		// A game's walls and terrain: stopped by the sweep, but nothing turns the velocity around.
 		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0 }]);
+
+		expect(result.velocityX(1)).toEqual(25);
+	});
+
+	it('optionally removes only the velocity into a solid surface without a bounciness block', () => {
+		const result = run([{ x: 0, y: 0, velocityX: 25, velocityY: 40 }, { x: 30, y: 0, height: 200 }], 1000, true);
+
+		expect(result.velocityX(1)).toBeCloseTo(0, 3);
+		expect(result.velocityY(1)).toBeCloseTo(40, 3);
+	});
+
+	it('keeps bounciness behavior when the solid-contact option is enabled', () => {
+		const result = run([{ x: 0, y: 0, velocityX: 25, bounciness: 1 }, { x: 30, y: 0 }], 1000, true);
+
+		expect(result.velocityX(1)).toBeCloseTo(-25, 3);
+	});
+
+	it('does not stop an unbouncy unit against a sensor when the option is enabled', () => {
+		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0, sensor: true }], 1000, true);
 
 		expect(result.velocityX(1)).toEqual(25);
 	});

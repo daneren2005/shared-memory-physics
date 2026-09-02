@@ -13,15 +13,23 @@ import {
 import { isDying, markDying } from '../components/body-component';
 import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
-import CollisionBroadphase, { COLLIDABLE_QUERY, type CollisionEntity, type CollisionFunction, type MovingEntity } from './collision';
+import CollisionBroadphase, { COLLIDABLE_QUERY, type CollisionContact, type CollisionEntity, type CollisionFunction, type MovingEntity } from './collision';
+import type { Vector } from '../math/shapes';
 import { bouncePair } from './bounce';
+import {
+	combineDynamicsCommands,
+	integrateDynamics,
+	queueDynamicsVector,
+	queueVelocityAssignment,
+} from './dynamics';
+import type { DynamicsCommandQueue, DynamicsWorld, PendingDynamicsCommands } from './dynamics';
 import { spatialBounds, type SpatialBlockComponents } from './spatial-bounds';
 import { getSpatialMap, type PhysicalSystemWorld } from '../world';
 
 // The per-run data object every physics update is handed: the base one plus the step counter the interpolation
 // component is stamped with. PhysicsSystem fills `tick` from addDataToWorld, so a subclass adding data must
 // call `super.addDataToWorld(world)` or nothing gets a tick and interpolation stops noticing new steps.
-export interface PhysicsWorld extends ComponentSystemWorld, PhysicalSystemWorld {
+export interface PhysicsWorld extends ComponentSystemWorld, PhysicalSystemWorld, DynamicsWorld {
 	// Which physics step this is, bumped per run. Only compared for equality - a publication stamp, not a clock.
 	tick: number
 	// Whether to report this run's moves. Set by PhysicsSystem from whether anything is listening, since the cost
@@ -29,8 +37,14 @@ export interface PhysicsWorld extends ComponentSystemWorld, PhysicalSystemWorld 
 	reportMoves?: boolean
 	// For a grouped update (see `group` on createPhysicsUpdate)
 	skipGroup?: number
+	// Identifies one PhysicsSystem to a shared update function, keeping its callback commands isolated.
+	commandQueueId?: number
 	dieAtImpact?(dying: DeathInterpolationEntity, other: DeathInterpolationEntity): void
 }
+
+// The world seen inside createPhysicsUpdate callbacks. Commands raised here are retained by the active backend
+// and integrated at the start of its next run, so callback behavior does not depend on entity update order.
+export interface PhysicsCallbackWorld extends PhysicsWorld, DynamicsCommandQueue {}
 
 export function updateSpatialMap(world: PhysicalSystemWorld, entityId: number, components: SpatialBlockComponents): void {
 	if(!world.spatialMap && (!world.heap || !world.spatialMapMemory)) {
@@ -64,6 +78,8 @@ export interface DeathInterpolationEntity {
 // listener reads it off `entity.components.transform`.
 export const POSITION_UPDATED_EVENT = 'position-updated';
 
+const CONTACT_NORMAL: Vector = { x: 0, y: 0 };
+
 // What a game asks createPhysicsUpdate for on top of plain movement.
 export interface PhysicsUpdateOptions<
 	C extends ComponentMap,
@@ -72,12 +88,15 @@ export interface PhysicsUpdateOptions<
 > {
 	// Run for each entity that moved into another, straight after its own move. Optional: an update with no
 	// callback still sweeps and comes to rest against what is in the way, it just decides nothing about it.
-	onCollision?: CollisionFunction<C, T, W>
+	onCollision?: CollisionFunction<C, T, W & PhysicsCallbackWorld>
 	// Extra components to hand the update, and so the callback, beyond transform and velocity. List a health
 	// component here to take damage on collision. Optional per entity: one without it is still moved and collided.
 	optional?: Array<keyof C & string>
 	// Splits the run into isolated groups by a numeric id read off a component block, so one system can simulate many independent worlds at once
 	group?: PhysicsGroupConfig<C>
+	// For solid contacts, remove the velocity component pointing into the surface from entities without a
+	// bounciness component. Off by default to preserve the existing sweep-only response.
+	stopVelocityOnContact?: boolean
 }
 
 // Which component block carries an entity's group id, and where in it. The block travels with both movers and
@@ -93,6 +112,8 @@ export interface PhysicsUpdateMetadata<C extends ComponentMap> {
 	// Whether the update needs the collidable query. Always true for createPhysicsUpdate, which always sweeps;
 	// the bare physicsUpdate carries no metadata and never asks for it.
 	collision: boolean
+	// The update integrates the optional dynamics block before movement.
+	dynamics: boolean
 	optional: Array<keyof C & string>
 	// Set when the update groups its run; PhysicsSystem reads it to send the group block with movers and collidables.
 	group?: PhysicsGroupConfig<C>
@@ -112,7 +133,7 @@ export type PhysicsUpdateFunction<
 //
 //   export const gamePhysicsUpdate = createPhysicsUpdate<Components, GameUpdateComponents>({
 //     optional: ['health'],
-//     onCollision(world, a, b, queries, callbacks) { ... },
+//     onCollision(world, a, b, queries, callbacks, contact) { ... },
 //   });
 //
 // Every update built here sweeps, so an entity comes to rest against what is in its way. The callback is on top
@@ -125,13 +146,14 @@ export function createPhysicsUpdate<
 	T extends PhysicsUpdateComponents & EntityUpdateComponents<C> = PhysicsUpdateComponents & EntityUpdateComponents<C>,
 	W extends PhysicsWorld = PhysicsWorld,
 >(options: PhysicsUpdateOptions<C, T, W> = {}): PhysicsUpdateFunction<C, T, W> {
-	const { onCollision, optional = [], group } = options;
+	const { onCollision, optional = [], group, stopVelocityOnContact = false } = options;
 
 	// Built by preRun, read by each entity update after it. Safe as closure variables because a run is one
 	// unbroken pass - preRun, then every entity - never re-entered part way through. Ungrouped runs use the single
 	// `broadphase`; a grouped run keeps one per group and each entity sweeps against its own.
 	let broadphase: CollisionBroadphase<T> | undefined;
 	let broadphaseByGroup: Map<number, CollisionBroadphase<T>> | undefined;
+	const callbackCommandsBySystem = new Map<number, PendingDynamicsCommands>();
 
 	const update: PhysicsUpdateFunction<C, T, W> = Object.assign(
 		(world: W, entityId: number, components: T, queries: EntityQueryComponents<C>, callbacks: ComponentSystemCallbacks<C>) => {
@@ -158,6 +180,7 @@ export function createPhysicsUpdate<
 			const self: MovingEntity<T> = { entityId, components };
 			const interpolation = components.interpolation;
 			const seconds = world.elapsedTime / 1000;
+			integrateDynamics(world, entityId, components.velocity, components.dynamics);
 			const moveX = components.velocity[VELOCITY_X_INDEX] * seconds;
 			const moveY = components.velocity[VELOCITY_Y_INDEX] * seconds;
 
@@ -193,7 +216,7 @@ export function createPhysicsUpdate<
 			finishInterpolationStep(interpolation, world.tick);
 
 			// A non-bouncing entity still has to look, since what it ran into may bounce off it.
-			if(!tree.hasBounciness && !onCollision) {
+			if(!tree.hasBounciness && !stopVelocityOnContact && !onCollision) {
 				return;
 			}
 
@@ -202,7 +225,7 @@ export function createPhysicsUpdate<
 			// reached it first - claimContact is what makes the second side's turn a no-op.
 			tree.forEachOverlapping(self, other => {
 				if(tree.claimContact(entityId, other.entityId)) {
-					resolveContact(world, self, other, queries, callbacks, onCollision);
+					resolveContact(world as W & PhysicsCallbackWorld, tree, self, other, queries, callbacks, moved.moveX, moved.moveY, stopVelocityOnContact, onCollision);
 				}
 			}, moved.moveX, moved.moveY);
 
@@ -210,7 +233,7 @@ export function createPhysicsUpdate<
 			// touching it, not through it. The two lists never share an entry.
 			for(const other of moved.blocking) {
 				if(tree.claimContact(entityId, other.entityId)) {
-					resolveContact(world, self, other, queries, callbacks, onCollision);
+					resolveContact(world as W & PhysicsCallbackWorld, tree, self, other, queries, callbacks, moved.moveX, moved.moveY, stopVelocityOnContact, onCollision);
 				}
 			}
 		},
@@ -218,6 +241,7 @@ export function createPhysicsUpdate<
 			physics: {
 				// The sweep needs the collidable query even with no callback, so this is not `onCollision !== undefined`.
 				collision: true,
+				dynamics: true,
 				optional,
 				group,
 			},
@@ -229,6 +253,7 @@ export function createPhysicsUpdate<
 	// by group id and builds a tree per group, so an entity only ever sweeps against its own group - the skipped
 	// group gets none, since nothing in it will be stepped.
 	update.preRun = (world, entities, queries) => {
+		prepareCallbackCommands(world, callbackCommandsBySystem);
 		// Bound to the tree it strikes against and hung on the world so a collision callback can reach it. The tree
 		// is picked when it is called, not now, since the callback fires after the trees below are built; a dying
 		// entity and the thing it hit are always in the same group, so the dying side's group picks the right one.
@@ -240,7 +265,7 @@ export function createPhysicsUpdate<
 		const seconds = world.elapsedTime / 1000;
 		const collidables = queries[COLLIDABLE_QUERY] ?? [];
 		if(!group) {
-			broadphase = new CollisionBroadphase<T>(collidables, seconds);
+			broadphase = new CollisionBroadphase<T>(collidables, seconds, world.dynamicsCommands);
 			return;
 		}
 
@@ -261,11 +286,42 @@ export function createPhysicsUpdate<
 
 		broadphaseByGroup = new Map();
 		for(const [groupId, list] of byGroup) {
-			broadphaseByGroup.set(groupId, new CollisionBroadphase<T>(list, seconds));
+			broadphaseByGroup.set(groupId, new CollisionBroadphase<T>(list, seconds, world.dynamicsCommands));
 		}
 	};
 
 	return update;
+}
+
+function prepareCallbackCommands(
+	world: PhysicsWorld,
+	commandsBySystem: Map<number, PendingDynamicsCommands>,
+): void {
+	const commandWorld = world as PhysicsWorld & Partial<DynamicsCommandQueue>;
+	const commandQueueId = world.commandQueueId ?? 0;
+	const deferred = commandsBySystem.get(commandQueueId);
+	if(deferred) {
+		world.dynamicsCommands = combineDynamicsCommands(deferred, world.dynamicsCommands);
+		commandsBySystem.delete(commandQueueId);
+	}
+	const commands = (): PendingDynamicsCommands => {
+		let pending = commandsBySystem.get(commandQueueId);
+		if(!pending) {
+			pending = new Map();
+			commandsBySystem.set(commandQueueId, pending);
+		}
+
+		return pending;
+	};
+	commandWorld.queueForce = (entityId, forceX, forceY) => {
+		queueDynamicsVector(commands(), entityId, forceX, forceY, 0, 0);
+	};
+	commandWorld.queueImpulse = (entityId, impulseX, impulseY) => {
+		queueDynamicsVector(commands(), entityId, 0, 0, impulseX, impulseY);
+	};
+	commandWorld.queueVelocity = (entityId, velocity) => {
+		queueVelocityAssignment(commands(), entityId, velocity);
+	};
 }
 
 // Reads an entity's group id off the configured block, defaulting to group 0 when the entity lacks it.
@@ -281,23 +337,31 @@ function readGroup<C extends ComponentMap>(components: EntityUpdateComponents<C>
 function resolveContact<
 	C extends ComponentMap,
 	T extends PhysicsUpdateComponents & EntityUpdateComponents<C>,
-	W extends PhysicsWorld,
+	W extends PhysicsCallbackWorld,
 >(
 	world: W,
+	tree: CollisionBroadphase<T>,
 	self: MovingEntity<T>,
 	other: CollisionEntity<T>,
 	queries: EntityQueryComponents<C>,
 	callbacks: ComponentSystemCallbacks<C>,
+	moveX: number,
+	moveY: number,
+	stopVelocityOnContact: boolean,
 	onCollision?: CollisionFunction<C, T, W>,
 ): void {
-	bouncePair(self, other);
+	bouncePair(self, other, stopVelocityOnContact);
 	if(!onCollision) {
 		return;
 	}
 
 	const selfBounds = spatialBounds(self.components);
 	const otherBounds = spatialBounds(other.components);
-	onCollision(world, self, other, queries, callbacks);
+	CONTACT_NORMAL.x = 0;
+	CONTACT_NORMAL.y = 0;
+	tree.contactNormal(self, other, moveX, moveY, CONTACT_NORMAL);
+	const contact: CollisionContact = { normalX: CONTACT_NORMAL.x, normalY: CONTACT_NORMAL.y };
+	onCollision(world, self, other, queries, callbacks, contact);
 	updateSpatialMapIfBoundsChanged(world, self.entityId, self.components, selfBounds);
 	updateSpatialMapIfBoundsChanged(world, other.entityId, other.components, otherBounds);
 }
@@ -372,6 +436,7 @@ export function physicsUpdate<
 	// elapsedTime is ms, velocity is units per second.
 	const seconds = world.elapsedTime / 1000;
 	const interpolation = components.interpolation;
+	integrateDynamics(world, entityId, components.velocity, components.dynamics);
 
 	startInterpolationStep(interpolation, components.transform, world.elapsedTime);
 	move(

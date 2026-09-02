@@ -25,6 +25,19 @@ export type {
 	VelocitySerialization,
 } from './components/velocity-component';
 
+export { default as dynamicsDefinition } from './components/dynamics-component';
+export {
+	DYNAMICS_ACCELERATION_X_INDEX,
+	DYNAMICS_ACCELERATION_Y_INDEX,
+	DYNAMICS_INVERSE_MASS_INDEX,
+	DYNAMICS_SIZE,
+} from './components/dynamics-component';
+export type {
+	DynamicsComponent,
+	DynamicsConfig,
+	DynamicsSerialization,
+} from './components/dynamics-component';
+
 export { default as bodyDefinition, canCollide, isSensor, isContinuous, isDying, markDying, bodyShape } from './components/body-component';
 export {
 	SHAPE_RECTANGLE,
@@ -123,15 +136,17 @@ export type { Vector } from './math/shapes';
 export { polygonShapesOverlap, polygonContactNormal } from './math/polygons';
 
 export { default as CollisionBroadphase, COLLIDABLE_QUERY } from './systems/collision';
-export type { CollisionComponents, CollisionEntity, CollisionFunction, MoveResult, MovingEntity, SweepResult } from './systems/collision';
+export type { CollisionComponents, CollisionContact, CollisionEntity, CollisionFunction, MoveResult, MovingEntity, SweepResult } from './systems/collision';
 
 export { default as SpatialIndex } from './systems/spatial-index';
 export type { SpatialComponents, SpatialEntity, SpatialFilter } from './systems/spatial-index';
 
 export { default as physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT, updateSpatialMap } from './systems/physics-update';
-export type { DeathInterpolationEntity, PhysicsGroupConfig, PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions, PhysicsWorld } from './systems/physics-update';
+export type { DeathInterpolationEntity, PhysicsCallbackWorld, PhysicsGroupConfig, PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions, PhysicsWorld } from './systems/physics-update';
 export { default as PhysicsSystem, DEFAULT_PHYSICS_STEP_MS } from './systems/physics-system';
-export type { PhysicsSystemConfig } from './systems/physics-system';
+export type { PhysicsSystemConfig, VelocityAssignment } from './systems/physics-system';
+export { default as integrateDynamics } from './systems/dynamics';
+export type { DynamicsCommand, DynamicsCommandBuffer, DynamicsCommandQueue, DynamicsCommands, DynamicsWorld } from './systems/dynamics';
 
 export { default as interpolationUpdate } from './systems/interpolation-update';
 export { default as InterpolationSystem } from './systems/interpolation-system';

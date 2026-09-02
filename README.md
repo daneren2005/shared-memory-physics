@@ -18,6 +18,7 @@ npm install @daneren2005/shared-memory-physics @daneren2005/shared-memory-ecs @d
 
 | Component       | Config                                       | Serialization              | Block                                          |
 | --------------- | -------------------------------------------- | -------------------------- | ---------------------------------------------- |
+| `dynamics`      | -                                            | `accelerationX?`, `accelerationY?`, `mass?` | `Float32Array` - acceleration and inverse mass |
 | `transform`     | `width`, `height`, `angle?` / `radius`       | `x`, `y`, `angle`          | `Float32Array` – where, how big, facing        |
 | `velocity`      | –                                            | `velocityX?`, `velocityY?` | `Float32Array` – world units per second        |
 | `body`          | `shape?`, `collideCategory?`, `collideMask?`, `sensor?`, `continuousCollisionDetection?` | –                          | `Uint32Array` – what shape, what collides with |
@@ -26,6 +27,23 @@ npm install @daneren2005/shared-memory-physics @daneren2005/shared-memory-ecs @d
 Entity configs are flat and shared across every component, so velocity is keyed as `velocityX` / `velocityY`
 rather than `x` / `y` (which already belong to the transform). Either velocity axis on its own is enough to
 load one, and the missing one defaults to `0`.
+
+`accelerationX` / `accelerationY` are persistent world units per second squared. Either one (or `mass`) loads a
+`dynamics` component; missing acceleration axes default to `0` and mass defaults to `1`. Physics uses
+semi-implicit Euler: it changes velocity by `acceleration * seconds` first, then moves by that new velocity in
+the same fixed step. That puts gravity on the physics backend instead of tying it to render frames:
+
+```ts
+world.loadEntity({
+  x: 0, y: 0, width: 20, height: 40,
+  velocityX: 0, velocityY: 0,
+  accelerationY: 1600,
+});
+```
+
+Mass is stored as inverse mass and round-trips through `save`; persistent acceleration does not depend on it.
+Mass must be finite and greater than zero, and acceleration must be finite. An entity without `dynamics` has
+effective mass `1` when a force or impulse is queued for it.
 
 The transform is split in two. **Config** is what your entity template says - `width` and `height` are
 required, `angle` defaults to `0` - and a size is what loads the component at all: a config with neither a
@@ -131,8 +149,9 @@ console.log(entity.components.transform!.x); // 0
 
 ## PhysicsSystem
 
-`PhysicsSystem` moves every entity that has both a `transform` and a `velocity`, integrating velocity into
-position once per run - and, once you give it an update built by [`createPhysicsUpdate`](#collisions), tells
+`PhysicsSystem` moves every entity that has both a `transform` and a `velocity`, integrating optional acceleration
+and queued commands into velocity and then velocity into position once per run - and, once you give it an update built by
+[`createPhysicsUpdate`](#collisions), tells
 you which entities have run into each other. It is generic over your full component map, so your world passes
 straight in:
 
@@ -145,8 +164,49 @@ await world.init();
 world.update(1000); // one second: the entity above is now at x = 10
 ```
 
-`elapsedTime` is in milliseconds (what `BaseWorld#update` is driven with) and velocity is in world units per
-**second**, so a run covering 16ms moves an entity 16/1000ths of its velocity.
+`elapsedTime` is in milliseconds (what `BaseWorld#update` is driven with), velocity is in world units per
+**second**, and acceleration is in world units per **second squared**. A run covering 16ms first adds 16/1000ths
+of the acceleration to velocity, then moves 16/1000ths of that updated velocity.
+
+### Dynamics commands
+
+Queue forces, impulses, or velocity assignments on the `PhysicsSystem` that owns the mover. A force acts for the
+duration of the next physics run; an impulse changes velocity once without being scaled by that run's duration.
+Both are divided by the entity's mass. A velocity assignment replaces only the axes it names, after acceleration,
+force, and impulse integration but before movement, so it is exact and independent of mass:
+
+```ts
+const physics = world.addSystem(new PhysicsSystem(world));
+
+physics.queueForce(entity, 0, 20);       // next run: acceleration += force / mass
+physics.queueImpulse(entity, 12, -40);   // next run: velocity += impulse / mass
+physics.queueVelocity(entity, { velocityY: -980 }); // next run: set y without changing x
+```
+
+The methods also accept an entity id. Forces and impulses queued for the same entity before dispatch are summed;
+the last velocity assignment for each axis wins. Zero force/impulse vectors and empty velocity assignments are
+ignored. Non-finite values throw immediately.
+
+Commands have a strict run boundary. A command queued before dispatch belongs to that run and is consumed once.
+A command queued while a worker run is in flight belongs to the following run. A command is still consumed if
+its entity is absent from the mover query because it was removed, filtered, scoped out, or in a skipped group;
+queue it again when the entity becomes eligible. In a sharded simulation, queue on the system whose mover filter
+owns the entity.
+
+The same methods are available on `world` inside a `createPhysicsUpdate` collision callback, with entity ids:
+
+```ts
+onCollision(world, self, other, queries, callbacks, contact) {
+  world.queueVelocity(self.entityId, {
+    velocityX: contact.normalX * 480,
+    velocityY: -720,
+  });
+}
+```
+
+Callback commands always target the next run and survive between runs in either backend. They combine with
+commands queued through `PhysicsSystem`: forces and impulses add together, while a newer main-thread velocity
+assignment replaces a callback assignment on each axis it names.
 
 ### The step
 
@@ -387,7 +447,7 @@ the same entry fraction the sweep already refines) and **defer the kill by one r
 needs to play that last stride onto the impact before the entity is gone:
 
 ```ts
-onCollision(world, self, other, queries, callbacks) {
+onCollision(world, self, other, queries, callbacks, contact) {
   // `self` (a fast sensor bullet) just swept through `other`.  Draw it reaching `other`, then die - rather than
   // vanishing a stride short.
   world.dieAtImpact(self, other);
@@ -445,7 +505,6 @@ instead, which is also the only one that costs nothing per entity for the collid
 // game-physics-update.ts - imported by *both* the worker file and the system below
 import {
 	createPhysicsUpdate,
-	VELOCITY_X_INDEX,
 	VELOCITY_Y_INDEX,
 	type PhysicsUpdateComponents,
 } from '@daneren2005/shared-memory-physics';
@@ -457,10 +516,9 @@ export type GameUpdateComponents = PhysicsUpdateComponents & { health?: Float32A
 export const gamePhysicsUpdate = createPhysicsUpdate<Components, GameUpdateComponents>({
 	// Extra components to send along to the callback, on top of the transform and velocity.
 	optional: ['health'],
-	onCollision(world, self, other, queries, callbacks) {
-		// `self` just moved into `other`.  Bounce it back off whatever it hit...
-		self.components.velocity[VELOCITY_X_INDEX] *= -1;
-		self.components.velocity[VELOCITY_Y_INDEX] *= -1;
+	onCollision(world, self, other, queries, callbacks, contact) {
+		// `self` just moved into `other`. Throw it away from the contact on the next run.
+		world.queueImpulse(self.entityId, contact.normalX * 40, contact.normalY * 40);
 
 		// ...and take a bite out of the thing it ran into, if that is something with health.
 		const health = other.components.health;
@@ -490,12 +548,28 @@ world.addSystem(new PhysicsSystem<Components, GameUpdateComponents>(world, {
 `createPhysicsUpdate` stamps what it needs onto the function it returns, so `optional` and the collidable
 query come across with `updateFunction` and never have to be repeated on the system.
 
+The final `contact` argument carries the unit normal at first touch as `normalX` and `normalY`. It points from
+`other` toward `self`; negate both values when applying it to `other`. This is the same shape-accurate direction
+used by native bounce, including rotated rectangles, circles, capsules, and polygons. A continuous sensor that
+crossed an entire target gets the normal where it entered, not from wherever its step ended after passing through.
+Exactly coincident shapes have no unique direction and report `(0, 0)`.
+
+```ts
+onCollision(world, self, other, queries, callbacks, contact) {
+  // Screen coordinates grow downwards, so a normal pointing up means self landed on other.
+  if (contact.normalY < -0.5) {
+    self.components.velocity[VELOCITY_Y_INDEX] = 0;
+  }
+}
+```
+
 **Once per pair, per run.** Both sides of a contact find it - one by sweeping into it, the other by overlapping
 it on its own turn - and the callback fires once, for whichever got there first. `self` is that entity, with
 every block the system asked for; `other` is the one it hit, where only `transform` is guaranteed. **The other
 side gets no call of its own**, so a callback that only touches `self` leaves it untouched: apply damage, tag a
 kill, or raise an event for *both* entities in the one call. Which of the two is `self` follows update order
-and is not something to depend on. An entity with no velocity is never `self`, because the system never moves
+and is not something to depend on. The normal follows that same ordering and always points away from `other`.
+An entity with no velocity is never `self`, because the system never moves
 it, but it is still found as `other`.
 
 Writes go straight into shared memory, so a callback can bounce an entity by flipping its velocity, or push a
@@ -506,6 +580,11 @@ through `callbacks`: `entityDied`, `entityComponentChanged`, `createEntity`, and
 event of your own - the same one the move above reports itself through. To kill a *fast* mover on impact and
 still have it drawn reaching what it hit, call `world.dieAtImpact(dying, other)` in place of `entityDied` - see
 [`dieAtImpact`](#a-moving-death-dieatimpact).
+
+For a dynamics response that does not touch raw blocks, the callback world has `queueForce`, `queueImpulse`, and
+`queueVelocity`. They take an entity id and retain the command inside whichever backend is running, including a
+worker. A callback happens after this run's move, so its command is integrated at the start of the next run;
+deferring it also makes the outcome independent of which side of the pair updated first.
 
 **What collides.** Everything with a transform and a `body`, not only the entities the system moves, so a
 ship can run into a station that has no velocity of its own. Shapes that only just touch do not count as
@@ -539,6 +618,22 @@ Two details worth knowing:
 - **An entity with nowhere left to go stays exactly where it is** rather than creeping the last fraction
   forwards each run, so it reports no position change while it pushes - but it does keep reporting the
   collision for as long as it keeps pushing.
+
+By default, the sweep changes position but leaves velocity alone for an entity without `bounciness`, preserving
+the original behavior for games that implement their own response. Set `stopVelocityOnContact: true` on
+`createPhysicsUpdate` to opt into a non-bouncing solid response: physics removes only the velocity component
+pointing into the contact normal, so bodies stop naturally against floors, ceilings, walls, and slopes while
+keeping their motion along the surface.
+
+```ts
+export const gamePhysicsUpdate = createPhysicsUpdate<Components>({
+  stopVelocityOnContact: true,
+});
+```
+
+This applies to both sides of each solid contact when they have velocity. Sensors still pass through, and an
+entity with a `bounciness` component keeps its configured bounce instead; `bounciness: 0` remains equivalent to
+removing the inward velocity component.
 
 **What it costs.** A move is checked where it *ends*, so a clear one - which is nearly every move - is a single
 shape test against each thing near where it lands, and nothing more. Only a move that is genuinely stopping
@@ -648,6 +743,11 @@ it rather than adding a second system - the block offsets it reads are exported 
 import { physicsUpdate, TRANSFORM_X_INDEX, VELOCITY_X_INDEX } from '@daneren2005/shared-memory-physics';
 ```
 
+Both `physicsUpdate` and updates built by `createPhysicsUpdate` integrate `dynamics` automatically. A custom
+update that replaces library movement owns that step too: request `dynamics` through the system's `optional`
+components and call `integrateDynamics(world, entityId, components.velocity, components.dynamics)` before
+turning velocity into movement.
+
 `CollisionBroadphase` is available the same way, for a system that wants the collision detection without the
 movement. Build one per run from a list of `{ entityId, components }` and how many **seconds** the run covers
 (that is what sizes the room left for movement), then ask it what any given entity is overlapping:
@@ -655,9 +755,16 @@ movement. Build one per run from a list of `{ entityId, components }` and how ma
 ```ts
 import { CollisionBroadphase, COLLIDABLE_QUERY } from '@daneren2005/shared-memory-physics';
 
-const broadphase = new CollisionBroadphase(queries[COLLIDABLE_QUERY], world.elapsedTime / 1000);
+const broadphase = new CollisionBroadphase(
+  queries[COLLIDABLE_QUERY],
+  world.elapsedTime / 1000,
+  world.dynamicsCommands,
+);
 broadphase.forEachOverlapping({ entityId, components }, other => { /* ... */ });
 ```
+
+The third argument is optional, but a custom update that applies queued commands in the same run must pass it so
+the index leaves enough travel room for the resulting velocity.
 
 `sweep` is the other half, for a system that moves things itself and wants the same
 [stopping at the edge](#stopping-at-the-edge). Hand it the move you were about to make and it says how much of

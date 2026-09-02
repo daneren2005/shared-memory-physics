@@ -28,6 +28,7 @@
 	"include": [
 		"src/**/*.ts",
 		"examples/**/*.ts",
+		"benchmarks/**/*.ts",
 		"*.config.ts"
 	]
 }

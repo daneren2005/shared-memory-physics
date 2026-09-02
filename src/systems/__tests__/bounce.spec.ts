@@ -11,7 +11,7 @@ interface EntityOptions {
 	angle?: number
 	velocityX?: number
 	velocityY?: number
-	bounciness?: number
+	bounciness?: number | null
 	sensor?: boolean
 	vertices?: ReadonlyArray<PolygonVertex>
 }
@@ -29,7 +29,7 @@ function entity(x: number, y: number, options: EntityOptions = {}) {
 		components: {
 			transform: new Float32Array([x, y, width, options.height ?? width, options.angle ?? 0]),
 			velocity: new Float32Array([options.velocityX ?? 0, options.velocityY ?? 0]),
-			bounciness: new Float32Array([options.bounciness ?? 1]),
+			bounciness: options.bounciness === null ? undefined : new Float32Array([options.bounciness ?? 1]),
 			body: new Uint32Array([(options.shape ?? SHAPE_RECTANGLE) | (options.sensor ? BODY_SENSOR_FLAG : 0), 1, 0xffffffff]),
 			polygon,
 		},
@@ -133,5 +133,23 @@ describe('bounce', () => {
 
 		expect(self.components.velocity[0]).toBeCloseTo(-100);
 		expect(other.components.velocity[0]).toBeCloseTo(10);
+	});
+
+	it('optionally removes the inward component from an entity without bounciness on a slope', () => {
+		const self = entity(-2.4, 2.4, { width: 2, velocityX: 10, bounciness: null });
+		const wall = entity(0, 0, { width: 100, height: 4, angle: EIGHTH_TURN, bounciness: null });
+		bouncePair(self, wall, true);
+
+		expect(self.components.velocity[0]).toBeCloseTo(5, 1);
+		expect(self.components.velocity[1]).toBeCloseTo(5, 1);
+	});
+
+	it('applies the optional stop to both unbouncy sides of a contact', () => {
+		const self = entity(0, 0, { shape: SHAPE_CIRCLE, velocityX: 100, bounciness: null });
+		const other = entity(10, 0, { shape: SHAPE_CIRCLE, velocityX: -20, bounciness: null });
+		bouncePair(self, other, true);
+
+		expect(self.components.velocity[0]).toBeCloseTo(0);
+		expect(other.components.velocity[0]).toBeCloseTo(0);
 	});
 });

@@ -2,7 +2,8 @@
 
 Internal orientation doc. Read this before exploring the source — it exists so an agent (or a
 new contributor) can jump straight to the right file instead of re-deriving the layout. Keep it
-current: see the rule in [AGENTS.md](../AGENTS.md).
+current: see the rule in [AGENTS.md](../AGENTS.md). Example-driven API friction is tracked in
+[LIBRARY-ERGONOMICS.md](LIBRARY-ERGONOMICS.md).
 
 For **public API and behaviour** (what each component means, collision semantics, interpolation
 trade-offs, examples), the [README](../README.md) is the source of truth — this doc points at its
@@ -23,10 +24,10 @@ backends never drift.
 
 ```
 main thread                              worker thread (optional)
-  PhysicsSystem ── posts entity blocks ──► ComponentWorker
-    (gathers query, stamps tick)             runs physicsUpdate / createPhysicsUpdate closure
+  PhysicsSystem ── posts blocks + commands ──► ComponentWorker
+    (gathers query, snapshots queue)            runs physicsUpdate / createPhysicsUpdate closure
   InterpolationSystem                          preRun: builds CollisionBroadphase (flatbush R-tree)
-    (per-frame lerp for render)                per entity: sweep → move → bounce/onCollision
+    (per-frame lerp for render)                per entity: accelerate → sweep → move → bounce/onCollision
                                                writes transform/interpolation into shared memory
   reads transform off shared block ◄───────────────────────────────┘  (no copy travels back)
 ```
@@ -39,14 +40,16 @@ main thread                              worker thread (optional)
 | `components/registry.ts` | `physicsRegistry` map + the component-map type slices systems are generic over. | `physicsRegistry`, `PhysicsComponents`, `PhysicsUpdateComponents`, `InterpolationComponents`, `InterpolationUpdateComponents` |
 | `components/transform-component.ts` | Where/how big/facing. `x,y` = **centre**; `angle` radians CCW. | `transformDefinition`, `TRANSFORM_*_INDEX`, `TRANSFORM_SIZE` |
 | `components/velocity-component.ts` | World units per **second**. Keyed `velocityX/Y` in configs. | `velocityDefinition`, `VELOCITY_*_INDEX` |
+| `components/dynamics-component.ts` | Persistent acceleration + inverse mass. Acceleration, queued forces, and queued impulses are integrated on the physics backend. | `dynamicsDefinition`, `DYNAMICS_*_INDEX` |
 | `components/body-component.ts` | Shape + collide category/mask + sensor + continuous-collision flag, plus a runtime-only `dying` bit. A body is what makes an entity collidable. Shape/sensor/ccd/dying share one packed flags word (`BODY_FLAGS_INDEX`), read via `bodyShape`/`isSensor`/`isContinuous`/`isDying`. | `bodyDefinition`, `canCollide`, `isSensor`, `isContinuous`, `isDying`, `markDying`, `bodyShape`, `SHAPE_*`, `BODY_*` |
 | `components/polygon-component.ts` | Fixed-capacity sidecar block for convex polygon vertices. Validates 3-16 boundary vertices and stores them normalized around their source bounds, so transform size scales the outline. Only polygon entities allocate it. | `polygonDefinition`, `preparePolygon`, `MAX_POLYGON_VERTICES`, `POLYGON_*` |
 | `components/bounciness-component.ts` | Standalone bounce float (not part of body block). | `bouncinessDefinition`, `BOUNCINESS_INDEX` |
 | `components/interpolation-component.ts` | Render position + publication protocol fields (`prev`, `progress`, `tick`, `duration`), exposed on the block so a spawn can seed a first segment by hand. | `interpolationDefinition`, `snapEntity`, `startSpawnInterpolation`, `INTERPOLATION_*_INDEX` |
-| `systems/physics-system.ts` | Main-thread `ComponentSystem`: gathers entities, decides which queries/blocks travel, stamps `tick`, gates move-reporting. Fixed step default. `startInterpolation(entity)` seeds a just-spawned mover so it is drawn moving now (feeds its step + accumulator to `startSpawnInterpolation`). | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig` |
-| `systems/physics-update.ts` | The per-entity update run on either backend. `physicsUpdate` = movement only; `createPhysicsUpdate` = sweeping + native bounce + `onCollision`. Owns the interpolation publish protocol and the atomic move. `world.dieAtImpact` (set per run in `preRun`) is the death-interpolation entry a callback calls instead of `entityDied`. | `physicsUpdate`, `createPhysicsUpdate`, `POSITION_UPDATED_EVENT`, `PhysicsWorld`, `DeathInterpolationEntity` |
-| `systems/collision.ts` | Broadphase (flatbush R-tree bucketed by collide category) + narrowphase sweep/overlap. `contactPoint` reports where a mover first touched a target, for death interpolation. | `CollisionBroadphase`, `COLLIDABLE_QUERY`, `MoveResult`, `SweepResult` |
-| `systems/bounce.ts` | Native reflect-off-contact used by the sweep when an entity has bounciness. Applied to both sides of a contact. | `bouncePair`, `bounce` (internal) |
+| `systems/physics-system.ts` | Main-thread `ComponentSystem`: gathers entities, snapshots one-run force/impulse/velocity commands, decides which queries/blocks travel, stamps `tick`, and gates move-reporting. Fixed step default. `startInterpolation(entity)` seeds a just-spawned mover so it is drawn moving now (feeds its step + accumulator to `startSpawnInterpolation`). | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig`, `VelocityAssignment` |
+| `systems/physics-update.ts` | The per-entity update run on either backend. `physicsUpdate` = movement only; `createPhysicsUpdate` = sweeping + native bounce + `onCollision`. Owns interpolation publication, the atomic move, and the callback command queue retained by each backend. `world.dieAtImpact` (set per run in `preRun`) is the death-interpolation entry a callback calls instead of `entityDied`. | `physicsUpdate`, `createPhysicsUpdate`, `POSITION_UPDATED_EVENT`, `PhysicsWorld`, `PhysicsCallbackWorld`, `DeathInterpolationEntity` |
+| `systems/dynamics.ts` | Shared semi-implicit Euler step, command accumulation/combination, and sorted per-run lookup used by both library movement paths before they calculate displacement. System transport is a flat `Float64Array`; custom worlds and combined callback commands use records. | `integrateDynamics`, `DynamicsCommand`, `DynamicsCommandBuffer`, `DynamicsCommandQueue`, `DynamicsWorld` |
+| `systems/collision.ts` | Broadphase (flatbush R-tree bucketed by collide category) + narrowphase sweep/overlap. `contactPoint` and `contactNormal` report first-touch geometry, including for swept sensors. | `CollisionBroadphase`, `COLLIDABLE_QUERY`, `CollisionContact`, `MoveResult`, `SweepResult` |
+| `systems/bounce.ts` | Native velocity response at solid contacts: reflect entities with bounciness and optionally stop non-bouncing entities along the contact normal. Applied to both sides of a contact. | `bouncePair`, `bounce` (internal) |
 | `systems/spatial-index.ts` | Same R-tree without collide categories — targeting / range / nearest queries. Snapshot per run. | `SpatialIndex`, `SpatialFilter` |
 | `systems/spatial-bounds.ts` | Converts transform/body shapes to the axis-aligned bounds stored in the live spatial map. | `spatialBounds` (internal) |
 | `world.ts` | `BaseWorld` subclass that owns the live `SharedSpatialMap`, tracks entity/component lifecycle, exposes entity-level searches, and supplies map handles to worker worlds. | `PhysicalWorld`, `addPhysicalWorldData`, `getSpatialMap` |
@@ -56,7 +59,13 @@ main thread                              worker thread (optional)
 | `math/polygons.ts` | Convex SAT used only when at least one side is a polygon; projects the other polygon or primitive analytically and supplies the matching contact normal. | `polygonShapesOverlap`, `polygonContactNormal` |
 
 Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures live in
-`src/__tests__/fixtures/`. `examples/` is a Phaser-rendered playground (Phaser is a dev dep only).
+`src/__tests__/fixtures/`. `examples/` is a Phaser-rendered playground (Phaser is a dev dep only). Its shared
+renderer supports optional stick-figure, coin, and enemy appearances while collision geometry remains an
+ordinary physics body; the platformer example demonstrates gravity, jumping, patrols, sensors, and game events.
+
+The platformer demonstrates dynamics from both threads: persistent acceleration supplies gravity, a main-thread
+velocity command supplies jumping, and its worker-safe collision callback queues knockback. Its update opts into
+`stopVelocityOnContact`, so floors, ceilings, walls, and slopes settle velocity without callback code.
 
 ## Invariants & gotchas (the non-obvious rules)
 
@@ -82,6 +91,23 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
   interpolation stops noticing steps.
 - **Moves use `addAtomicFloat32`, not `+=`.** The transform is shared memory another thread may add
   to in the same instant; a plain read-modify-write would drop a move.
+- **Dynamics is integrated before movement.** Both library update paths use semi-implicit Euler, so persistent
+  acceleration and queued force change this step's velocity before displacement, followed by the queued impulse.
+  The collision broadphase grows moving entries by the larger of their starting and resulting velocities;
+  otherwise two command-driven movers could leave the boxes indexed for their old velocities and never become
+  candidates.
+- **Dynamics commands cross at the run boundary.** `PhysicsSystem.addDataToWorld` swaps out the pending map and
+  sends an entity-id-sorted flat `Float64Array`, avoiding record-by-record structured cloning. Commands queued
+  after that swap target the next run. Every snapshot is consumed once, including entries whose entity is absent
+  from the mover query; an entity without `dynamics` uses inverse mass `1`. Force and impulse are integrated first;
+  queued velocity axes then replace the result before movement, with the last assignment per axis winning.
+- **Collision callback commands are next-run commands.** Each `PhysicsSystem` stamps a private queue id into its run
+  data. The update function retains commands by that id inside the active backend, then `preRun` combines the
+  previous callback's commands with commands received from `PhysicsSystem` and installs
+  `queueForce`/`queueImpulse`/`queueVelocity` for the current callback to refill the queue. This cannot depend on the
+  ECS update `init` hook: a fresh world initializes systems without running the separate load phase. Deferring makes
+  behavior independent of update order. Forces and impulses sum; a main-thread velocity assignment is causally
+  newer and replaces a callback assignment per named axis.
 - **Flatbush remains the hot path.** `CollisionBroadphase` and `SpatialIndex` are packed snapshots for many
   queries in one run. `PhysicalWorld.spatialMap` is updated after each finalized physics move so clients and
   low-query workers always have an index without rebuilding Flatbush. A custom update that changes a transform
@@ -100,12 +126,19 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
   must act on *both* `self` and `other`: the other side gets no call of its own. Which one is `self`
   follows update order. Filtering is symmetric. The claim set lives on the broadphase because that is
   what a run is scoped to — `preRun` builds a new one, so nothing has to be cleared.
+- **Callback normals are oriented from `other` to `self`.** `CollisionContact.normalX/Y` is evaluated at first
+  touch and uses the same primitive/polygon geometry as bounce. Negate it for the other side. Continuous sensors
+  that finish beyond a target are evaluated at their swept entry point; exact coincident centres report `(0, 0)`.
 - **The native bounce turns both sides around** in that one resolution, each by its own bounciness,
   because the sweep leaves the pair *touching* rather than overlapping — the entity that was run into
   would never find the contact on its own turn, and one that died mid-run is filtered out of the tree
   before it could. A mover with no bounciness therefore still runs the overlap pass when *anything*
   in the run is bouncy (`CollisionBroadphase.hasBounciness`). The bounce is a reflection, not an
   impulse: a still entity has no velocity into the surface, so nothing is transferred to it.
+- **`stopVelocityOnContact` is opt-in and subordinate to bounciness.** With it enabled on
+  `createPhysicsUpdate`, each non-bouncy side of a solid contact loses only the velocity component pointing into
+  the shape-accurate normal. The default remains sweep-only velocity behavior; sensors never receive a solid
+  response, and entities carrying bounciness keep their existing restitution response.
 - **Self is not re-checked for death between contacts.** The `DEAD_INDEX` guard runs once at the top
   of the update, and `forEachCandidate` filters dead *others*. An entity that wedges between two
   things in one run and dies on the first still resolves the second.
@@ -158,6 +191,7 @@ Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures 
 npm run type-check   # tsc --noEmit — run after every edit
 npm run lint         # oxlint (NODE_ENV=production)
 npm test             # vitest run
+npm run benchmark    # dynamics hot-path and command-transport microbenchmarks
 npm run build        # dist/ (js + d.ts)
 npm start            # examples playground on http://127.0.0.1:8080
 ```

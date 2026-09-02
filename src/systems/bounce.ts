@@ -19,16 +19,16 @@ interface BounceEntity {
 // Scratch, reused rather than allocated: a run is one unbroken pass, never re-entered part way through.
 const NORMAL: Vector = { x: 0, y: 0 };
 
-// Turns both sides of a contact around, each by its own bounciness. The two leave along the same line, so the
-// normal is worked out once and the far side is turned round rather than asked for again.
-export function bouncePair(self: BounceEntity, other: BounceEntity): void {
-	if(!canBounce(self) && !canBounce(other)) {
+// Applies each side's configured velocity response. Bounciness takes precedence; with stopNonBouncing enabled,
+// a side without it instead loses only the velocity component pointing into the surface.
+export function bouncePair(self: BounceEntity, other: BounceEntity, stopNonBouncing = false): void {
+	if(!canRespond(self, stopNonBouncing) && !canRespond(other, stopNonBouncing)) {
 		return;
 	}
 
 	if(isSurface(self, other) && collisionNormal(self, other, NORMAL)) {
-		reflect(self, NORMAL.x, NORMAL.y);
-		reflect(other, -NORMAL.x, -NORMAL.y);
+		respond(self, NORMAL.x, NORMAL.y, stopNonBouncing);
+		respond(other, -NORMAL.x, -NORMAL.y, stopNonBouncing);
 	}
 }
 
@@ -68,6 +68,30 @@ function reflect(entity: BounceEntity, normalX: number, normalY: number): void {
 	const scale = (1 + bounciness[BOUNCINESS_INDEX]) * into;
 	velocity[VELOCITY_X_INDEX] = velocityX - scale * normalX;
 	velocity[VELOCITY_Y_INDEX] = velocityY - scale * normalY;
+}
+
+function respond(entity: BounceEntity, normalX: number, normalY: number, stopNonBouncing: boolean): void {
+	if(entity.components.bounciness) {
+		reflect(entity, normalX, normalY);
+		return;
+	}
+
+	const velocity = entity.components.velocity;
+	if(!stopNonBouncing || !velocity) {
+		return;
+	}
+
+	const velocityX = velocity[VELOCITY_X_INDEX];
+	const velocityY = velocity[VELOCITY_Y_INDEX];
+	const into = velocityX * normalX + velocityY * normalY;
+	if(into < 0) {
+		velocity[VELOCITY_X_INDEX] = velocityX - into * normalX;
+		velocity[VELOCITY_Y_INDEX] = velocityY - into * normalY;
+	}
+}
+
+function canRespond(entity: BounceEntity, stopNonBouncing: boolean): boolean {
+	return entity.components.velocity !== undefined && (stopNonBouncing || entity.components.bounciness !== undefined);
 }
 
 function canBounce(entity: BounceEntity): boolean {

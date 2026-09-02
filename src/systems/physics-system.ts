@@ -5,12 +5,32 @@ import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/r
 import physicsUpdate, { POSITION_UPDATED_EVENT, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
 import { COLLIDABLE_QUERY } from './collision';
 import { addPhysicalWorldData, type PhysicalWorldSource } from '../world';
+import {
+	DYNAMICS_COMMAND_ENTITY_ID_OFFSET,
+	DYNAMICS_COMMAND_FORCE_X_OFFSET,
+	DYNAMICS_COMMAND_FORCE_Y_OFFSET,
+	DYNAMICS_COMMAND_IMPULSE_X_OFFSET,
+	DYNAMICS_COMMAND_IMPULSE_Y_OFFSET,
+	DYNAMICS_COMMAND_STRIDE,
+	DYNAMICS_COMMAND_VELOCITY_MASK_OFFSET,
+	DYNAMICS_COMMAND_VELOCITY_X_FLAG,
+	DYNAMICS_COMMAND_VELOCITY_X_OFFSET,
+	DYNAMICS_COMMAND_VELOCITY_Y_FLAG,
+	DYNAMICS_COMMAND_VELOCITY_Y_OFFSET,
+	queueDynamicsVector,
+	queueVelocityAssignment,
+} from './dynamics';
+import type { DynamicsCommandBuffer, PendingDynamicsCommands, VelocityAssignment } from './dynamics';
 
 // Default physics step, in ms. 20Hz rather than every frame: cheaper for no loss of correctness, only
 // smoothness, which InterpolationSystem restores. `deltaBetweenRuns: 0` runs it every frame, which a game with
 // very fast entities and no interpolation wants - a longer step is a longer move, and a move longer than an
 // obstacle is thick sweeps clean through it.
 export const DEFAULT_PHYSICS_STEP_MS = 50;
+
+let nextCommandQueueId = 1;
+
+export type { VelocityAssignment } from './dynamics';
 
 export interface PhysicsSystemConfig<
 	C extends ComponentMap & PhysicsComponents,
@@ -68,6 +88,8 @@ export default class PhysicsSystem<
 	W extends PhysicsWorld = PhysicsWorld,
 > extends ComponentSystem<C, T, W> {
 	private spatialWorld: PhysicalWorldSource;
+	private pendingDynamicsCommands: PendingDynamicsCommands = new Map();
+	private readonly commandQueueId = nextCommandQueueId++;
 	// Bumped per run and stamped onto every interpolated entity so a renderer can tell a blended position from one
 	// physics just replaced. Only has to change; a Float32 holds integers to 2^24, over nine days at a 50ms step.
 	tick = 0;
@@ -82,6 +104,7 @@ export default class PhysicsSystem<
 		const updateFunction: EntityUpdateFunction<C, T, W> & { physics?: PhysicsUpdateMetadata<C> } = options.updateFunction ?? physicsUpdate;
 		const optional = options.optional ?? updateFunction.physics?.optional ?? [];
 		const collision = options.collision ?? updateFunction.physics?.collision ?? false;
+		const integratesDynamics = updateFunction === physicsUpdate || updateFunction.physics?.dynamics === true;
 		// A moving entity reads its own body (collide category/mask) and bounciness before it searches, so both
 		// travel with movers too - but only on the collision path, or they are blocks per mover for nothing.
 		// Interpolation goes along unconditionally, since the update must publish into it and nothing flags which
@@ -100,6 +123,9 @@ export default class PhysicsSystem<
 		}
 		if(!optional.includes('interpolation')) {
 			extraOptional.push('interpolation');
+		}
+		if(integratesDynamics && !optional.includes('dynamics')) {
+			extraOptional.push('dynamics');
 		}
 		if(collision) {
 			extraOptional.push('entity');
@@ -120,6 +146,9 @@ export default class PhysicsSystem<
 		const collidableOptional = optional.includes('bounciness') ? [...optional] : ['bounciness', ...optional];
 		if(!collidableOptional.includes('polygon')) {
 			collidableOptional.push('polygon');
+		}
+		if(integratesDynamics && !collidableOptional.includes('dynamics')) {
+			collidableOptional.push('dynamics');
 		}
 		// The group block on the collidable side too, so preRun can bucket the broadphase by group.
 		if(group && !collidableOptional.includes(group.component)) {
@@ -178,6 +207,19 @@ export default class PhysicsSystem<
 		});
 	}
 
+	queueForce(entity: BaseEntity<C> | number, forceX: number, forceY: number): void {
+		this.queueDynamics(entity, forceX, forceY, 0, 0);
+	}
+
+	queueImpulse(entity: BaseEntity<C> | number, impulseX: number, impulseY: number): void {
+		this.queueDynamics(entity, 0, 0, impulseX, impulseY);
+	}
+
+	queueVelocity(entity: BaseEntity<C> | number, velocity: VelocityAssignment): void {
+		const entityId = typeof entity === 'number' ? entity : entity.eid;
+		queueVelocityAssignment(this.pendingDynamicsCommands, entityId, velocity);
+	}
+
 	// Stamps the run with its step number and whether to report what moved. A subclass overriding this to attach
 	// its own data must call `super.addDataToWorld(world)`, or `tick` stays undefined and every interpolated
 	// entity looks to a renderer like it has never had a physics step.
@@ -188,6 +230,48 @@ export default class PhysicsSystem<
 		world.reportMoves = this.reportMoves ?? this.listenerCount(POSITION_UPDATED_EVENT) > 0;
 		// Sent every run so a game can flip which group is handed off (a jump) between runs with no rebuild.
 		world.skipGroup = this.skipGroup;
+		world.commandQueueId = this.commandQueueId;
+		world.dynamicsCommands = this.snapshotDynamicsCommands();
+	}
+
+	private queueDynamics(
+		entity: BaseEntity<C> | number,
+		forceX: number,
+		forceY: number,
+		impulseX: number,
+		impulseY: number,
+	): void {
+		const entityId = typeof entity === 'number' ? entity : entity.eid;
+		queueDynamicsVector(this.pendingDynamicsCommands, entityId, forceX, forceY, impulseX, impulseY);
+	}
+
+	private snapshotDynamicsCommands(): DynamicsCommandBuffer | undefined {
+		if(this.pendingDynamicsCommands.size === 0) {
+			return undefined;
+		}
+
+		const pending = this.pendingDynamicsCommands;
+		this.pendingDynamicsCommands = new Map();
+
+		const entityIds = Array.from(pending.keys()).sort((a, b) => a - b);
+		const snapshot = new Float64Array(entityIds.length * DYNAMICS_COMMAND_STRIDE);
+		for(let index = 0; index < entityIds.length; index++) {
+			const entityId = entityIds[index];
+			const command = pending.get(entityId)!;
+			const offset = index * DYNAMICS_COMMAND_STRIDE;
+			snapshot[offset + DYNAMICS_COMMAND_ENTITY_ID_OFFSET] = entityId;
+			snapshot[offset + DYNAMICS_COMMAND_FORCE_X_OFFSET] = command.forceX;
+			snapshot[offset + DYNAMICS_COMMAND_FORCE_Y_OFFSET] = command.forceY;
+			snapshot[offset + DYNAMICS_COMMAND_IMPULSE_X_OFFSET] = command.impulseX;
+			snapshot[offset + DYNAMICS_COMMAND_IMPULSE_Y_OFFSET] = command.impulseY;
+			const velocityMask = (command.velocityX === undefined ? 0 : DYNAMICS_COMMAND_VELOCITY_X_FLAG)
+				| (command.velocityY === undefined ? 0 : DYNAMICS_COMMAND_VELOCITY_Y_FLAG);
+			snapshot[offset + DYNAMICS_COMMAND_VELOCITY_MASK_OFFSET] = velocityMask;
+			snapshot[offset + DYNAMICS_COMMAND_VELOCITY_X_OFFSET] = command.velocityX ?? 0;
+			snapshot[offset + DYNAMICS_COMMAND_VELOCITY_Y_OFFSET] = command.velocityY ?? 0;
+		}
+
+		return snapshot;
 	}
 }
 

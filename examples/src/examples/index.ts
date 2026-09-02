@@ -6,6 +6,7 @@ import { breakout } from './breakout';
 import { bulletHell } from './bullet-hell';
 import { clickToMove } from './click-to-move';
 import { interpolationWalk } from './interpolation-walk';
+import { platformer } from './platformer';
 import { sensors } from './sensors';
 
 // The order they appear in the nav, and the first one is what a visit with no hash lands on.
@@ -15,6 +16,7 @@ export const EXAMPLES: Array<Example> = [
 	interpolationWalk,
 	clickToMove,
 	sensors,
+	platformer,
 	breakout,
 	bulletHell,
 	boids,
