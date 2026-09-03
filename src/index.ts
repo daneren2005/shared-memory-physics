@@ -17,6 +17,7 @@ export { default as velocityDefinition } from './components/velocity-component';
 export {
 	VELOCITY_X_INDEX,
 	VELOCITY_Y_INDEX,
+	VELOCITY_DAMPING_INDEX,
 	VELOCITY_SIZE,
 } from './components/velocity-component';
 export type {

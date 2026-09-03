@@ -9,7 +9,7 @@ import {
 } from '../../components/body-component';
 import { BOUNCINESS_INDEX, BOUNCINESS_SIZE } from '../../components/bounciness-component';
 import { TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
-import { VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component';
+import { VELOCITY_DAMPING_INDEX, VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component';
 import {
 	DYNAMICS_ACCELERATION_X_INDEX,
 	DYNAMICS_ACCELERATION_Y_INDEX,
@@ -105,6 +105,33 @@ describe('physics-update', () => {
 		};
 	}
 
+	function dampedMove(
+		velocity: [number, number],
+		damping: number,
+		elapsedTime: number,
+		acceleration?: [number, number],
+	): { position: [number, number], velocity: [number, number] } {
+		const transform = new Float32Array(TRANSFORM_SIZE);
+		const velocityBlock = new Float32Array(VELOCITY_SIZE);
+		velocityBlock[VELOCITY_X_INDEX] = velocity[0];
+		velocityBlock[VELOCITY_Y_INDEX] = velocity[1];
+		velocityBlock[VELOCITY_DAMPING_INDEX] = damping;
+		let dynamics: Float32Array | undefined;
+		if(acceleration) {
+			dynamics = new Float32Array(DYNAMICS_SIZE);
+			dynamics[DYNAMICS_ACCELERATION_X_INDEX] = acceleration[0];
+			dynamics[DYNAMICS_ACCELERATION_Y_INDEX] = acceleration[1];
+			dynamics[DYNAMICS_INVERSE_MASS_INDEX] = 1;
+		}
+
+		physicsUpdate({ gameTime: 0, elapsedTime, tick: 1, getString: () => '' }, 1, { transform, velocity: velocityBlock, dynamics }, {}, callbacks);
+
+		return {
+			position: [transform[TRANSFORM_X_INDEX], transform[TRANSFORM_Y_INDEX]],
+			velocity: [velocityBlock[VELOCITY_X_INDEX], velocityBlock[VELOCITY_Y_INDEX]],
+		};
+	}
+
 	it('adds one second of velocity to the position', () => {
 		expect(move([0, 0], [3, 4], 1000)).toEqual([3, 4]);
 	});
@@ -176,6 +203,36 @@ describe('physics-update', () => {
 
 		expect(result.velocity).toEqual([8, 10]);
 		expect(result.position).toEqual([8, 10]);
+	});
+
+	it('bleeds velocity off with linear damping so a mover coasts to a stop', () => {
+		// 1/(1+damping*dt): damping 1 over a full second halves the speed, and never reverses it.
+		const result = dampedMove([10, -20], 1, 1000);
+
+		expect(result.velocity).toEqual([5, -10]);
+		expect(result.position).toEqual([5, -10]);
+	});
+
+	it('keeps damping stable across step sizes', () => {
+		// Ten 100ms steps of damping 1 stay a decaying positive value, never overshooting past zero.
+		let speed = 100;
+		for(let step = 0; step < 10; step++) {
+			speed = dampedMove([speed, 0], 1, 100).velocity[0];
+		}
+
+		expect(speed).toBeGreaterThan(0);
+		expect(speed).toBeLessThan(100);
+	});
+
+	it('damps the integrated velocity but not this step of acceleration alone', () => {
+		// Acceleration is integrated then damped together: (v + a*dt) / (1+damping*dt).
+		const result = dampedMove([10, 0], 1, 1000, [10, 0]);
+
+		expect(result.velocity[0]).toBeCloseTo(10);
+	});
+
+	it('leaves velocity untouched when damping is zero', () => {
+		expect(dampedMove([10, -20], 0, 1000).velocity).toEqual([10, -20]);
 	});
 
 	it('reads velocity from the same block offsets the component writes', () => {

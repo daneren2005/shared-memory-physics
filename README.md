@@ -20,13 +20,24 @@ npm install @daneren2005/shared-memory-physics @daneren2005/shared-memory-ecs @d
 | --------------- | -------------------------------------------- | -------------------------- | ---------------------------------------------- |
 | `dynamics`      | -                                            | `accelerationX?`, `accelerationY?`, `mass?` | `Float32Array` - acceleration and inverse mass |
 | `transform`     | `width`, `height`, `angle?` / `radius`       | `x`, `y`, `angle`          | `Float32Array` – where, how big, facing        |
-| `velocity`      | –                                            | `velocityX?`, `velocityY?` | `Float32Array` – world units per second        |
+| `velocity`      | –                                            | `velocityX?`, `velocityY?`, `damping?` | `Float32Array` – world units per second        |
 | `body`          | `shape?`, `collideCategory?`, `collideMask?`, `sensor?`, `continuousCollisionDetection?` | –                          | `Uint32Array` – what shape, what collides with |
 | `interpolation` | `interpolate`                                | –                          | `Float32Array` – where to *draw* it            |
 
 Entity configs are flat and shared across every component, so velocity is keyed as `velocityX` / `velocityY`
 rather than `x` / `y` (which already belong to the transform). Either velocity axis on its own is enough to
 load one, and the missing one defaults to `0`.
+
+`damping` is optional linear damping in fraction of speed per second: with it set, a mover started once bleeds
+speed off every step and coasts to a stop instead of gliding forever. It is applied implicitly as
+`velocity / (1 + damping * seconds)`, so it stays stable at any step size and never reverses direction. It
+defaults to `0` (no damping) and must be finite and at least zero. An explicit velocity assignment (a queued
+`queueVelocity`, or writing `velocityX` directly) is authoritative for that step and bypasses damping until the
+entity coasts again.
+
+```ts
+const shot = world.loadEntity({ x: 0, y: 0, radius: 3, velocityX: 400, damping: 2 });
+```
 
 `accelerationX` / `accelerationY` are persistent world units per second squared. Either one (or `mass`) loads a
 `dynamics` component; missing acceleration axes default to `0` and mass defaults to `1`. Physics uses

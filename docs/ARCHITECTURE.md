@@ -39,7 +39,7 @@ main thread                              worker thread (optional)
 | `index.ts` | Public barrel — the entire published surface. | (re-exports everything below) |
 | `components/registry.ts` | `physicsRegistry` map + the component-map type slices systems are generic over. | `physicsRegistry`, `PhysicsComponents`, `PhysicsUpdateComponents`, `InterpolationComponents`, `InterpolationUpdateComponents` |
 | `components/transform-component.ts` | Where/how big/facing. `x,y` = **centre**; `angle` radians CCW. | `transformDefinition`, `TRANSFORM_*_INDEX`, `TRANSFORM_SIZE` |
-| `components/velocity-component.ts` | World units per **second**. Keyed `velocityX/Y` in configs. | `velocityDefinition`, `VELOCITY_*_INDEX` |
+| `components/velocity-component.ts` | World units per **second**. Keyed `velocityX/Y` in configs, plus optional linear `damping` that bleeds speed off each step so a mover coasts to a stop. | `velocityDefinition`, `VELOCITY_*_INDEX` |
 | `components/dynamics-component.ts` | Persistent acceleration + inverse mass. Acceleration, queued forces, and queued impulses are integrated on the physics backend. | `dynamicsDefinition`, `DYNAMICS_*_INDEX` |
 | `components/body-component.ts` | Shape + collide category/mask + sensor + continuous-collision flag, plus a runtime-only `dying` bit. A body is what makes an entity collidable. Shape/sensor/ccd/dying share one packed flags word (`BODY_FLAGS_INDEX`), read via `bodyShape`/`isSensor`/`isContinuous`/`isDying`. | `bodyDefinition`, `canCollide`, `isSensor`, `isContinuous`, `isDying`, `markDying`, `bodyShape`, `SHAPE_*`, `BODY_*` |
 | `components/polygon-component.ts` | Fixed-capacity sidecar block for convex polygon vertices. Validates 3-16 boundary vertices and stores them normalized around their source bounds, so transform size scales the outline. Only polygon entities allocate it. | `polygonDefinition`, `preparePolygon`, `MAX_POLYGON_VERTICES`, `POLYGON_*` |
@@ -96,6 +96,10 @@ velocity command supplies jumping, and its worker-safe collision callback queues
   The collision broadphase grows moving entries by the larger of their starting and resulting velocities;
   otherwise two command-driven movers could leave the boxes indexed for their old velocities and never become
   candidates.
+- **Linear damping is implicit and lives on the velocity block.** `integrateDynamics` reads `VELOCITY_DAMPING_INDEX`
+  and multiplies the integrated velocity by `1/(1+damping*seconds)` — stable at any step, never reversing. It runs
+  even for an entity with no dynamics/commands (the early-out also checks `damping === 0`), but an explicit velocity
+  assignment stays authoritative and bypasses damping for that step.
 - **Dynamics commands cross at the run boundary.** `PhysicsSystem.addDataToWorld` swaps out the pending map and
   sends an entity-id-sorted flat `Float64Array`, avoiding record-by-record structured cloning. Commands queued
   after that swap target the next run. Every snapshot is consumed once, including entries whose entity is absent
