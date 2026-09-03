@@ -1,6 +1,6 @@
 import physicsUpdate, { createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
-import type { ComponentSystemCallbacks } from '@daneren2005/shared-memory-ecs';
+import type { EntityWorkerSystemCallbacks } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
 import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
 import {
@@ -20,7 +20,7 @@ import {
 // Drives the update against raw blocks with no world or system, pinning down the integration math itself;
 // physics-system.spec.ts covers the same end to end.
 describe('physics-update', () => {
-	const callbacks: ComponentSystemCallbacks = {
+	const callbacks: EntityWorkerSystemCallbacks = {
 		entityComponentChanged: () => {},
 		emitEntityEvent: () => {},
 		emitSystemEvent: () => {},
@@ -346,7 +346,7 @@ describe('createPhysicsUpdate', () => {
 
 		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, reportMoves, getString: () => '' };
 		const queries = { [COLLIDABLE_QUERY]: entities };
-		const recording: ComponentSystemCallbacks<PhysicsComponents> = {
+		const recording: EntityWorkerSystemCallbacks<PhysicsComponents> = {
 			entityComponentChanged(entityId, componentName, prop) {
 				changes.push(`${entityId}.${componentName}.${String(prop)}`);
 			},
@@ -559,7 +559,7 @@ describe('createPhysicsUpdate', () => {
 	// Sweeping is not turned on by the callback: coming to rest is physics, the callback is the game's response.
 	// A world of walls and terrain wants the first without the second.
 	describe('with no onCollision', () => {
-		const ignored: ComponentSystemCallbacks = {
+		const ignored: EntityWorkerSystemCallbacks = {
 			entityComponentChanged: () => {},
 			emitEntityEvent: () => {},
 			emitSystemEvent: () => {},
@@ -660,7 +660,7 @@ describe('createPhysicsUpdate bounce', () => {
 
 		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, getString: () => '' };
 		const queries = { [COLLIDABLE_QUERY]: entities };
-		const ignored: ComponentSystemCallbacks = {
+		const ignored: EntityWorkerSystemCallbacks = {
 			entityComponentChanged: () => {},
 			emitEntityEvent: () => {},
 			emitSystemEvent: () => {},
@@ -773,7 +773,7 @@ describe('createPhysicsUpdate bounce', () => {
 
 			const world: PhysicsWorld = { gameTime: 0, elapsedTime: 1000, tick: 1, getString: () => '' };
 			const queries = { [COLLIDABLE_QUERY]: entities };
-			const ignored: ComponentSystemCallbacks = {
+			const ignored: EntityWorkerSystemCallbacks = {
 				entityComponentChanged: () => {},
 				emitEntityEvent: () => {},
 				emitSystemEvent: () => {},
@@ -867,7 +867,7 @@ describe('createPhysicsUpdate bounce', () => {
 });
 
 // Records the entityDied ids a run fired, with the rest of the callbacks inert.
-function deathRecordingCallbacks(died: Array<number>): ComponentSystemCallbacks<PhysicsComponents> {
+function deathRecordingCallbacks(died: Array<number>): EntityWorkerSystemCallbacks<PhysicsComponents> {
 	return {
 		entityComponentChanged: () => {},
 		emitEntityEvent: () => {},
@@ -882,7 +882,7 @@ function runOnce(
 	update: ReturnType<typeof createPhysicsUpdate>,
 	world: PhysicsWorld,
 	entities: Array<MovingEntity<PhysicsUpdateComponents>>,
-	callbacks: ComponentSystemCallbacks<PhysicsComponents>,
+	callbacks: EntityWorkerSystemCallbacks<PhysicsComponents>,
 ) {
 	const queries = { [COLLIDABLE_QUERY]: entities };
 	update.preRun!(world, entities, queries, callbacks);

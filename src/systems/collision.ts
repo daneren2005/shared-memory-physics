@@ -1,6 +1,6 @@
 import Flatbush from 'flatbush';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
-import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
+import type { ComponentMap, EntityWorkerSystemCallbacks, EntityWorkerSystemWorld, EntityQueryComponents, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsUpdateComponents } from '../components/registry';
 import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, bodyShape, isContinuous, isDying, isSensor, SHAPE_CAPSULE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component';
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
@@ -68,12 +68,12 @@ export interface CollisionContact {
 // after the mover is put down: `self` is whichever side reached the contact first, `other` is the other. Because
 // the other side gets no call of its own, a callback has to decide for both. A velocity-less entity is never
 // `self` but is found as `other`. `contact` is oriented from `other` towards `self` at first touch.
-export type CollisionFunction<C extends ComponentMap, T extends PhysicsUpdateComponents & EntityUpdateComponents<C>, W extends ComponentSystemWorld = ComponentSystemWorld> = (
+export type CollisionFunction<C extends ComponentMap, T extends PhysicsUpdateComponents & EntityUpdateComponents<C>, W extends EntityWorkerSystemWorld = EntityWorkerSystemWorld> = (
 	world: W,
 	self: MovingEntity<T>,
 	other: CollisionEntity<T>,
 	queries: EntityQueryComponents<C>,
-	callbacks: ComponentSystemCallbacks<C>,
+	callbacks: EntityWorkerSystemCallbacks<C>,
 	contact: CollisionContact,
 ) => void;
 

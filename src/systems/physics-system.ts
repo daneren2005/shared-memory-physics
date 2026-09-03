@@ -1,5 +1,5 @@
-import { ComponentSystem } from '@daneren2005/shared-memory-ecs';
-import type { BaseEntity, BaseWorld, ComponentDefinitionMap, ComponentMap, ComponentSystemQuery, EntityUpdateComponents, EntityUpdateFunction, SystemConfig } from '@daneren2005/shared-memory-ecs';
+import { EntityWorkerSystem } from '@daneren2005/shared-memory-ecs';
+import type { BaseEntity, BaseWorld, ComponentDefinitionMap, ComponentMap, EntityWorkerSystemQuery, EntityUpdateComponents, EntityUpdateFunction, SystemConfig } from '@daneren2005/shared-memory-ecs';
 import { startSpawnInterpolation, type SpawnableEntity } from '../components/interpolation-component';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
 import physicsUpdate, { POSITION_UPDATED_EVENT, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
@@ -47,7 +47,7 @@ export interface PhysicsSystemConfig<
 	// Forces the in-process worker even with a getWorker. Defaults to true when no getWorker was given.
 	forceMainThread?: boolean
 	// The update to run, defaulting to plain movement that walks through anything in its way. Build one with
-	// createPhysicsUpdate for collisions and pass the same function the worker file hands to createComponentWorker
+	// createPhysicsUpdate for collisions and pass the same function the worker file hands to createEntitySystemWorker
 	// so both backends match; it stamps `optional` and the collidable query on, so they need not be repeated here.
 	updateFunction?: EntityUpdateFunction<C, T, W> & { physics?: PhysicsUpdateMetadata<C> }
 	// Extra components to send with each moving entity, for an update built by hand. Overrides what the update
@@ -74,7 +74,7 @@ export interface PhysicsSystemConfig<
 	// Extra queries sent to the worker alongside the collidable one, for an update that reads more of the world
 	// than the entity it moves (e.g. flocking). Read by name off `queries`, gathered whole regardless of `filter`,
 	// and merged with the collidable query rather than replacing it.
-	queries?: { [key: string]: ComponentSystemQuery<C> }
+	queries?: { [key: string]: EntityWorkerSystemQuery<C> }
 	// For a grouped update (see `group` on createPhysicsUpdate)
 	skipGroup?: number
 }
@@ -86,7 +86,7 @@ export default class PhysicsSystem<
 	C extends ComponentMap & PhysicsComponents,
 	T extends PhysicsUpdateComponents & EntityUpdateComponents<C> = PhysicsUpdateComponents & EntityUpdateComponents<C>,
 	W extends PhysicsWorld = PhysicsWorld,
-> extends ComponentSystem<C, T, W> {
+> extends EntityWorkerSystem<C, T, W> {
 	private spatialWorld: PhysicalWorldSource;
 	private pendingDynamicsCommands: PendingDynamicsCommands = new Map();
 	private readonly commandQueueId = nextCommandQueueId++;

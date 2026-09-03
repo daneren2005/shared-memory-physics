@@ -5,7 +5,7 @@ import type {
 	BaseEntity,
 	ComponentDefinitionMap,
 	ComponentsOf,
-	ComponentSystemWorld,
+	EntityWorkerSystemWorld,
 	EntityConfigOf,
 	WorldOptions,
 } from '@daneren2005/shared-memory-ecs';
@@ -15,7 +15,7 @@ export interface PhysicalWorldData {
 	spatialMapMemory?: SharedSpatialMapMemory
 }
 
-export interface PhysicalSystemWorld extends ComponentSystemWorld, PhysicalWorldData {
+export interface PhysicalSystemWorld extends EntityWorkerSystemWorld, PhysicalWorldData {
 	spatialMap?: SharedSpatialMap
 }
 

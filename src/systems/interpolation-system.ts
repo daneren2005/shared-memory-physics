@@ -1,4 +1,4 @@
-import { ComponentSystem } from '@daneren2005/shared-memory-ecs';
+import { EntityWorkerSystem } from '@daneren2005/shared-memory-ecs';
 import type { BaseWorld, ComponentDefinitionMap, ComponentMap, EntityUpdateComponents, SystemConfig } from '@daneren2005/shared-memory-ecs';
 import type { InterpolationComponents, InterpolationUpdateComponents } from '../components/registry';
 import interpolationUpdate from './interpolation-update';
@@ -20,7 +20,7 @@ export interface InterpolationSystemConfig extends Partial<SystemConfig> {
 // pause and `timeScale` need no code, since BaseWorld#runUpdate already skips and scales for free.
 export default class InterpolationSystem<
 	C extends ComponentMap & InterpolationComponents,
-> extends ComponentSystem<C, InterpolationUpdateComponents & EntityUpdateComponents<C>> {
+> extends EntityWorkerSystem<C, InterpolationUpdateComponents & EntityUpdateComponents<C>> {
 	constructor(world: BaseWorld<ComponentDefinitionMap, C>, options: InterpolationSystemConfig = {}) {
 		super(world, {
 			name: options.name ?? 'InterpolationSystem',

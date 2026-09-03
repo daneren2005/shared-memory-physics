@@ -2,7 +2,7 @@ import { addAtomicFloat32 } from '@daneren2005/shared-memory-objects/utils/atomi
 import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
 import type SharedSpatialMap from '@daneren2005/shared-memory-objects/spatial/shared-spatial-map';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
-import type { ComponentMap, ComponentSystemCallbacks, ComponentSystemWorld, EntityQueryComponents, EntityUpdateComponents, EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
+import type { ComponentMap, EntityWorkerSystemCallbacks, EntityWorkerSystemWorld, EntityQueryComponents, EntityUpdateComponents, EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
 import {
 	INTERPOLATION_DURATION_INDEX,
@@ -29,7 +29,7 @@ import { getSpatialMap, type PhysicalSystemWorld } from '../world';
 // The per-run data object every physics update is handed: the base one plus the step counter the interpolation
 // component is stamped with. PhysicsSystem fills `tick` from addDataToWorld, so a subclass adding data must
 // call `super.addDataToWorld(world)` or nothing gets a tick and interpolation stops noticing new steps.
-export interface PhysicsWorld extends ComponentSystemWorld, PhysicalSystemWorld, DynamicsWorld {
+export interface PhysicsWorld extends EntityWorkerSystemWorld, PhysicalSystemWorld, DynamicsWorld {
 	// Which physics step this is, bumped per run. Only compared for equality - a publication stamp, not a clock.
 	tick: number
 	// Whether to report this run's moves. Set by PhysicsSystem from whether anything is listening, since the cost
@@ -128,7 +128,7 @@ export type PhysicsUpdateFunction<
 };
 
 // Builds the update a game runs physics through when it wants its entities to notice each other. The result is
-// a plain EntityUpdateFunction that goes to both backends: createComponentWorker in the worker file, and
+// a plain EntityUpdateFunction that goes to both backends: createEntitySystemWorker in the worker file, and
 // PhysicsSystem's `updateFunction` for the in-process fallback.
 //
 //   export const gamePhysicsUpdate = createPhysicsUpdate<Components, GameUpdateComponents>({
@@ -156,7 +156,7 @@ export function createPhysicsUpdate<
 	const callbackCommandsBySystem = new Map<number, PendingDynamicsCommands>();
 
 	const update: PhysicsUpdateFunction<C, T, W> = Object.assign(
-		(world: W, entityId: number, components: T, queries: EntityQueryComponents<C>, callbacks: ComponentSystemCallbacks<C>) => {
+		(world: W, entityId: number, components: T, queries: EntityQueryComponents<C>, callbacks: EntityWorkerSystemCallbacks<C>) => {
 			// Killed earlier this run
 			if(components.entity?.[DEAD_INDEX] === 1) {
 				return;
@@ -344,7 +344,7 @@ function resolveContact<
 	self: MovingEntity<T>,
 	other: CollisionEntity<T>,
 	queries: EntityQueryComponents<C>,
-	callbacks: ComponentSystemCallbacks<C>,
+	callbacks: EntityWorkerSystemCallbacks<C>,
 	moveX: number,
 	moveY: number,
 	stopVelocityOnContact: boolean,
@@ -432,7 +432,7 @@ export function physicsUpdate<
 	C extends ComponentMap & PhysicsComponents = PhysicsComponents,
 	T extends PhysicsUpdateComponents & EntityUpdateComponents<C> = PhysicsUpdateComponents & EntityUpdateComponents<C>,
 	W extends PhysicsWorld = PhysicsWorld,
->(world: W, entityId: number, components: T, queries: EntityQueryComponents<C>, callbacks: ComponentSystemCallbacks<C>): void {
+>(world: W, entityId: number, components: T, queries: EntityQueryComponents<C>, callbacks: EntityWorkerSystemCallbacks<C>): void {
 	// elapsedTime is ms, velocity is units per second.
 	const seconds = world.elapsedTime / 1000;
 	const interpolation = components.interpolation;

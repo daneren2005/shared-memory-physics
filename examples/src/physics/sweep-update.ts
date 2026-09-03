@@ -10,7 +10,7 @@ import type { Components } from '../world';
 //   - The walk example loads no bounciness, so its unit is stopped on the face of a box and simply stays there.
 //
 // It lives in its own module because both backends have to run the same function - the worker file next door
-// imports it and hands it to `createComponentWorker`, and the main thread hands it to `PhysicsSystem` as its
+// imports it and hands it to `createEntitySystemWorker`, and the main thread hands it to `PhysicsSystem` as its
 // `updateFunction` - so the in-process fallback and the worker behave identically.
 export const sweepUpdate = createPhysicsUpdate<Components>();
 

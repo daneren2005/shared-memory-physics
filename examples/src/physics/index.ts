@@ -9,7 +9,7 @@ import { sweepUpdate } from './sweep-update';
 
 // An update function and the worker that runs it, kept together because they have to agree: whatever a game
 // hands `PhysicsSystem` as its `updateFunction` for the in-process fallback must be the same function its
-// worker file handed `createComponentWorker`, or the two backends behave differently.
+// worker file handed `createEntitySystemWorker`, or the two backends behave differently.
 export interface PhysicsBackend {
 	// The bare EntityUpdateFunction rather than PhysicsUpdateFunction, because not every backend sweeps: plain
 	// movement carries no collision metadata at all, so its `physics` stamp is absent.  The two that do sweep

@@ -239,8 +239,8 @@ class GamePhysicsSystem extends PhysicsSystem<Components, GameComponents, GameWo
 }
 ```
 
-`GameWorld` extends `PhysicsWorld` (which is `ComponentSystemWorld` plus that `tick`) rather than
-`ComponentSystemWorld` directly.
+`GameWorld` extends `PhysicsWorld` (which is `EntityWorkerSystemWorld` plus that `tick`) rather than
+`EntityWorkerSystemWorld` directly.
 
 A run's moves are reported back to the main thread as a single `position-updated` event **on the system**,
 carrying the ids of everything that moved, so anything you keep keyed off position can follow the moves
@@ -290,10 +290,10 @@ lives in your game and is handed to the system through `getWorker`:
 
 ```ts
 // physics.worker.ts
-import { createComponentWorker } from '@daneren2005/shared-memory-ecs';
+import { createEntitySystemWorker } from '@daneren2005/shared-memory-ecs';
 import { physicsUpdate } from '@daneren2005/shared-memory-physics';
 
-createComponentWorker(self, physicsUpdate);
+createEntitySystemWorker(self, physicsUpdate);
 ```
 
 ```ts
@@ -532,10 +532,10 @@ export const gamePhysicsUpdate = createPhysicsUpdate<Components, GameUpdateCompo
 
 ```ts
 // physics.worker.ts
-import { createComponentWorker } from '@daneren2005/shared-memory-ecs';
+import { createEntitySystemWorker } from '@daneren2005/shared-memory-ecs';
 import { gamePhysicsUpdate } from './game-physics-update';
 
-createComponentWorker(self, gamePhysicsUpdate);
+createEntitySystemWorker(self, gamePhysicsUpdate);
 ```
 
 ```ts

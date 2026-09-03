@@ -1,4 +1,4 @@
-import { ComponentSystem } from '@daneren2005/shared-memory-ecs';
+import { EntityWorkerSystem } from '@daneren2005/shared-memory-ecs';
 import type { BaseWorld, ComponentDefinitionMap, EntityUpdateComponents, SystemConfig } from '@daneren2005/shared-memory-ecs';
 import { DEFAULT_PHYSICS_STEP_MS } from '@daneren2005/shared-memory-physics';
 import type { Components } from '../world';
@@ -21,13 +21,13 @@ export interface SteeringSystemConfig extends Partial<SystemConfig> {
 
 // Steers every entity that has a transform and a velocity, by writing its velocity and nothing else.
 //
-// This is the half of the boids example that is *not* physics.  It is an ordinary ComponentSystem - no different
+// This is the half of the boids example that is *not* physics. It is an ordinary EntityWorkerSystem - no different
 // in kind from the game systems a real project writes - running on its own worker thread, and it stops at the
 // velocity: turning that velocity into a position, and publishing the pair a renderer interpolates between, is
 // left to a plain PhysicsSystem running the library's own `physicsUpdate`.  The two never talk.  They share the
 // component blocks, this one writing velocities and that one reading them, and that is the whole interface
 // between them - see ./steering-update.ts for what the split costs and why it is worth it.
-export default class SteeringSystem extends ComponentSystem<Components, SteeringUpdateComponents & EntityUpdateComponents<Components>, SteeringWorld> {
+export default class SteeringSystem extends EntityWorkerSystem<Components, SteeringUpdateComponents & EntityUpdateComponents<Components>, SteeringWorld> {
 	params: SteeringParams;
 	bounds: SteeringBounds;
 

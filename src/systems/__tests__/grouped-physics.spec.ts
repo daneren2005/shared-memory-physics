@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createPhysicsUpdate, type PhysicsWorld } from '../physics-update';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
-import type { BaseComponent, ComponentSystemCallbacks } from '@daneren2005/shared-memory-ecs';
+import type { BaseComponent, EntityWorkerSystemCallbacks } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
 import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
 import { BODY_CATEGORY_INDEX, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SIZE, DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_RECTANGLE } from '../../components/body-component';
@@ -73,7 +73,7 @@ function run(units: Array<Unit>, skipGroup?: number, elapsedTime = 1000): RunRes
 
 	const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, skipGroup, getString: () => '' };
 	const queries = { [COLLIDABLE_QUERY]: entities };
-	const ignored: ComponentSystemCallbacks<GroupComponents> = {
+	const ignored: EntityWorkerSystemCallbacks<GroupComponents> = {
 		entityComponentChanged: () => {},
 		emitEntityEvent: () => {},
 		emitSystemEvent: () => {},

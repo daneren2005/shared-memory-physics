@@ -24,7 +24,7 @@ backends never drift.
 
 ```
 main thread                              worker thread (optional)
-  PhysicsSystem ── posts blocks + commands ──► ComponentWorker
+  PhysicsSystem ── posts blocks + commands ──► EntitySystemWorker
     (gathers query, snapshots queue)            runs physicsUpdate / createPhysicsUpdate closure
   InterpolationSystem                          preRun: builds CollisionBroadphase (flatbush R-tree)
     (per-frame lerp for render)                per entity: accelerate → sweep → move → bounce/onCollision
@@ -45,7 +45,7 @@ main thread                              worker thread (optional)
 | `components/polygon-component.ts` | Fixed-capacity sidecar block for convex polygon vertices. Validates 3-16 boundary vertices and stores them normalized around their source bounds, so transform size scales the outline. Only polygon entities allocate it. | `polygonDefinition`, `preparePolygon`, `MAX_POLYGON_VERTICES`, `POLYGON_*` |
 | `components/bounciness-component.ts` | Standalone bounce float (not part of body block). | `bouncinessDefinition`, `BOUNCINESS_INDEX` |
 | `components/interpolation-component.ts` | Render position + publication protocol fields (`prev`, `progress`, `tick`, `duration`), exposed on the block so a spawn can seed a first segment by hand. | `interpolationDefinition`, `snapEntity`, `startSpawnInterpolation`, `INTERPOLATION_*_INDEX` |
-| `systems/physics-system.ts` | Main-thread `ComponentSystem`: gathers entities, snapshots one-run force/impulse/velocity commands, decides which queries/blocks travel, stamps `tick`, and gates move-reporting. Fixed step default. `startInterpolation(entity)` seeds a just-spawned mover so it is drawn moving now (feeds its step + accumulator to `startSpawnInterpolation`). | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig`, `VelocityAssignment` |
+| `systems/physics-system.ts` | Main-thread `EntityWorkerSystem`: gathers entities, snapshots one-run force/impulse/velocity commands, decides which queries/blocks travel, stamps `tick`, and gates move-reporting. Fixed step default. `startInterpolation(entity)` seeds a just-spawned mover so it is drawn moving now (feeds its step + accumulator to `startSpawnInterpolation`). | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig`, `VelocityAssignment` |
 | `systems/physics-update.ts` | The per-entity update run on either backend. `physicsUpdate` = movement only; `createPhysicsUpdate` = sweeping + native bounce + `onCollision`. Owns interpolation publication, the atomic move, and the callback command queue retained by each backend. `world.dieAtImpact` (set per run in `preRun`) is the death-interpolation entry a callback calls instead of `entityDied`. | `physicsUpdate`, `createPhysicsUpdate`, `POSITION_UPDATED_EVENT`, `PhysicsWorld`, `PhysicsCallbackWorld`, `DeathInterpolationEntity` |
 | `systems/dynamics.ts` | Shared semi-implicit Euler step, command accumulation/combination, and sorted per-run lookup used by both library movement paths before they calculate displacement. System transport is a flat `Float64Array`; custom worlds and combined callback commands use records. | `integrateDynamics`, `DynamicsCommand`, `DynamicsCommandBuffer`, `DynamicsCommandQueue`, `DynamicsWorld` |
 | `systems/collision.ts` | Broadphase (flatbush R-tree bucketed by collide category) + narrowphase sweep/overlap. `contactPoint` and `contactNormal` report first-touch geometry, including for swept sensors. | `CollisionBroadphase`, `COLLIDABLE_QUERY`, `CollisionContact`, `MoveResult`, `SweepResult` |
@@ -115,7 +115,7 @@ velocity command supplies jumping, and its worker-safe collision callback queues
 - **`POSITION_UPDATED_EVENT` carries only ids**, as one array per run (never per entity — that's the
   whole point). The worker only pays for it when someone is listening (`reportMoves`).
 - **`filter` vs `scope` on `PhysicsSystem`.** Both are query filters the ECS applies at gather time
-  (`ComponentSystemQuery.filter`), but they sit on different queries. `filter` narrows only the mover
+  (`EntityWorkerSystemQuery.filter`), but they sit on different queries. `filter` narrows only the mover
   query, so a shard steps a subset while still sweeping the whole world. `scope` is applied to the
   mover query *and* the `COLLIDABLE_QUERY`, so a scoped-out body never enters the broadphase — that is
   what isolates overlapping groups (solar systems). Given both, a mover must pass each; the collidable

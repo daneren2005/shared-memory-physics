@@ -1,5 +1,5 @@
 import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
-import type { ComponentSystemCallbacks, ComponentSystemWorld } from '@daneren2005/shared-memory-ecs';
+import type { EntityWorkerSystemCallbacks, EntityWorkerSystemWorld } from '@daneren2005/shared-memory-ecs';
 import interpolationUpdate from '../interpolation-update';
 import {
 	INTERPOLATION_DURATION_INDEX,
@@ -14,7 +14,7 @@ import {
 } from '../../components/interpolation-component';
 import { TRANSFORM_SIZE, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
 
-const callbacks: ComponentSystemCallbacks = {
+const callbacks: EntityWorkerSystemCallbacks = {
 	entityComponentChanged: () => {},
 	emitEntityEvent: () => {},
 	emitSystemEvent: () => {},
@@ -45,7 +45,7 @@ describe('interpolation-update', () => {
 	// Sets a known progress and runs a zero-elapsed frame, so the result is the blend at exactly that alpha.
 	function renderAt(components: { transform: Float32Array, interpolation: Float32Array }, alpha: number): [number, number] {
 		components.interpolation[INTERPOLATION_PROGRESS_INDEX] = alpha;
-		const world: ComponentSystemWorld = { gameTime: 0, elapsedTime: 0, getString: () => '' };
+		const world: EntityWorkerSystemWorld = { gameTime: 0, elapsedTime: 0, getString: () => '' };
 		interpolationUpdate(world, 1, components, {}, callbacks);
 
 		return [
@@ -186,7 +186,7 @@ function simulate(lag: number, frames = 60, frameLength = FRAME, lagFor: (tick: 
 		}
 
 		// Then physics: bank the frame, post a run at a step's worth. A run in flight blocks the next, as
-		// ComponentSystem's `isRunning` guard does.
+		// EntityWorkerSystem's `isRunning` guard does.
 		currentDelta += frameLength;
 		if(currentDelta >= STEP && inFlight.length === 0) {
 			const runElapsed = currentDelta - currentDelta % STEP;
@@ -195,7 +195,7 @@ function simulate(lag: number, frames = 60, frameLength = FRAME, lagFor: (tick: 
 		}
 
 		// And finally the interpolation system.
-		const world: ComponentSystemWorld = { gameTime: now, elapsedTime: frameLength, getString: () => '' };
+		const world: EntityWorkerSystemWorld = { gameTime: now, elapsedTime: frameLength, getString: () => '' };
 		interpolationUpdate(world, 1, components, {}, callbacks);
 
 		drawn.push(interpolation[INTERPOLATION_X_INDEX]);
