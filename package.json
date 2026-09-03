@@ -2,7 +2,7 @@
 	"name": "@daneren2005/shared-memory-physics",
 	"description": "2D physics components and systems built on the shared-memory ECS.",
 	"author": "Scott Jackson",
-	"version": "1.5.0",
+	"version": "1.6.0",
 	"type": "module",
 	"sideEffects": false,
 	"repository": {
