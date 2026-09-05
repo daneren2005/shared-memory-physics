@@ -78,6 +78,8 @@ function run(units: Array<Unit>, skipGroup?: number, elapsedTime = 1000): RunRes
 		emitEntityEvent: () => {},
 		emitSystemEvent: () => {},
 		entityDied: () => {},
+		addComponent: () => {},
+		removeComponent: () => {},
 		createEntity: () => {},
 	};
 

@@ -23,12 +23,21 @@ export interface PhysicalWorldSource {
 	spatialMap: SharedSpatialMap
 }
 
-export type PhysicalWorldOptions<R extends ComponentDefinitionMap> = WorldOptions<ComponentsOf<R>, EntityConfigOf<R>> & {
+export type PhysicalWorldOptions<
+	R extends ComponentDefinitionMap,
+	E extends BaseEntity<ComponentsOf<R>, EntityConfigOf<R>> = BaseEntity<ComponentsOf<R>, EntityConfigOf<R>>,
+> = WorldOptions<ComponentsOf<R>, EntityConfigOf<R>, E> & {
 	spatial?: SharedSpatialMapConfig
 };
 
-export type PhysicalWorldEntity<R extends ComponentDefinitionMap> = BaseEntity<ComponentsOf<R>, EntityConfigOf<R>>;
-export type PhysicalWorldFilter<R extends ComponentDefinitionMap> = (entity: PhysicalWorldEntity<R>) => boolean;
+export type PhysicalWorldEntity<
+	R extends ComponentDefinitionMap,
+	E extends BaseEntity<ComponentsOf<R>, EntityConfigOf<R>> = BaseEntity<ComponentsOf<R>, EntityConfigOf<R>>,
+> = E;
+export type PhysicalWorldFilter<
+	R extends ComponentDefinitionMap,
+	E extends BaseEntity<ComponentsOf<R>, EntityConfigOf<R>> = BaseEntity<ComponentsOf<R>, EntityConfigOf<R>>,
+> = (entity: PhysicalWorldEntity<R, E>) => boolean;
 
 interface SpatialAccessorComponents {
 	transform?: { block?: Float32Array }
@@ -52,16 +61,19 @@ export function getSpatialMap(world: PhysicalSystemWorld): SharedSpatialMap {
 	return world.spatialMap;
 }
 
-export default class PhysicalWorld<R extends ComponentDefinitionMap> extends BaseWorld<R> implements PhysicalWorldSource {
+export default class PhysicalWorld<
+	R extends ComponentDefinitionMap,
+	E extends BaseEntity<ComponentsOf<R>, EntityConfigOf<R>> = BaseEntity<ComponentsOf<R>, EntityConfigOf<R>>,
+> extends BaseWorld<R, ComponentsOf<R>, EntityConfigOf<R>, E> implements PhysicalWorldSource {
 	readonly spatialMap: SharedSpatialMap;
 	private spatialIds = new Set<number>();
 
-	constructor(registry: R, options: PhysicalWorldOptions<R> = {}) {
+	constructor(registry: R, options: PhysicalWorldOptions<R, E> = {}) {
 		const { spatial, ...worldOptions } = options;
 		super(registry, worldOptions);
 
 		this.spatialMap = new SharedSpatialMap(this.heap, spatial);
-		this.on('entity-added', (entity: PhysicalWorldEntity<R>) => {
+		this.on('entity-added', (entity: PhysicalWorldEntity<R, E>) => {
 			this.updateSpatialEntity(entity);
 			entity.on('component-added', (name: string) => {
 				if(name === 'transform' || name === 'body') {
@@ -74,13 +86,13 @@ export default class PhysicalWorld<R extends ComponentDefinitionMap> extends Bas
 				}
 			});
 		});
-		this.on('entity-removed', (entity: PhysicalWorldEntity<R>) => {
+		this.on('entity-removed', (entity: PhysicalWorldEntity<R, E>) => {
 			this.spatialIds.delete(entity.eid);
 			this.spatialMap.remove(entity.eid);
 		});
 	}
 
-	updateSpatialEntity(entityOrId: PhysicalWorldEntity<R> | number): void {
+	updateSpatialEntity(entityOrId: PhysicalWorldEntity<R, E> | number): void {
 		const entity = typeof entityOrId === 'number' ? this.getEntityByEid(entityOrId) : entityOrId;
 		if(!entity) {
 			return;
@@ -99,12 +111,12 @@ export default class PhysicalWorld<R extends ComponentDefinitionMap> extends Bas
 		this.spatialMap.update(entity.eid, bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
 	}
 
-	searchSpatial(minX: number, minY: number, maxX: number, maxY: number, filter?: PhysicalWorldFilter<R>): Array<PhysicalWorldEntity<R>> {
+	searchSpatial(minX: number, minY: number, maxX: number, maxY: number, filter?: PhysicalWorldFilter<R, E>): Array<PhysicalWorldEntity<R, E>> {
 		if(maxX < minX || maxY < minY) {
 			return [];
 		}
 
-		const found: Array<PhysicalWorldEntity<R>> = [];
+		const found: Array<PhysicalWorldEntity<R, E>> = [];
 		const ids = Number.isFinite(minX) && Number.isFinite(minY) && Number.isFinite(maxX) && Number.isFinite(maxY)
 			? this.spatialMap.search(minX, minY, querySize(minX, maxX), querySize(minY, maxY))
 			: this.spatialIds;
@@ -124,15 +136,15 @@ export default class PhysicalWorld<R extends ComponentDefinitionMap> extends Bas
 		return found;
 	}
 
-	searchSpatialAround(x: number, y: number, reachX: number, reachY: number, filter?: PhysicalWorldFilter<R>): Array<PhysicalWorldEntity<R>> {
+	searchSpatialAround(x: number, y: number, reachX: number, reachY: number, filter?: PhysicalWorldFilter<R, E>): Array<PhysicalWorldEntity<R, E>> {
 		return this.searchSpatial(x - reachX, y - reachY, x + reachX, y + reachY, filter);
 	}
 
-	findNearestSpatial(x: number, y: number, maxDistance = Infinity, filter?: PhysicalWorldFilter<R>): PhysicalWorldEntity<R> | undefined {
+	findNearestSpatial(x: number, y: number, maxDistance = Infinity, filter?: PhysicalWorldFilter<R, E>): PhysicalWorldEntity<R, E> | undefined {
 		return this.findNearbySpatial(x, y, 1, maxDistance, filter)[0];
 	}
 
-	findNearbySpatial(x: number, y: number, maxResults: number, maxDistance = Infinity, filter?: PhysicalWorldFilter<R>): Array<PhysicalWorldEntity<R>> {
+	findNearbySpatial(x: number, y: number, maxResults: number, maxDistance = Infinity, filter?: PhysicalWorldFilter<R, E>): Array<PhysicalWorldEntity<R, E>> {
 		const ids = this.spatialMap.neighbors(x, y, maxResults, maxDistance, id => {
 			const entity = this.getEntityByEid(id);
 			return !!entity && (!filter || filter(entity));

@@ -19,6 +19,8 @@ const callbacks: EntityWorkerSystemCallbacks = {
 	emitEntityEvent: () => {},
 	emitSystemEvent: () => {},
 	entityDied: () => {},
+	addComponent: () => {},
+	removeComponent: () => {},
 	createEntity: () => {},
 };
 

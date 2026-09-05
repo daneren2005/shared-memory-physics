@@ -25,6 +25,8 @@ describe('physics-update', () => {
 		emitEntityEvent: () => {},
 		emitSystemEvent: () => {},
 		entityDied: () => {},
+		addComponent: () => {},
+		removeComponent: () => {},
 		createEntity: () => {},
 	};
 
@@ -414,6 +416,8 @@ describe('createPhysicsUpdate', () => {
 				changes.push(`${event}.${entityId}`);
 			},
 			entityDied: () => {},
+			addComponent: () => {},
+			removeComponent: () => {},
 			createEntity: () => {},
 		};
 
@@ -621,6 +625,8 @@ describe('createPhysicsUpdate', () => {
 			emitEntityEvent: () => {},
 			emitSystemEvent: () => {},
 			entityDied: () => {},
+			addComponent: () => {},
+			removeComponent: () => {},
 			createEntity: () => {},
 		};
 
@@ -722,6 +728,8 @@ describe('createPhysicsUpdate bounce', () => {
 			emitEntityEvent: () => {},
 			emitSystemEvent: () => {},
 			entityDied: () => {},
+			addComponent: () => {},
+			removeComponent: () => {},
 			createEntity: () => {},
 		};
 
@@ -835,6 +843,8 @@ describe('createPhysicsUpdate bounce', () => {
 				emitEntityEvent: () => {},
 				emitSystemEvent: () => {},
 				entityDied: () => {},
+				addComponent: () => {},
+				removeComponent: () => {},
 				createEntity: () => {},
 			};
 
@@ -930,6 +940,8 @@ function deathRecordingCallbacks(died: Array<number>): EntityWorkerSystemCallbac
 		emitEntityEvent: () => {},
 		emitSystemEvent: () => {},
 		entityDied: id => died.push(id),
+		addComponent: () => {},
+		removeComponent: () => {},
 		createEntity: () => {},
 	};
 }

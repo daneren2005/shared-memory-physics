@@ -820,6 +820,10 @@ box around their actual outline. A direct transform/body edit outside the physic
 `world.updateSpatialEntity(entity)`. A custom physics wrapper that changes a transform after calling the library
 update can call `updateSpatialMap(workerWorld, entityId, components)` instead.
 
+Games with registered ECS wrapper classes can pass their entity union as `PhysicalWorld`'s second generic. The
+world's entity map, lifecycle callbacks, and spatial-query results then retain that union instead of widening to
+`BaseEntity`.
+
 `PhysicsSystem` requires a `PhysicalWorld` (or another `BaseWorld` that implements `PhysicalWorldSource`) and
 automatically shares its map with the physics worker. Another worker system can receive the same map by calling
 `addPhysicalWorldData(sourceWorld, runWorld)` from its system's `addDataToWorld`, then `getSpatialMap(runWorld)` in
