@@ -44,7 +44,7 @@ main thread                              worker thread (optional)
 | `components/body-component.ts` | Shape + collide category/mask + sensor + continuous-collision flag, plus a runtime-only `dying` bit. A body is what makes an entity collidable. Shape/sensor/ccd/dying share one packed flags word (`BODY_FLAGS_INDEX`), read via `bodyShape`/`isSensor`/`isContinuous`/`isDying`. | `bodyDefinition`, `canCollide`, `isSensor`, `isContinuous`, `isDying`, `markDying`, `bodyShape`, `SHAPE_*`, `BODY_*` |
 | `components/polygon-component.ts` | Fixed-capacity sidecar block for convex polygon vertices. Validates 3-16 boundary vertices and stores them normalized around their source bounds, so transform size scales the outline. Only polygon entities allocate it. | `polygonDefinition`, `preparePolygon`, `MAX_POLYGON_VERTICES`, `POLYGON_*` |
 | `components/bounciness-component.ts` | Standalone bounce float (not part of body block). | `bouncinessDefinition`, `BOUNCINESS_INDEX` |
-| `components/interpolation-component.ts` | Render position + publication protocol fields (`prev`, `progress`, `tick`, `duration`), exposed on the block so a spawn can seed a first segment by hand. | `interpolationDefinition`, `snapEntity`, `startSpawnInterpolation`, `INTERPOLATION_*_INDEX` |
+| `components/interpolation-component.ts` | Render position + publication/pacing fields (`prev`, `progress`, `tick`, latest/cumulative/remaining duration), exposed on the block so a spawn can seed a first segment by hand. | `interpolationDefinition`, `snapEntity`, `startSpawnInterpolation`, `INTERPOLATION_*_INDEX` |
 | `systems/physics-system.ts` | Main-thread `EntityWorkerSystem`: gathers entities, snapshots one-run force/impulse/velocity commands, decides which queries/blocks travel, stamps `tick`, and gates move-reporting. Fixed step default. `startInterpolation(entity)` seeds a just-spawned mover so it is drawn moving now (feeds its step + accumulator to `startSpawnInterpolation`). | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig`, `VelocityAssignment` |
 | `systems/physics-update.ts` | The per-entity update run on either backend. `physicsUpdate` = movement only; `createPhysicsUpdate` = sweeping + native bounce + `onCollision`. Owns interpolation publication, the atomic move, and the callback command queue retained by each backend. `world.dieAtImpact` (set per run in `preRun`) is the death-interpolation entry a callback calls instead of `entityDied`. | `physicsUpdate`, `createPhysicsUpdate`, `POSITION_UPDATED_EVENT`, `PhysicsWorld`, `PhysicsCallbackWorld`, `DeathInterpolationEntity` |
 | `systems/dynamics.ts` | Shared semi-implicit Euler step, command accumulation/combination, and sorted per-run lookup used by both library movement paths before they calculate displacement. System transport is a flat `Float64Array`; custom worlds and combined callback commands use records. | `integrateDynamics`, `DynamicsCommand`, `DynamicsCommandBuffer`, `DynamicsCommandQueue`, `DynamicsWorld` |
@@ -85,10 +85,15 @@ velocity command supplies jumping, and its worker-safe collision callback queues
   blocker), and the free `sweptOverlaps`. A continuous body never corner-slides. `forEachOverlapping` runs after
   the move, so it takes the just-applied delta as trailing args to reconstruct the path; `sweep`/`resolveMove`
   run before the move, so `searcher.x/y` is already the start.
-- **The `tick` publication protocol.** Interpolation reads `prev`/transform across a release-store
-  `tick` (written last via `storeFloat32`) and drops the frame if it changed mid-read. A subclass
+- **The `tick` publication protocol.** Physics atomically stores a NaN dirty marker before changing a segment,
+  then release-stores its `tick` after `prev`/transform are complete. Interpolation samples the stamp around its
+  reads and drops the frame unless both samples are the same non-NaN tick. A subclass
   overriding `addDataToWorld` **must call `super.addDataToWorld(world)`** or nothing gets a tick and
   interpolation stops noticing steps.
+- **Interpolation time is cumulative.** A late physics run may publish a long segment and then replace it with a
+  normal step before rendering has played the long one. Physics therefore publishes total simulated duration;
+  interpolation adds every newly observed millisecond to its remaining render timeline and moves from its current
+  render position toward the latest transform over that time. Publications can be coalesced, but never skipped.
 - **Moves use `addAtomicFloat32`, not `+=`.** The transform is shared memory another thread may add
   to in the same instant; a plain read-modify-write would drop a move.
 - **Dynamics is integrated before movement.** Both library update paths use semi-implicit Euler, so persistent

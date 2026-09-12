@@ -25,6 +25,9 @@ describe('startSpawnInterpolation', () => {
 		expect(interpolation.progress).toEqual(0);
 		expect(interpolation.syncedTick).toEqual(3);
 		expect(interpolation.tick).toEqual(3);
+		expect(interpolation.totalDuration).toBeCloseTo(30);
+		expect(interpolation.syncedDuration).toBeCloseTo(30);
+		expect(interpolation.remainingDuration).toBeCloseTo(30);
 	});
 
 	it('carries both axes', () => {

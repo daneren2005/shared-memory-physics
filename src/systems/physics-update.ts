@@ -9,6 +9,7 @@ import {
 	INTERPOLATION_PREV_X_INDEX,
 	INTERPOLATION_PREV_Y_INDEX,
 	INTERPOLATION_TICK_INDEX,
+	INTERPOLATION_TOTAL_DURATION_INDEX,
 } from '../components/interpolation-component';
 import { isDying, markDying } from '../components/body-component';
 import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
@@ -460,15 +461,18 @@ function startInterpolationStep(interpolation: Float32Array | undefined, transfo
 		return;
 	}
 
+	// Mark the publication dirty before changing either endpoint. Without this, a reader can take both tick
+	// samples before the final store while still observing some of the new step's ordinary/atomic writes.
+	storeFloat32(interpolation, INTERPOLATION_TICK_INDEX, Number.NaN);
 	interpolation[INTERPOLATION_PREV_X_INDEX] = transform[TRANSFORM_X_INDEX];
 	interpolation[INTERPOLATION_PREV_Y_INDEX] = transform[TRANSFORM_Y_INDEX];
 	interpolation[INTERPOLATION_DURATION_INDEX] = elapsedTime;
+	interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] += elapsedTime;
 }
 
 // The half after the move. Written unconditionally, so an entity pressed against a wall still publishes a step
-// (with `prev` where it is) rather than going quiet and leaving a renderer blending against stale data. The
-// tick goes last through storeFloat32 - a release store, so a reader that sees it also sees the matching `prev`
-// and transform. That is the whole publication protocol; see INTERPOLATION_TICK_INDEX.
+// (with `prev` where it is) rather than going quiet and leaving a renderer blending against stale data. The tick
+// replaces the dirty marker last, so a reader can only accept the matching `prev` and transform.
 function finishInterpolationStep(interpolation: Float32Array | undefined, tick: number): void {
 	if(!interpolation) {
 		return;

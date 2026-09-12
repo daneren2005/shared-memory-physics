@@ -3,11 +3,12 @@ import type { EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { InterpolationComponents, InterpolationUpdateComponents } from '../components/registry';
 import {
 	INTERPOLATION_DURATION_INDEX,
-	INTERPOLATION_PREV_X_INDEX,
-	INTERPOLATION_PREV_Y_INDEX,
 	INTERPOLATION_PROGRESS_INDEX,
+	INTERPOLATION_REMAINING_DURATION_INDEX,
+	INTERPOLATION_SYNCED_DURATION_INDEX,
 	INTERPOLATION_SYNCED_TICK_INDEX,
 	INTERPOLATION_TICK_INDEX,
+	INTERPOLATION_TOTAL_DURATION_INDEX,
 	INTERPOLATION_X_INDEX,
 	INTERPOLATION_Y_INDEX,
 } from '../components/interpolation-component';
@@ -20,22 +21,18 @@ import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-co
 // turning a corner because that is what happened - not guessed forward from velocity and snapped back. The cost
 // is one fixed step of latency, always, in exchange for never being wrong.
 //
-// Two rules cover the pacing: advance by `elapsedTime / duration` of the segment each frame, and restart on the
-// next step when it lands, dropping whatever was left of the old segment. None of it is read off the physics
-// system's accumulator, which resets when a run is posted, not when it lands - different moments on a worker
-// thread, and the source of a stutter whenever a run takes longer than a frame. Instead the segment's `duration`
-// is published with it, so a late run just banks more time and the next segment covers it; a slow run costs
-// latency and nothing else.
+// Physics also publishes cumulative simulated time. Rendering turns newly observed time into one continuous
+// timeline toward the latest transform, so a fast follow-up publication cannot overwrite an unfinished long
+// segment and make the render jump to the follow-up's `prev`.
 export const interpolationUpdate: EntityUpdateFunction<InterpolationComponents, InterpolationUpdateComponents> = (world, entityId, components) => {
 	const interpolation = components.interpolation;
 	const transform = components.transform;
 
-	// The stamp is read on both sides of everything it publishes: physics may be moving this entity on another
-	// thread, and a `prev` from after the move with a transform from before draws it walking backwards.
+	// The stamp is read on both sides of everything it publishes: physics marks it NaN before writing and replaces
+	// that marker afterward. A `prev` from after the move with a transform from before draws it walking backwards.
 	const before = loadFloat32(interpolation, INTERPOLATION_TICK_INDEX);
-	const prevX = interpolation[INTERPOLATION_PREV_X_INDEX];
-	const prevY = interpolation[INTERPOLATION_PREV_Y_INDEX];
 	const duration = interpolation[INTERPOLATION_DURATION_INDEX];
+	const totalDuration = interpolation[INTERPOLATION_TOTAL_DURATION_INDEX];
 	const x = transform[TRANSFORM_X_INDEX];
 	const y = transform[TRANSFORM_Y_INDEX];
 	const after = loadFloat32(interpolation, INTERPOLATION_TICK_INDEX);
@@ -52,6 +49,8 @@ export const interpolationUpdate: EntityUpdateFunction<InterpolationComponents, 
 	if(duration <= 0) {
 		interpolation[INTERPOLATION_PROGRESS_INDEX] = 1;
 		interpolation[INTERPOLATION_SYNCED_TICK_INDEX] = after;
+		interpolation[INTERPOLATION_SYNCED_DURATION_INDEX] = totalDuration;
+		interpolation[INTERPOLATION_REMAINING_DURATION_INDEX] = 0;
 		interpolation[INTERPOLATION_X_INDEX] = x;
 		interpolation[INTERPOLATION_Y_INDEX] = y;
 
@@ -59,10 +58,12 @@ export const interpolationUpdate: EntityUpdateFunction<InterpolationComponents, 
 	}
 
 	let progress = interpolation[INTERPOLATION_PROGRESS_INDEX];
+	let remainingDuration = interpolation[INTERPOLATION_REMAINING_DURATION_INDEX];
 	if(after !== interpolation[INTERPOLATION_SYNCED_TICK_INDEX]) {
-		// A step landed: restart at its beginning, which is where the entity was just drawn anyway (the new
-		// segment's `prev` is the old one's end). Whatever was left undrawn is dropped rather than carried -
-		// carrying it could only be a deficit, which pins the entity at `prev` and never gets paid off.
+		const syncedDuration = interpolation[INTERPOLATION_SYNCED_DURATION_INDEX];
+		const publishedDuration = totalDuration >= syncedDuration ? totalDuration - syncedDuration : duration;
+		remainingDuration += publishedDuration;
+		interpolation[INTERPOLATION_SYNCED_DURATION_INDEX] = totalDuration;
 		progress = 0;
 		interpolation[INTERPOLATION_SYNCED_TICK_INDEX] = after;
 	}
@@ -75,8 +76,20 @@ export const interpolationUpdate: EntityUpdateFunction<InterpolationComponents, 
 	}
 	interpolation[INTERPOLATION_PROGRESS_INDEX] = progress;
 
-	interpolation[INTERPOLATION_X_INDEX] = prevX + (x - prevX) * progress;
-	interpolation[INTERPOLATION_Y_INDEX] = prevY + (y - prevY) * progress;
+	if(remainingDuration <= 0) {
+		interpolation[INTERPOLATION_REMAINING_DURATION_INDEX] = 0;
+		interpolation[INTERPOLATION_X_INDEX] = x;
+		interpolation[INTERPOLATION_Y_INDEX] = y;
+		return;
+	}
+
+	const frameDuration = Math.min(Math.max(world.elapsedTime, 0), remainingDuration);
+	const frameProgress = frameDuration / remainingDuration;
+	const renderX = interpolation[INTERPOLATION_X_INDEX];
+	const renderY = interpolation[INTERPOLATION_Y_INDEX];
+	interpolation[INTERPOLATION_X_INDEX] = renderX + (x - renderX) * frameProgress;
+	interpolation[INTERPOLATION_Y_INDEX] = renderY + (y - renderY) * frameProgress;
+	interpolation[INTERPOLATION_REMAINING_DURATION_INDEX] = remainingDuration - frameDuration;
 };
 
 export default interpolationUpdate;

@@ -328,12 +328,11 @@ frame instead, by blending between the two positions physics published either si
 render = prev + (current - prev) * alpha
 ```
 
-Every position it writes is therefore one the simulation actually produced - somewhere on the segment between
-two real ones, never a guess past the end of one. There is nothing to tune and no case where it draws something
-that did not happen: an entity that stopped against a wall is drawn easing into the wall and stopping, and one
-that turned a corner is drawn turning the corner rather than carrying on into its old heading for a frame and
-being snapped back. The cost is **one step of latency, always** - what is on screen is where the world was a
-step ago.
+Normally every position it writes lies on the latest simulation segment. If worker scheduling lets several
+publications overtake rendering, it coalesces the unfinished path from the current render position to the latest
+transform while preserving all published simulated time. That can cut across intermediate turns whose segments
+were overwritten, but it never extrapolates past the simulation and never teleports to a replacement segment's
+start. The cost is at least one step of latency - plus any time the worker itself falls behind.
 
 ```ts
 import { InterpolationSystem, PhysicsSystem } from '@daneren2005/shared-memory-physics';
@@ -346,7 +345,9 @@ world.loadEntity({ x: 0, y: 0, width: 10, height: 10, velocityX: 100, interpolat
 
 It takes no configuration and is not wired to the physics system. Everything it needs - the two positions, how
 much simulated time lies between them, and whether that pair is new - is published into the block by whichever
-run wrote it, so a game that retunes `deltaBetweenRuns` mid-flight is followed with nothing told to this system.
+run wrote it. Physics marks that publication dirty before changing either endpoint and stamps it complete only
+after both are ready, so rendering holds its previous position for a frame if it catches the worker mid-write.
+A game that retunes `deltaBetweenRuns` mid-flight is followed with nothing told to this system.
 
 Then draw from `interpolation` instead of `transform`, keeping the size and facing where they have always been:
 
@@ -381,9 +382,10 @@ the accumulator says "0.3 of the way into the new step" while the block still ho
 entity is drawn 0.3 along a segment it was drawn 0.96 along last frame. Backwards, then a lurch forward, on
 every step.
 
-For the same reason each run publishes **how much simulated time it covered** rather than that being assumed to
-be the step: a run that comes back late leaves more than a step's worth banked, and the next one covers two at
-once. Dividing that segment by the step would draw it at double speed.
+For the same reason physics publishes both **how much simulated time the latest run covered** and a cumulative
+total. A run that comes back late can cover several steps, then be replaced by a normal step before rendering has
+finished drawing it. Interpolation takes the difference in cumulative time and adds it to its remaining render
+timeline, so no overwritten duration turns into a forward jump.
 
 Ordering against the physics system is only a preference - after it means a step is picked up on the frame it
 happened rather than the one after, which is one frame of latency and nothing else.
@@ -480,7 +482,7 @@ spot, as above.
 
 ### The cost
 
-32 bytes per interpolated entity, three extra writes per entity per physics step, and a per-frame pass of one
+44 bytes per interpolated entity, four extra writes per entity per physics step, and a per-frame pass of one
 lerp per entity on the main thread - order 0.2ms at 10,000 entities. An entity without the component pays
 nothing at all. `forceMainThread: false` plus a `getWorker` moves the pass to a worker for worlds large enough
 that it shows up in a profile, at the price of the render position being one frame stale; because consumers only

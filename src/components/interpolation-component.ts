@@ -26,6 +26,9 @@ export interface InterpolationComponent {
 	syncedTick: number
 	duration: number
 	tick: number
+	totalDuration: number
+	syncedDuration: number
+	remainingDuration: number
 }
 
 // `interpolate` gives an entity this component, opt-in rather than automatic because it is 20 bytes and a
@@ -43,22 +46,26 @@ export const INTERPOLATION_X_INDEX = 0;
 export const INTERPOLATION_Y_INDEX = 1;
 export const INTERPOLATION_PREV_X_INDEX = 2;
 export const INTERPOLATION_PREV_Y_INDEX = 3;
-// How far along the current segment has been drawn: 0 at `prev`, 1 at the transform. A fraction, not
-// milliseconds, so leftover carries onto the next segment without remembering the old segment's length (segments
-// vary - see INTERPOLATION_DURATION_INDEX). Written only by the interpolation system.
+// How far through the latest segment's own duration the renderer is. Position pacing additionally uses the
+// cumulative/remaining duration fields below, since the latest segment can replace an older unfinished one.
 export const INTERPOLATION_PROGRESS_INDEX = 4;
 // The step the interpolation system last reconciled against, to tell an already-started step from a new one.
 export const INTERPOLATION_SYNCED_TICK_INDEX = 5;
-// How much simulated time this segment covers, in ms - the run's `elapsedTime`. Nearly always the step, but not
-// assumed to be: a late run banks more than a step and the next covers two, and dividing by the fixed step
-// would draw that at double speed. Written by the physics update.
+// How much simulated time the latest segment covers, in ms - the run's `elapsedTime`. Written by physics.
 export const INTERPOLATION_DURATION_INDEX = 6;
-// The physics step this block's `prev` belongs to, written last with a release store. A publication stamp: a
-// reader seeing the same tick on both sides of its own reads knows the `prev` and transform belong together,
-// and would otherwise draw the entity moving backwards. Also the arrival signal, which is why pacing lives here
-// rather than in the physics accumulator: that resets when a run is posted, this changes when it lands.
+// The physics step this block's `prev` belongs to. Physics atomically writes NaN before changing the segment and
+// the tick after finishing it. A reader accepts only equal non-NaN samples around its reads, or it could combine
+// endpoints from different steps and draw the entity moving backwards. Also the arrival signal, which is why
+// pacing lives here rather than in the physics accumulator: that resets when a run is posted, this changes when
+// it lands.
 export const INTERPOLATION_TICK_INDEX = 7;
-export const INTERPOLATION_SIZE = 8;
+// Cumulative simulated time published by physics. Unlike the latest segment duration, this cannot lose a long
+// run when a second publication replaces it before rendering gets a frame.
+export const INTERPOLATION_TOTAL_DURATION_INDEX = 8;
+// Consumer-owned bookkeeping for how much of the cumulative duration has entered the render timeline.
+export const INTERPOLATION_SYNCED_DURATION_INDEX = 9;
+export const INTERPOLATION_REMAINING_DURATION_INDEX = 10;
+export const INTERPOLATION_SIZE = 11;
 
 class InterpolationComponentImpl extends Component<Float32Array> implements InterpolationComponent {
 	get x() {
@@ -111,6 +118,24 @@ class InterpolationComponentImpl extends Component<Float32Array> implements Inte
 	set tick(value: number) {
 		storeFloat32(this.block, INTERPOLATION_TICK_INDEX, value);
 	}
+	get totalDuration() {
+		return this.block[INTERPOLATION_TOTAL_DURATION_INDEX];
+	}
+	set totalDuration(value: number) {
+		this.block[INTERPOLATION_TOTAL_DURATION_INDEX] = value;
+	}
+	get syncedDuration() {
+		return this.block[INTERPOLATION_SYNCED_DURATION_INDEX];
+	}
+	set syncedDuration(value: number) {
+		this.block[INTERPOLATION_SYNCED_DURATION_INDEX] = value;
+	}
+	get remainingDuration() {
+		return this.block[INTERPOLATION_REMAINING_DURATION_INDEX];
+	}
+	set remainingDuration(value: number) {
+		this.block[INTERPOLATION_REMAINING_DURATION_INDEX] = value;
+	}
 }
 
 export const interpolationDefinition: ComponentDefinition<InterpolationComponent, Float32Array, InterpolationConfig> = {
@@ -123,7 +148,7 @@ export const interpolationDefinition: ComponentDefinition<InterpolationComponent
 		// Spawn position on both sides of the blend, pacing at rest, so an entity added between steps is drawn
 		// standing still. PhysicsSystem's first run stamps tick 1, so the 0 here reads as a new step to reconcile.
 		// Duration 0 means "no segment yet", drawing the entity at its transform - as for anything never moved.
-		return [x, y, x, y, 0, 0, 0, 0];
+		return [x, y, x, y, 0, 0, 0, 0, 0, 0, 0];
 	},
 	attach(entity, memory, index) {
 		return new InterpolationComponentImpl(memory.getBlock(index), index);
@@ -152,6 +177,8 @@ export function snapEntity(entity: SnappableEntity): void {
 
 	interpolation.prevX = interpolation.x = transform.x;
 	interpolation.prevY = interpolation.y = transform.y;
+	interpolation.remainingDuration = 0;
+	interpolation.syncedDuration = interpolation.totalDuration;
 }
 
 // Anything `startSpawnInterpolation` reads: a transform and velocity to build the segment from, and the
@@ -222,6 +249,9 @@ export function startSpawnInterpolation(entity: SpawnableEntity, options: SpawnI
 	interpolation.duration = options.stepMs * remaining;
 	interpolation.progress = 0;
 	interpolation.syncedTick = options.tick;
+	interpolation.totalDuration += interpolation.duration;
+	interpolation.syncedDuration = interpolation.totalDuration;
+	interpolation.remainingDuration = interpolation.duration;
 	// Last, through the release store, so a reader that sees this stamp also sees the prev and progress above.
 	interpolation.tick = options.tick;
 }

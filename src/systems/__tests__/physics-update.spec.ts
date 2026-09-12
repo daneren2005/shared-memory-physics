@@ -1,6 +1,7 @@
 import physicsUpdate, { createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { EntityWorkerSystemCallbacks } from '@daneren2005/shared-memory-ecs';
+import { loadFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
 import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
 import {
@@ -16,6 +17,11 @@ import {
 	DYNAMICS_INVERSE_MASS_INDEX,
 	DYNAMICS_SIZE,
 } from '../../components/dynamics-component';
+import {
+	INTERPOLATION_PREV_X_INDEX,
+	INTERPOLATION_SIZE,
+	INTERPOLATION_TICK_INDEX,
+} from '../../components/interpolation-component';
 
 // Drives the update against raw blocks with no world or system, pinning down the integration math itself;
 // physics-system.spec.ts covers the same end to end.
@@ -161,6 +167,37 @@ describe('physics-update', () => {
 	it('keeps each axis independent', () => {
 		expect(move([0, 0], [5, 0], 1000)).toEqual([5, 0]);
 		expect(move([0, 0], [0, 5], 1000)).toEqual([0, 5]);
+	});
+
+	it('marks interpolation dirty before changing a published segment', () => {
+		const transform = new Float32Array(TRANSFORM_SIZE);
+		const velocity = new Float32Array(VELOCITY_SIZE);
+		velocity[VELOCITY_X_INDEX] = 10;
+		const interpolationBlock = new Float32Array(new SharedArrayBuffer(INTERPOLATION_SIZE * Float32Array.BYTES_PER_ELEMENT));
+		let dirtyBeforeSegmentWrite = false;
+		const interpolation = new Proxy(interpolationBlock, {
+			get(target, property) {
+				return Reflect.get(target, property, target);
+			},
+			set(target, property, value) {
+				if(property === String(INTERPOLATION_PREV_X_INDEX)) {
+					dirtyBeforeSegmentWrite = Number.isNaN(loadFloat32(target, INTERPOLATION_TICK_INDEX));
+				}
+
+				return Reflect.set(target, property, value, target);
+			},
+		});
+
+		physicsUpdate(
+			{ gameTime: 0, elapsedTime: 50, tick: 2, getString: () => '' },
+			1,
+			{ transform, velocity, interpolation },
+			{},
+			callbacks,
+		);
+
+		expect(dirtyBeforeSegmentWrite).toBe(true);
+		expect(loadFloat32(interpolationBlock, INTERPOLATION_TICK_INDEX)).toBe(2);
 	});
 
 	it('integrates acceleration into velocity before moving', () => {

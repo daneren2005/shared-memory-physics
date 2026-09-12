@@ -3,12 +3,12 @@ import type { EntityWorkerSystemCallbacks, EntityWorkerSystemWorld } from '@dane
 import interpolationUpdate from '../interpolation-update';
 import {
 	INTERPOLATION_DURATION_INDEX,
-	INTERPOLATION_PROGRESS_INDEX,
 	INTERPOLATION_PREV_X_INDEX,
 	INTERPOLATION_PREV_Y_INDEX,
 	INTERPOLATION_SIZE,
 	INTERPOLATION_SYNCED_TICK_INDEX,
 	INTERPOLATION_TICK_INDEX,
+	INTERPOLATION_TOTAL_DURATION_INDEX,
 	INTERPOLATION_X_INDEX,
 	INTERPOLATION_Y_INDEX,
 } from '../../components/interpolation-component';
@@ -32,10 +32,13 @@ function createEntity(prev: [number, number], current: [number, number], duratio
 	transform[TRANSFORM_Y_INDEX] = current[1];
 
 	const interpolation = new Float32Array(INTERPOLATION_SIZE);
+	interpolation[INTERPOLATION_X_INDEX] = prev[0];
+	interpolation[INTERPOLATION_Y_INDEX] = prev[1];
 	interpolation[INTERPOLATION_PREV_X_INDEX] = prev[0];
 	interpolation[INTERPOLATION_PREV_Y_INDEX] = prev[1];
 	interpolation[INTERPOLATION_DURATION_INDEX] = duration;
-	interpolation[INTERPOLATION_SYNCED_TICK_INDEX] = 1;
+	interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] = duration;
+	interpolation[INTERPOLATION_SYNCED_TICK_INDEX] = 0;
 	storeFloat32(interpolation, INTERPOLATION_TICK_INDEX, 1);
 
 	return { transform, interpolation };
@@ -46,8 +49,8 @@ function createEntity(prev: [number, number], current: [number, number], duratio
 describe('interpolation-update', () => {
 	// Sets a known progress and runs a zero-elapsed frame, so the result is the blend at exactly that alpha.
 	function renderAt(components: { transform: Float32Array, interpolation: Float32Array }, alpha: number): [number, number] {
-		components.interpolation[INTERPOLATION_PROGRESS_INDEX] = alpha;
-		const world: EntityWorkerSystemWorld = { gameTime: 0, elapsedTime: 0, getString: () => '' };
+		const elapsedTime = components.interpolation[INTERPOLATION_DURATION_INDEX] * alpha;
+		const world: EntityWorkerSystemWorld = { gameTime: 0, elapsedTime, getString: () => '' };
 		interpolationUpdate(world, 1, components, {}, callbacks);
 
 		return [
@@ -80,9 +83,8 @@ describe('interpolation-update', () => {
 
 	// The whole guarantee of blending: nothing is drawn past where the simulation put the entity.
 	it('never draws a position past the end of the step', () => {
-		const components = createEntity([0, 0], [10, 0]);
 		for(const alpha of [0, 0.1, 0.33, 0.5, 0.9, 1]) {
-			const [x] = renderAt(components, alpha);
+			const [x] = renderAt(createEntity([0, 0], [10, 0]), alpha);
 			expect(x).toBeGreaterThanOrEqual(0);
 			expect(x).toBeLessThanOrEqual(10);
 		}
@@ -114,6 +116,16 @@ describe('interpolation-update', () => {
 	// Physics writes `prev` and the transform on another thread while this reads both, so a read can catch one
 	// end from the new step and the other from the old.
 	describe('a torn read', () => {
+		it('holds while physics is publishing a new segment', () => {
+			const components = createEntity([0, 0], [10, 20]);
+			components.interpolation[INTERPOLATION_X_INDEX] = 3;
+			components.interpolation[INTERPOLATION_Y_INDEX] = 6;
+			storeFloat32(components.interpolation, INTERPOLATION_TICK_INDEX, Number.NaN);
+			components.interpolation[INTERPOLATION_PREV_X_INDEX] = 10;
+
+			expect(renderAt(components, 0.5)).toEqual([3, 6]);
+		});
+
 		// The next step lands between the `prev` this update has taken and the transform it is about to, hooked off
 		// the transform read - the race the stamp on either side of these reads exists to catch.
 		function createTearing(prev: [number, number], current: [number, number]) {
@@ -183,6 +195,7 @@ function simulate(lag: number, frames = 60, frameLength = FRAME, lagFor: (tick: 
 			const run = inFlight.shift()!;
 			interpolation[INTERPOLATION_PREV_X_INDEX] = transform[TRANSFORM_X_INDEX];
 			interpolation[INTERPOLATION_DURATION_INDEX] = run.covers;
+			interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] += run.covers;
 			transform[TRANSFORM_X_INDEX] += run.distance;
 			storeFloat32(interpolation, INTERPOLATION_TICK_INDEX, ++tick);
 		}
@@ -326,5 +339,17 @@ describe('interpolation-update pacing', () => {
 		const last = drawn.length - 1;
 		expect(simulated[last] - drawn[last]).toBeGreaterThanOrEqual(0);
 		expect(simulated[last] - drawn[last]).toBeLessThanOrEqual(SPEED * STEP / 1000 + 1e-4);
+	});
+
+	it('keeps unfinished duration when a follow-up step replaces a late segment', () => {
+		const { drawn } = simulate(0, 180, FRAME, tick => tick === 3 ? 500 : 0);
+		const moves = perFrameMovement(drawn);
+
+		// The renderer may wait at the last known transform while the worker is late, but it must resume at the
+		// simulated speed instead of jumping across the late segment when the following publication replaces it.
+		for(const move of moves) {
+			expect(move).toBeGreaterThanOrEqual(0);
+			expect(move).toBeLessThanOrEqual(PER_FRAME + 1e-4);
+		}
 	});
 });
