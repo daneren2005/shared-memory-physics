@@ -1,6 +1,6 @@
 import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
 import type { EntityWorkerSystemCallbacks, EntityWorkerSystemWorld } from '@daneren2005/shared-memory-ecs';
-import interpolationUpdate from '../interpolation-update';
+import interpolationUpdate, { BACKLOG_CATCHUP_RATE, BACKLOG_TARGET_STEPS } from '../interpolation-update';
 import {
 	INTERPOLATION_DURATION_INDEX,
 	INTERPOLATION_PREV_X_INDEX,
@@ -341,15 +341,36 @@ describe('interpolation-update pacing', () => {
 		expect(simulated[last] - drawn[last]).toBeLessThanOrEqual(SPEED * STEP / 1000 + 1e-4);
 	});
 
-	it('keeps unfinished duration when a follow-up step replaces a late segment', () => {
-		const { drawn } = simulate(0, 180, FRAME, tick => tick === 3 ? 500 : 0);
+	it('drains a backlog instead of trailing forever when physics publishes every frame', () => {
+		// High timeScale: a step lands every frame (frame 60ms > step 50ms). A one-off slow run banks a backlog that
+		// the matched produce/consume rate would otherwise pin the render behind by for the rest of the run. It must
+		// ease back to the promised near-one-step latency instead.
+		const { drawn, simulated } = simulate(0, 200, 60, tick => tick === 4 ? 300 : 0);
+		const last = drawn.length - 1;
+		const settledLag = simulated[last] - drawn[last];
+		// Back within ~two steps, not the ~three steps the banked spike would have trailed by forever.
+		expect(settledLag).toBeLessThanOrEqual(SPEED * STEP * 2 / 1000 + 1e-4);
+		// It got there by easing off, never running backwards.
+		for(let i = 1; i < drawn.length; i++) {
+			expect(drawn[i]).toBeGreaterThanOrEqual(drawn[i - 1]);
+			expect(drawn[i]).toBeLessThanOrEqual(simulated[i]);
+		}
+	});
+
+	it('eases across a late segment and recovers instead of jumping or trailing forever', () => {
+		const { drawn, simulated } = simulate(0, 180, FRAME, tick => tick === 3 ? 500 : 0);
 		const moves = perFrameMovement(drawn);
 
-		// The renderer may wait at the last known transform while the worker is late, but it must resume at the
-		// simulated speed instead of jumping across the late segment when the following publication replaces it.
+		// The renderer waits at the last known transform while the worker is late, then eases back across the banked
+		// segment: it may run a little faster than the simulation to catch up, but never jumps across the segment (a
+		// whole step in a frame) and never runs backwards.
 		for(const move of moves) {
 			expect(move).toBeGreaterThanOrEqual(0);
-			expect(move).toBeLessThanOrEqual(PER_FRAME + 1e-4);
+			expect(move).toBeLessThanOrEqual(PER_FRAME * (1 + BACKLOG_CATCHUP_RATE) + 1e-4);
 		}
+
+		// And it does catch back up, rather than trailing the simulation by the banked segment forever.
+		const last = drawn.length - 1;
+		expect(simulated[last] - drawn[last]).toBeLessThanOrEqual(SPEED * STEP * BACKLOG_TARGET_STEPS / 1000 + 1e-4);
 	});
 });

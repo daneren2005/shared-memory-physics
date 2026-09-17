@@ -14,6 +14,14 @@ import {
 } from '../components/interpolation-component';
 import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
 
+// The render trails the simulation by a bounded backlog. Up to this many steps is the ordinary one-step latency
+// plus headroom for a normal multi-step handover, left to drain on its own. Past it, the excess is a persistent
+// trail (a one-off slow run that never drains when physics publishes every frame) and is eased off.
+export const BACKLOG_TARGET_STEPS = 1.5;
+// How much of a frame's budget the ease-off may spend on top of the frame itself, so catching up reads as a
+// gentle speed-up rather than a jump across the banked segment.
+export const BACKLOG_CATCHUP_RATE = 0.5;
+
 // Walks the render position along the segment between where the entity was before the last physics step and
 // where it is after it: `render = prev + (current - prev) * progress`.
 //
@@ -83,7 +91,17 @@ export const interpolationUpdate: EntityUpdateFunction<InterpolationComponents, 
 		return;
 	}
 
-	const frameDuration = Math.min(Math.max(world.elapsedTime, 0), remainingDuration);
+	let frameDuration = Math.min(Math.max(world.elapsedTime, 0), remainingDuration);
+	// Ease off a persistent backlog. Once physics publishes every frame (high timeScale, a step lands per frame)
+	// the budget added per frame matches the budget spent, so a backlog banked by a one-off slow run would never
+	// drain on its own - the render would trail the simulation by it forever. Spend a little extra on the part of
+	// the backlog beyond one step of latency, bounded so the render eases back rather than jumping across it. Below
+	// the target this never fires, leaving normal one-step-latency pacing exactly as it was.
+	const targetBacklog = duration * BACKLOG_TARGET_STEPS;
+	const backlogAfterFrame = remainingDuration - frameDuration;
+	if(backlogAfterFrame > targetBacklog) {
+		frameDuration += Math.min(backlogAfterFrame - targetBacklog, frameDuration * BACKLOG_CATCHUP_RATE);
+	}
 	const frameProgress = frameDuration / remainingDuration;
 	const renderX = interpolation[INTERPOLATION_X_INDEX];
 	const renderY = interpolation[INTERPOLATION_Y_INDEX];
