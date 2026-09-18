@@ -1,10 +1,10 @@
-import bodyDefinition, { type BodyComponent } from './body-component';
-import bouncinessDefinition, { type BouncinessComponent } from './bounciness-component';
-import dynamicsDefinition, { type DynamicsComponent } from './dynamics-component';
-import interpolationDefinition, { type InterpolationComponent } from './interpolation-component';
-import polygonDefinition, { type PolygonComponent } from './polygon-component';
-import transformDefinition, { type TransformComponent } from './transform-component';
-import velocityDefinition, { type VelocityComponent } from './velocity-component';
+import { bodyDefinition, type BodyComponent } from './body-component';
+import { bouncinessDefinition, type BouncinessComponent } from './bounciness-component';
+import { dynamicsDefinition, type DynamicsComponent } from './dynamics-component';
+import { interpolationDefinition, type InterpolationComponent } from './interpolation-component';
+import { polygonDefinition, type PolygonComponent } from './polygon-component';
+import { transformDefinition, type TransformComponent } from './transform-component';
+import { velocityDefinition, type VelocityComponent } from './velocity-component';
 
 // The component definitions this library supplies. A game spreads them into its own registry:
 //

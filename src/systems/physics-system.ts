@@ -2,7 +2,7 @@ import { EntityWorkerSystem } from '@daneren2005/shared-memory-ecs';
 import type { BaseEntity, BaseWorld, ComponentDefinitionMap, ComponentMap, EntityWorkerSystemQuery, EntityUpdateComponents, EntityUpdateFunction, SystemConfig } from '@daneren2005/shared-memory-ecs';
 import { startSpawnInterpolation, type SpawnableEntity } from '../components/interpolation-component';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
-import physicsUpdate, { POSITION_UPDATED_EVENT, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
+import { physicsUpdate, POSITION_UPDATED_EVENT, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
 import { COLLIDABLE_QUERY } from './collision';
 import { addPhysicalWorldData, type PhysicalWorldSource } from '../world';
 import {

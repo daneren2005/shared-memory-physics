@@ -1,4 +1,4 @@
-import physicsUpdate, { createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
+import { physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { EntityWorkerSystemCallbacks } from '@daneren2005/shared-memory-ecs';
 import { loadFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';

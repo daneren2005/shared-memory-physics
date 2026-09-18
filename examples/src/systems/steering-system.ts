@@ -2,7 +2,7 @@ import { EntityWorkerSystem } from '@daneren2005/shared-memory-ecs';
 import type { BaseWorld, ComponentDefinitionMap, EntityUpdateComponents, SystemConfig } from '@daneren2005/shared-memory-ecs';
 import { DEFAULT_PHYSICS_STEP_MS } from '@daneren2005/shared-memory-physics';
 import type { Components } from '../world';
-import steeringUpdate from './steering-update';
+import { steeringUpdate } from './steering-update';
 import type { SteeringBounds, SteeringParams, SteeringUpdateComponents, SteeringWorld } from './steering-update';
 
 export interface SteeringSystemConfig extends Partial<SystemConfig> {

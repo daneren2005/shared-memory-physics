@@ -3,7 +3,7 @@ import PhysicsSystem from '../physics-system';
 import InterpolationSystem from '../interpolation-system';
 import { snapEntity } from '../../components/interpolation-component';
 import { createTestWorld, type Components, type Config, type TestWorld } from '../../__tests__/fixtures/world';
-import collisionUpdate, { type CollisionUpdateComponents } from '../../__tests__/fixtures/collision-update';
+import { collisionUpdate, type CollisionUpdateComponents } from '../../__tests__/fixtures/collision-update';
 
 const PHYSICS_WORKER_URL = new URL('../../__tests__/fixtures/physics.worker.ts', import.meta.url);
 const COLLISION_WORKER_URL = new URL('../../__tests__/fixtures/collision.worker.ts', import.meta.url);
