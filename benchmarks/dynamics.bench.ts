@@ -1,4 +1,4 @@
-import { bench, describe } from 'vitest';
+import { expect, test } from 'vitest';
 import {
 	DYNAMICS_ACCELERATION_X_INDEX,
 	DYNAMICS_ACCELERATION_Y_INDEX,
@@ -40,45 +40,48 @@ for(let entityId = 0; entityId < ENTITY_COUNT; entityId++) {
 }
 const flatCommandWorld: DynamicsWorld = { elapsedTime: STEP_MS, dynamicsCommands: flatCommands };
 
-describe('dynamics integration', () => {
-	bench('10k movers without dynamics or commands', () => {
-		for(let entityId = 0; entityId < ENTITY_COUNT; entityId++) {
-			integrateDynamics(noCommands, entityId, noDynamicsVelocity);
-		}
+test('dynamics integration', async ({ bench }) => {
+	const result = await bench.compare(
+		bench('10k movers without dynamics or commands', () => {
+			for(let entityId = 0; entityId < ENTITY_COUNT; entityId++) {
+				integrateDynamics(noCommands, entityId, noDynamicsVelocity);
+			}
 
-		void noDynamicsVelocity[0];
-	});
+			void noDynamicsVelocity[0];
+		}),
+		bench('10k movers with persistent dynamics', () => {
+			for(let entityId = 0; entityId < ENTITY_COUNT; entityId++) {
+				integrateDynamics(dynamicsWorld, entityId, dynamicsVelocity, dynamics);
+			}
 
-	bench('10k movers with persistent dynamics', () => {
-		for(let entityId = 0; entityId < ENTITY_COUNT; entityId++) {
-			integrateDynamics(dynamicsWorld, entityId, dynamicsVelocity, dynamics);
-		}
+			void dynamicsVelocity[0];
+		}),
+		bench('10k movers with record commands', () => {
+			for(let entityId = 0; entityId < ENTITY_COUNT; entityId++) {
+				integrateDynamics(commandWorld, entityId, recordCommandVelocity);
+			}
 
-		void dynamicsVelocity[0];
-	});
+			void recordCommandVelocity[0];
+		}),
+		bench('10k movers with flat commands', () => {
+			for(let entityId = 0; entityId < ENTITY_COUNT; entityId++) {
+				integrateDynamics(flatCommandWorld, entityId, flatCommandVelocity);
+			}
 
-	bench('10k movers with record commands', () => {
-		for(let entityId = 0; entityId < ENTITY_COUNT; entityId++) {
-			integrateDynamics(commandWorld, entityId, recordCommandVelocity);
-		}
-
-		void recordCommandVelocity[0];
-	});
-
-	bench('10k movers with flat commands', () => {
-		for(let entityId = 0; entityId < ENTITY_COUNT; entityId++) {
-			integrateDynamics(flatCommandWorld, entityId, flatCommandVelocity);
-		}
-
-		void flatCommandVelocity[0];
-	});
+			void flatCommandVelocity[0];
+		}),
+	);
+	expect(result.get('10k movers without dynamics or commands')).toBeDefined();
 });
 
-describe('command transport', () => {
-	bench('structured-clone 10k records', () => {
-		void structuredClone(commands);
-	});
-	bench('structured-clone 10k flat values', () => {
-		void structuredClone(flatCommands);
-	});
+test('command transport', async ({ bench }) => {
+	const result = await bench.compare(
+		bench('structured-clone 10k records', () => {
+			void structuredClone(commands);
+		}),
+		bench('structured-clone 10k flat values', () => {
+			void structuredClone(flatCommands);
+		}),
+	);
+	expect(result.get('structured-clone 10k records')).toBeDefined();
 });
