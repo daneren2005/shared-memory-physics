@@ -1,6 +1,6 @@
 import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
 import type { EntityWorkerSystemCallbacks, EntityWorkerSystemWorld } from '@daneren2005/shared-memory-ecs';
-import interpolationUpdate, { BACKLOG_CATCHUP_RATE, BACKLOG_TARGET_STEPS } from '../interpolation-update';
+import { interpolationUpdate, BACKLOG_CATCHUP_RATE, BACKLOG_TARGET_STEPS } from '../interpolation-update';
 import {
 	INTERPOLATION_DURATION_INDEX,
 	INTERPOLATION_PREV_X_INDEX,

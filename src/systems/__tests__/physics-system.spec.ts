@@ -3,7 +3,7 @@ import { createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import { createTestWorld, type Components, type Config, type TestWorld } from '../../__tests__/fixtures/world';
 import { SHAPE_CAPSULE } from '../../components/body-component';
-import collisionUpdate, {
+import { collisionUpdate,
 	type CollisionUpdateComponents,
 	COMMAND_VELOCITY_CATEGORY,
 	OTHER_DAMAGE,

@@ -1,7 +1,7 @@
 import { EntityWorkerSystem } from '@daneren2005/shared-memory-ecs';
 import type { BaseWorld, ComponentDefinitionMap, ComponentMap, EntityUpdateComponents, SystemConfig } from '@daneren2005/shared-memory-ecs';
 import type { InterpolationComponents, InterpolationUpdateComponents } from '../components/registry';
-import interpolationUpdate from './interpolation-update';
+import { interpolationUpdate } from './interpolation-update';
 
 export interface InterpolationSystemConfig extends Partial<SystemConfig> {
 	// Defaulted the opposite way to PhysicsSystem - main thread unless asked otherwise - since a render position
