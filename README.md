@@ -21,7 +21,7 @@ npm install @daneren2005/shared-memory-physics @daneren2005/shared-memory-ecs @d
 | `dynamics`      | -                                            | `accelerationX?`, `accelerationY?`, `mass?` | `Float32Array` - acceleration and inverse mass |
 | `transform`     | `width`, `height`, `angle?` / `radius`       | `x`, `y`, `angle`          | `Float32Array` – where, how big, facing        |
 | `velocity`      | –                                            | `velocityX?`, `velocityY?`, `damping?` | `Float32Array` – world units per second        |
-| `body`          | `shape?`, `collideCategory?`, `collideMask?`, `sensor?`, `continuousCollisionDetection?` | –                          | `Uint32Array` – what shape, what collides with |
+| `body`          | `shape?`, `collideCategory?`, `collideMask?`, `sensor?`, `continuousCollisionDetection?`, `blocksPath?` | –                          | `Uint32Array` – what shape, what collides with |
 | `interpolation` | `interpolate`                                | –                          | `Float32Array` – where to *draw* it            |
 
 Entity configs are flat and shared across every component, so velocity is keyed as `velocityX` / `velocityY`
@@ -78,6 +78,11 @@ everything with a place in the world collides with everything else until you say
 defining config out of your own template, which is why `save` returns nothing for it: a reloaded entity gets
 its shape and categories back from the template rather than from the save. See
 [Body shapes](#body-shapes) for `shape` and [Collision filtering](#collision-filtering) for the other two.
+
+`blocksPath` marks a body as something pathfinding should route around - a wall or a building rather than another
+mover. The physics never reads it; it is a flag in the same packed word for a game's own navigation to query
+(`body.blocksPath`, or `blocksPath(block)` off a raw block). It defaults to `false`, and a body carrying it is
+assumed never to move, so a navigation structure can be updated only when such bodies are added or removed.
 
 ## Body shapes
 

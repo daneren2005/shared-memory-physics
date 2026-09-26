@@ -1,7 +1,7 @@
 import { createTestWorld, type TestWorld } from '../../__tests__/fixtures/world';
 import {
 	BODY_CATEGORY_INDEX, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SHAPE_MASK,
-	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE,
+	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE, blocksPath,
 } from '../body-component';
 import { MAX_POLYGON_VERTICES } from '../polygon-component';
 import {
@@ -254,6 +254,32 @@ describe('components', () => {
 			expect(continuous.components.body?.continuousCollisionDetection).toEqual(true);
 		});
 
+		it('does not block paths by default and takes the flag when asked', () => {
+			expect(world.loadEntity({ x: 0, y: 0, width: 8, height: 4 }).components.body?.blocksPath).toEqual(false);
+
+			const wall = world.loadEntity({ x: 0, y: 0, width: 8, height: 4, blocksPath: true, sensor: true, shape: SHAPE_CAPSULE });
+			expect(wall.components.body?.blocksPath).toEqual(true);
+			// Packed beside the other flags without disturbing them.
+			expect(wall.components.body?.sensor).toEqual(true);
+			expect(wall.components.body?.shape).toEqual(SHAPE_CAPSULE);
+			const block = world.registry.body.memoryComponent.getBlock(wall.components.body!.index);
+			expect(block instanceof Uint32Array && blocksPath(block)).toEqual(true);
+		});
+
+		it('toggles blocksPath through the accessor without touching the other flags', () => {
+			const entity = world.loadEntity({ x: 0, y: 0, width: 8, height: 4, sensor: true });
+			const body = entity.components.body!;
+
+			body.blocksPath = true;
+			expect(body.blocksPath).toEqual(true);
+			expect(body.sensor).toEqual(true);
+
+			body.blocksPath = false;
+			expect(body.blocksPath).toEqual(false);
+			expect(body.sensor).toEqual(true);
+			expect(body.shape).toEqual(SHAPE_RECTANGLE);
+		});
+
 		it('holds a full 32 bit mask', () => {
 			// Every bit set does not fit a signed int, but the Uint32Array block round-trips it.
 			const entity = world.loadEntity({ x: 0, y: 0, width: 1, height: 1, collideMask: 0xFFFFFFFF });
@@ -308,11 +334,12 @@ describe('components', () => {
 		});
 
 		it('saves nothing, since what it holds comes back from the game\'s own template', () => {
-			const entity = world.loadEntity({ x: 1, y: 2, width: 3, height: 4, collideCategory: 8 });
+			const entity = world.loadEntity({ x: 1, y: 2, width: 3, height: 4, collideCategory: 8, blocksPath: true });
 
 			expect(entity.save()).not.toHaveProperty('collideCategory');
 			expect(entity.save()).not.toHaveProperty('collideMask');
 			expect(entity.save()).not.toHaveProperty('shape');
+			expect(entity.save()).not.toHaveProperty('blocksPath');
 		});
 	});
 

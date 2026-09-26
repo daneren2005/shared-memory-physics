@@ -15,6 +15,8 @@ export interface BodyComponent {
 	sensor: boolean
 	// When set, this body's own move is tested along its whole path this run rather than only where it ends.
 	continuousCollisionDetection: boolean
+	// A hint for pathfinding to route around this body. Physics never reads it; it assumes the body never moves.
+	blocksPath: boolean
 }
 
 // The shapes a body can be, all held in the same transform (position, width, height, angle):
@@ -62,6 +64,8 @@ export interface BodyConfig {
 	// Makes the body a sensor: found and reported, but never blocking or bounced off. Defaults to solid.
 	sensor?: boolean
 	continuousCollisionDetection?: boolean
+	// Marks the body as something pathfinding routes around. Defaults to false.
+	blocksPath?: boolean
 }
 
 // Indexes into the backing Uint32Array block, exported because the broadphase reads the same offsets off the
@@ -82,6 +86,7 @@ export const BODY_CCD_FLAG = 0b10000;
 // sees it and it survives to the next run, which is what defers the kill by a step. A dying body is left out of
 // collision and killed at the top of its next update.
 export const BODY_DYING_FLAG = 0b100000;
+export const BODY_BLOCKS_PATH_FLAG = 0b1000000;
 
 // Readers off a raw body block, exported so the broadphase, bounce and game systems unpack the flags the same way.
 export function bodyShape(body: Uint32Array): number {
@@ -92,6 +97,9 @@ export function isSensor(body: Uint32Array): boolean {
 }
 export function isContinuous(body: Uint32Array): boolean {
 	return (body[BODY_FLAGS_INDEX] & BODY_CCD_FLAG) !== 0;
+}
+export function blocksPath(body: Uint32Array): boolean {
+	return (body[BODY_FLAGS_INDEX] & BODY_BLOCKS_PATH_FLAG) !== 0;
 }
 export function isDying(body: Uint32Array): boolean {
 	return (body[BODY_FLAGS_INDEX] & BODY_DYING_FLAG) !== 0;
@@ -133,12 +141,18 @@ class BodyComponentImpl extends Component<Uint32Array> implements BodyComponent 
 	set continuousCollisionDetection(value: boolean) {
 		this.block[BODY_FLAGS_INDEX] = value ? (this.block[BODY_FLAGS_INDEX] | BODY_CCD_FLAG) : (this.block[BODY_FLAGS_INDEX] & ~BODY_CCD_FLAG);
 	}
+	get blocksPath() {
+		return (this.block[BODY_FLAGS_INDEX] & BODY_BLOCKS_PATH_FLAG) !== 0;
+	}
+	set blocksPath(value: boolean) {
+		this.block[BODY_FLAGS_INDEX] = value ? (this.block[BODY_FLAGS_INDEX] | BODY_BLOCKS_PATH_FLAG) : (this.block[BODY_FLAGS_INDEX] & ~BODY_BLOCKS_PATH_FLAG);
+	}
 }
 
 export const bodyDefinition: ComponentDefinition<BodyComponent, Uint32Array, BodyConfig> = {
 	type: Uint32Array,
 	size: BODY_SIZE,
-	loadProperties: ['width', 'height', 'radius', 'vertices', 'shape', 'collideCategory', 'collideMask', 'sensor', 'continuousCollisionDetection'],
+	loadProperties: ['width', 'height', 'radius', 'vertices', 'shape', 'collideCategory', 'collideMask', 'sensor', 'continuousCollisionDetection', 'blocksPath'],
 	toBlock(config) {
 		return [
 			toFlags(config),
@@ -159,6 +173,9 @@ function toFlags(config: BodyConfig): number {
 	}
 	if(config.continuousCollisionDetection) {
 		flags |= BODY_CCD_FLAG;
+	}
+	if(config.blocksPath) {
+		flags |= BODY_BLOCKS_PATH_FLAG;
 	}
 
 	return flags;

@@ -39,7 +39,7 @@ export type {
 	DynamicsSerialization,
 } from './components/dynamics-component';
 
-export { default as bodyDefinition, canCollide, isSensor, isContinuous, isDying, markDying, bodyShape } from './components/body-component';
+export { default as bodyDefinition, canCollide, isSensor, isContinuous, blocksPath, isDying, markDying, bodyShape } from './components/body-component';
 export {
 	SHAPE_RECTANGLE,
 	SHAPE_CIRCLE,
@@ -52,6 +52,7 @@ export {
 	BODY_SENSOR_FLAG,
 	BODY_CCD_FLAG,
 	BODY_DYING_FLAG,
+	BODY_BLOCKS_PATH_FLAG,
 	BODY_CATEGORY_INDEX,
 	BODY_MASK_INDEX,
 	BODY_SIZE,
