@@ -3,7 +3,9 @@ import type { EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { InterpolationComponents, InterpolationUpdateComponents } from '../components/registry';
 import {
 	INTERPOLATION_DURATION_INDEX,
-	INTERPOLATION_PROGRESS_INDEX,
+	INTERPOLATION_TARGET_X_INDEX,
+	INTERPOLATION_TARGET_Y_INDEX,
+	INTERPOLATION_SYNCED_STEP_DURATION_INDEX,
 	INTERPOLATION_REMAINING_DURATION_INDEX,
 	INTERPOLATION_SYNCED_DURATION_INDEX,
 	INTERPOLATION_SYNCED_TICK_INDEX,
@@ -22,40 +24,37 @@ export const BACKLOG_TARGET_STEPS = 1.5;
 // gentle speed-up rather than a jump across the banked segment.
 export const BACKLOG_CATCHUP_RATE = 0.5;
 
-// Walks the render position along the segment between where the entity was before the last physics step and
-// where it is after it: `render = prev + (current - prev) * progress`.
-//
-// Every position it writes is one the simulation actually produced, so an entity is drawn easing into a wall or
-// turning a corner because that is what happened - not guessed forward from velocity and snapped back. The cost
-// is one fixed step of latency, always, in exchange for never being wrong.
-//
-// Physics also publishes cumulative simulated time. Rendering turns newly observed time into one continuous
-// timeline toward the latest transform, so a fast follow-up publication cannot overwrite an unfinished long
-// segment and make the render jump to the follow-up's `prev`.
+// Consume published simulation time while advancing toward the last coherent target.
 export const interpolationUpdate: EntityUpdateFunction<InterpolationComponents, InterpolationUpdateComponents> = (world, entityId, components) => {
 	const interpolation = components.interpolation;
 	const transform = components.transform;
 
-	// The stamp is read on both sides of everything it publishes: physics marks it NaN before writing and replaces
-	// that marker afterward. A `prev` from after the move with a transform from before draws it walking backwards.
+	// Accept the transform and timing only if physics completed one consistent publication.
 	const before = loadFloat32(interpolation, INTERPOLATION_TICK_INDEX);
-	const duration = interpolation[INTERPOLATION_DURATION_INDEX];
-	const totalDuration = interpolation[INTERPOLATION_TOTAL_DURATION_INDEX];
-	const x = transform[TRANSFORM_X_INDEX];
-	const y = transform[TRANSFORM_Y_INDEX];
-	const after = loadFloat32(interpolation, INTERPOLATION_TICK_INDEX);
+	let duration = interpolation[INTERPOLATION_DURATION_INDEX];
+	let totalDuration = interpolation[INTERPOLATION_TOTAL_DURATION_INDEX];
+	let x = transform[TRANSFORM_X_INDEX];
+	let y = transform[TRANSFORM_Y_INDEX];
+	let after = loadFloat32(interpolation, INTERPOLATION_TICK_INDEX);
 
-	// Caught mid-step, so the two ends do not belong together. Leave the render position for this one frame
-	// rather than drawing from a mismatched pair - a 16ms hold is invisible, a jump is not.
 	if(before !== after) {
-		return;
+		// Keep consuming the last coherent segment; dropping this frame makes moving ships stutter relative to a camera.
+		duration = interpolation[INTERPOLATION_SYNCED_STEP_DURATION_INDEX];
+		if(duration <= 0 || interpolation[INTERPOLATION_REMAINING_DURATION_INDEX] <= 0) {
+			return;
+		}
+		x = interpolation[INTERPOLATION_TARGET_X_INDEX];
+		y = interpolation[INTERPOLATION_TARGET_Y_INDEX];
+		totalDuration = interpolation[INTERPOLATION_SYNCED_DURATION_INDEX];
+		after = interpolation[INTERPOLATION_SYNCED_TICK_INDEX];
+	} else {
+		interpolation[INTERPOLATION_TARGET_X_INDEX] = x;
+		interpolation[INTERPOLATION_TARGET_Y_INDEX] = y;
+		interpolation[INTERPOLATION_SYNCED_STEP_DURATION_INDEX] = duration;
 	}
 
-	// No segment to be part way along: an entity physics never moved, or one whose first step has not landed.
-	// Progress is left finished, not zero, so the first real step starts from the right place - the rule below
-	// takes a whole segment off whatever was banked, and taking it off zero would open with unpayable debt.
+	// No physics segment has been published yet.
 	if(duration <= 0) {
-		interpolation[INTERPOLATION_PROGRESS_INDEX] = 1;
 		interpolation[INTERPOLATION_SYNCED_TICK_INDEX] = after;
 		interpolation[INTERPOLATION_SYNCED_DURATION_INDEX] = totalDuration;
 		interpolation[INTERPOLATION_REMAINING_DURATION_INDEX] = 0;
@@ -65,24 +64,14 @@ export const interpolationUpdate: EntityUpdateFunction<InterpolationComponents, 
 		return;
 	}
 
-	let progress = interpolation[INTERPOLATION_PROGRESS_INDEX];
 	let remainingDuration = interpolation[INTERPOLATION_REMAINING_DURATION_INDEX];
 	if(after !== interpolation[INTERPOLATION_SYNCED_TICK_INDEX]) {
 		const syncedDuration = interpolation[INTERPOLATION_SYNCED_DURATION_INDEX];
 		const publishedDuration = totalDuration >= syncedDuration ? totalDuration - syncedDuration : duration;
 		remainingDuration += publishedDuration;
 		interpolation[INTERPOLATION_SYNCED_DURATION_INDEX] = totalDuration;
-		progress = 0;
 		interpolation[INTERPOLATION_SYNCED_TICK_INDEX] = after;
 	}
-
-	// Capped at the segment end, which absorbs a slow physics run: the entity waits at the newest real position
-	// and the wait is dropped, not banked, so a consistently-late worker costs latency and nothing else.
-	progress += world.elapsedTime / duration;
-	if(progress > 1) {
-		progress = 1;
-	}
-	interpolation[INTERPOLATION_PROGRESS_INDEX] = progress;
 
 	if(remainingDuration <= 0) {
 		interpolation[INTERPOLATION_REMAINING_DURATION_INDEX] = 0;

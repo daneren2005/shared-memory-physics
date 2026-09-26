@@ -3,8 +3,6 @@ import type { EntityWorkerSystemCallbacks, EntityWorkerSystemWorld } from '@dane
 import { interpolationUpdate, BACKLOG_CATCHUP_RATE, BACKLOG_TARGET_STEPS } from '../interpolation-update';
 import {
 	INTERPOLATION_DURATION_INDEX,
-	INTERPOLATION_PREV_X_INDEX,
-	INTERPOLATION_PREV_Y_INDEX,
 	INTERPOLATION_SIZE,
 	INTERPOLATION_SYNCED_TICK_INDEX,
 	INTERPOLATION_TICK_INDEX,
@@ -24,8 +22,7 @@ const callbacks: EntityWorkerSystemCallbacks = {
 	createEntity: () => {},
 };
 
-// One entity's blocks, as physics would leave them after a step from `prev` to `current`. Already reconciled
-// (same tick on both fields), so these single-frame tests ask only where a given progress lands.
+// One published step from the initial render position to the current transform.
 function createEntity(prev: [number, number], current: [number, number], duration = 50) {
 	const transform = new Float32Array(TRANSFORM_SIZE);
 	transform[TRANSFORM_X_INDEX] = current[0];
@@ -34,8 +31,6 @@ function createEntity(prev: [number, number], current: [number, number], duratio
 	const interpolation = new Float32Array(INTERPOLATION_SIZE);
 	interpolation[INTERPOLATION_X_INDEX] = prev[0];
 	interpolation[INTERPOLATION_Y_INDEX] = prev[1];
-	interpolation[INTERPOLATION_PREV_X_INDEX] = prev[0];
-	interpolation[INTERPOLATION_PREV_Y_INDEX] = prev[1];
 	interpolation[INTERPOLATION_DURATION_INDEX] = duration;
 	interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] = duration;
 	interpolation[INTERPOLATION_SYNCED_TICK_INDEX] = 0;
@@ -47,7 +42,7 @@ function createEntity(prev: [number, number], current: [number, number], duratio
 // Drives the update against raw blocks with no world or system, pinning down the blend itself;
 // interpolation-system.spec.ts covers the same end to end.
 describe('interpolation-update', () => {
-	// Sets a known progress and runs a zero-elapsed frame, so the result is the blend at exactly that alpha.
+	// Consume the requested fraction of a step.
 	function renderAt(components: { transform: Float32Array, interpolation: Float32Array }, alpha: number): [number, number] {
 		const elapsedTime = components.interpolation[INTERPOLATION_DURATION_INDEX] * alpha;
 		const world: EntityWorkerSystemWorld = { gameTime: 0, elapsedTime, getString: () => '' };
@@ -113,21 +108,56 @@ describe('interpolation-update', () => {
 		expect(interpolation[INTERPOLATION_Y_INDEX]).toEqual(-12);
 	});
 
-	// Physics writes `prev` and the transform on another thread while this reads both, so a read can catch one
-	// end from the new step and the other from the old.
+	// Physics can publish between the reader's timing and transform reads.
 	describe('a torn read', () => {
+		it('preserves spacing between moving entities when only one overlaps publication', () => {
+			const player = createEntity([0, 0], [10, 0]);
+			const other = createEntity([100, 0], [110, 0]);
+			renderAt(player, 0.4);
+			renderAt(other, 0.4);
+			storeFloat32(player.interpolation, INTERPOLATION_TICK_INDEX, Number.NaN);
+			player.transform[TRANSFORM_X_INDEX] = 20;
+			player.interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] = 100;
+			other.transform[TRANSFORM_X_INDEX] = 120;
+			other.interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] = 100;
+			storeFloat32(other.interpolation, INTERPOLATION_TICK_INDEX, 2);
+			expect(renderAt(other, 0.2)[0] - renderAt(player, 0.2)[0]).toBe(100);
+			storeFloat32(player.interpolation, INTERPOLATION_TICK_INDEX, 2);
+			expect(renderAt(other, 0.2)[0] - renderAt(player, 0.2)[0]).toBe(100);
+		});
+
+		it('keeps advancing the cached segment while a new publication is in progress', () => {
+			const components = createEntity([0, 0], [10, 20]);
+			expect(renderAt(components, 0.2)).toEqual([2, 4]);
+			storeFloat32(components.interpolation, INTERPOLATION_TICK_INDEX, Number.NaN);
+			components.transform[TRANSFORM_X_INDEX] = 20;
+			components.transform[TRANSFORM_Y_INDEX] = -500;
+			components.interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] = 100;
+			expect(renderAt(components, 0.2)).toEqual([4, 8]);
+			components.transform[TRANSFORM_Y_INDEX] = 40;
+			storeFloat32(components.interpolation, INTERPOLATION_TICK_INDEX, 2);
+			expect(renderAt(components, 0.2)).toEqual([6, 12]);
+		});
+
+		it('stops at the cached endpoint if publishing lasts longer than the remaining segment', () => {
+			const components = createEntity([0, 0], [10, 20]);
+			renderAt(components, 0.5);
+			storeFloat32(components.interpolation, INTERPOLATION_TICK_INDEX, Number.NaN);
+			components.transform[TRANSFORM_X_INDEX] = 100;
+			expect(renderAt(components, 1)).toEqual([10, 20]);
+			expect(renderAt(components, 1)).toEqual([10, 20]);
+		});
+
 		it('holds while physics is publishing a new segment', () => {
 			const components = createEntity([0, 0], [10, 20]);
 			components.interpolation[INTERPOLATION_X_INDEX] = 3;
 			components.interpolation[INTERPOLATION_Y_INDEX] = 6;
 			storeFloat32(components.interpolation, INTERPOLATION_TICK_INDEX, Number.NaN);
-			components.interpolation[INTERPOLATION_PREV_X_INDEX] = 10;
 
 			expect(renderAt(components, 0.5)).toEqual([3, 6]);
 		});
 
-		// The next step lands between the `prev` this update has taken and the transform it is about to, hooked off
-		// the transform read - the race the stamp on either side of these reads exists to catch.
+		// Publish during the transform read to invalidate the earlier timing snapshot.
 		function createTearing(prev: [number, number], current: [number, number]) {
 			const components = createEntity(prev, current);
 			const transform = new Proxy(components.transform, {
@@ -190,10 +220,9 @@ function simulate(lag: number, frames = 60, frameLength = FRAME, lagFor: (tick: 
 	for(let frame = 0; frame < frames; frame++) {
 		now += frameLength;
 
-		// A landed run writes its results as the worker would: prev, then transform, then tick with a release store.
+		// Publish timing and position, then release the completed tick.
 		while(inFlight.length > 0 && inFlight[0].landsAt <= now) {
 			const run = inFlight.shift()!;
-			interpolation[INTERPOLATION_PREV_X_INDEX] = transform[TRANSFORM_X_INDEX];
 			interpolation[INTERPOLATION_DURATION_INDEX] = run.covers;
 			interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] += run.covers;
 			transform[TRANSFORM_X_INDEX] += run.distance;

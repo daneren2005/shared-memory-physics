@@ -322,10 +322,10 @@ Without a `getWorker` (or where Web Workers / `SharedArrayBuffer` are unavailabl
 
 A 50ms physics step against a 16ms frame means the transform only changes on one frame in three, and an entity
 drawn straight off it visibly stutters. `InterpolationSystem` fills in a **render position** that changes every
-frame instead, by blending between the two positions physics published either side of its last step:
+frame instead, by consuming published simulation time while advancing toward the last coherent target:
 
 ```
-render = prev + (current - prev) * alpha
+render += (target - render) * (frameDuration / remainingDuration)
 ```
 
 Normally every position it writes lies on the latest simulation segment. If worker scheduling lets several
@@ -343,10 +343,10 @@ world.addSystem(new InterpolationSystem<Components>(world));
 world.loadEntity({ x: 0, y: 0, width: 10, height: 10, velocityX: 100, interpolate: true });
 ```
 
-It takes no configuration and is not wired to the physics system. Everything it needs - the two positions, how
-much simulated time lies between them, and whether that pair is new - is published into the block by whichever
-run wrote it. Physics marks that publication dirty before changing either endpoint and stamps it complete only
-after both are ready, so rendering holds its previous position for a frame if it catches the worker mid-write.
+It takes no configuration and is not wired to the physics system. Physics publishes the transform, step
+duration, cumulative simulated time, and a tick stamp. Rendering caches each coherent target and its timing.
+If it catches physics mid-write, it continues consuming the cached segment until another complete snapshot
+is available.
 A game that retunes `deltaBetweenRuns` mid-flight is followed with nothing told to this system.
 
 Then draw from `interpolation` instead of `transform`, keeping the size and facing where they have always been:
@@ -482,16 +482,17 @@ spot, as above.
 
 ### The cost
 
-44 bytes per interpolated entity, four extra writes per entity per physics step, and a per-frame pass of one
+The renderer retains the last coherent target while physics publishes a new step, so an overlapping read can keep advancing without freezing a frame.
+
+44 bytes per interpolated entity, four publication writes per entity per physics step, and a per-frame pass of one
 lerp per entity on the main thread - order 0.2ms at 10,000 entities. An entity without the component pays
 nothing at all. `forceMainThread: false` plus a `getWorker` moves the pass to a worker for worlds large enough
 that it shows up in a profile, at the price of the render position being one frame stale; because consumers only
 ever read `interpolation.x`, that is a constructor flag rather than a migration.
 
-Physics writes `prev` and then the transform on the worker thread while the main thread reads both, so the block
-carries a tick stamp that is written **last**, with a release store. The update reads it on either side of its
-own reads and drops the frame if it changed, rather than blending a `prev` from one step against a transform
-from another - which is the one mismatch that would draw an entity moving backwards.
+Physics marks the tick dirty before changing timing and position, then publishes the completed tick with
+a release store. The reader accepts a new snapshot only when its tick reads match; otherwise it continues
+toward the cached target.
 
 ## Collisions
 

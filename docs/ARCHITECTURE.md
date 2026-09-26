@@ -44,7 +44,7 @@ main thread                              worker thread (optional)
 | `components/body-component.ts` | Shape + collide category/mask + sensor + continuous-collision flag, plus a runtime-only `dying` bit. A body is what makes an entity collidable. Shape/sensor/ccd/dying share one packed flags word (`BODY_FLAGS_INDEX`), read via `bodyShape`/`isSensor`/`isContinuous`/`isDying`. | `bodyDefinition`, `canCollide`, `isSensor`, `isContinuous`, `isDying`, `markDying`, `bodyShape`, `SHAPE_*`, `BODY_*` |
 | `components/polygon-component.ts` | Fixed-capacity sidecar block for convex polygon vertices. Validates 3-16 boundary vertices and stores them normalized around their source bounds, so transform size scales the outline. Only polygon entities allocate it. | `polygonDefinition`, `preparePolygon`, `MAX_POLYGON_VERTICES`, `POLYGON_*` |
 | `components/bounciness-component.ts` | Standalone bounce float (not part of body block). | `bouncinessDefinition`, `BOUNCINESS_INDEX` |
-| `components/interpolation-component.ts` | Render position + publication/pacing fields (`prev`, `progress`, `tick`, latest/cumulative/remaining duration), exposed on the block so a spawn can seed a first segment by hand. | `interpolationDefinition`, `snapEntity`, `startSpawnInterpolation`, `INTERPOLATION_*_INDEX` |
+| `components/interpolation-component.ts` | Render position + publication/pacing fields (`tick`, latest/cumulative/remaining duration, cached target), exposed on the block so a spawn can seed a first segment by hand. | `interpolationDefinition`, `snapEntity`, `startSpawnInterpolation`, `INTERPOLATION_*_INDEX` |
 | `systems/physics-system.ts` | Main-thread `EntityWorkerSystem`: gathers entities, snapshots one-run force/impulse/velocity commands, decides which queries/blocks travel, stamps `tick`, and gates move-reporting. Fixed step default. `startInterpolation(entity)` seeds a just-spawned mover so it is drawn moving now (feeds its step + accumulator to `startSpawnInterpolation`). | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig`, `VelocityAssignment` |
 | `systems/physics-update.ts` | The per-entity update run on either backend. `physicsUpdate` = movement only; `createPhysicsUpdate` = sweeping + native bounce + `onCollision`. Owns interpolation publication, the atomic move, and the callback command queue retained by each backend. `world.dieAtImpact` (set per run in `preRun`) is the death-interpolation entry a callback calls instead of `entityDied`. | `physicsUpdate`, `createPhysicsUpdate`, `POSITION_UPDATED_EVENT`, `PhysicsWorld`, `PhysicsCallbackWorld`, `DeathInterpolationEntity` |
 | `systems/dynamics.ts` | Shared semi-implicit Euler step, command accumulation/combination, and sorted per-run lookup used by both library movement paths before they calculate displacement. System transport is a flat `Float64Array`; custom worlds and combined callback commands use records. | `integrateDynamics`, `DynamicsCommand`, `DynamicsCommandBuffer`, `DynamicsCommandQueue`, `DynamicsWorld` |
@@ -54,7 +54,7 @@ main thread                              worker thread (optional)
 | `systems/spatial-bounds.ts` | Converts transform/body shapes to the axis-aligned bounds stored in the live spatial map. | `spatialBounds` (internal) |
 | `world.ts` | `BaseWorld` subclass that owns the live `SharedSpatialMap`, tracks entity/component lifecycle, exposes entity-level searches, and supplies map handles to worker worlds. Its optional entity generic preserves a consumer's registered wrapper union through lifecycle events and spatial results. | `PhysicalWorld`, `PhysicalWorldEntity`, `PhysicalWorldOptions`, `addPhysicalWorldData`, `getSpatialMap` |
 | `systems/interpolation-system.ts` | Main-thread system that runs the per-frame render-position lerp. | `InterpolationSystem`, `InterpolationSystemConfig` |
-| `systems/interpolation-update.ts` | The lerp itself (`render = prev + (current-prev)*alpha`), runnable in a worker too. | `interpolationUpdate` |
+| `systems/interpolation-update.ts` | The lerp itself (`render += (target-render)*frameDuration/remainingDuration`), runnable in a worker too. | `interpolationUpdate` |
 | `math/shapes.ts` | Primitive-shape overlap, contact direction + distance functions. Rectangle/circle/capsule remain an oriented core grown by a radius. | `shapesOverlap`, `contactNormal`, `orientedBoxesOverlap`, `segment*DistanceSquared`, `shapeHalfWidth/Height`, `shapeRadius`, `Vector` |
 | `math/polygons.ts` | Convex SAT used only when at least one side is a polygon; projects the other polygon or primitive analytically and supplies the matching contact normal. | `polygonShapesOverlap`, `polygonContactNormal` |
 
@@ -86,8 +86,8 @@ velocity command supplies jumping, and its worker-safe collision callback queues
   the move, so it takes the just-applied delta as trailing args to reconstruct the path; `sweep`/`resolveMove`
   run before the move, so `searcher.x/y` is already the start.
 - **The `tick` publication protocol.** Physics atomically stores a NaN dirty marker before changing a segment,
-  then release-stores its `tick` after `prev`/transform are complete. Interpolation samples the stamp around its
-  reads and drops the frame unless both samples are the same non-NaN tick. A subclass
+  then release-stores its `tick` after timing and transform are complete. Interpolation samples the stamp around its
+  reads and accepts the new snapshot only when both samples are the same non-NaN tick. A subclass
   overriding `addDataToWorld` **must call `super.addDataToWorld(world)`** or nothing gets a tick and
   interpolation stops noticing steps.
 - **Interpolation time is cumulative.** A late physics run may publish a long segment and then replace it with a
@@ -163,7 +163,7 @@ velocity command supplies jumping, and its worker-safe collision callback queues
   a shot fired into a target still lands inside it and is killed by the next run's overlap test; only something thin
   enough to sit entirely within that jumped span is passed through uncaught. Do not use it where a step of collision
   must not be skipped. The transform is jumped to the segment's end, so the render is still never drawn ahead of the
-  simulation. The protocol fields (`progress`/`duration`/`syncedTick`/`tick`) are exposed on the interpolation
+  simulation. The protocol fields (`duration`/`syncedTick`/`tick` and cached target) are exposed on the interpolation
   block's wrapper for exactly this; `tick` round-trips through the release-store.
 - **Death interpolation is the spawn seeding run backwards, and defers the kill by a step.** A callback that
   calls `world.dieAtImpact(dying, other)` instead of `callbacks.entityDied` retargets the dying entity's current
@@ -185,6 +185,8 @@ velocity command supplies jumping, and its worker-safe collision callback queues
   gap between their cores. A bounding-box normal is only ever one of the world axes, so a pair meeting
   at an angle reflected the wrong component of its velocity - or, when nothing pointed along that axis,
   the `into >= 0` guard skipped the bounce and the mover carried straight on through.
+
+Interpolation caches the last coherent target and step duration in consumer-owned fields. A torn read continues that segment for the current frame, stopping at its endpoint if necessary; it never reads an in-progress transform or loses render time merely because publication overlaps rendering. Spawn and teleport helpers also seed/reset this cache.
 
 ## Thread / dependency notes
 

@@ -17,12 +17,11 @@ describe('startSpawnInterpolation', () => {
 
 		expect(entity.components.transform!.x).toBeCloseTo(106);
 		const interpolation = entity.components.interpolation!;
-		expect(interpolation.prevX).toBeCloseTo(100);
-		expect(interpolation.prevY).toBeCloseTo(0);
+		expect(interpolation.targetX).toBeCloseTo(106);
+		expect(interpolation.targetY).toBeCloseTo(0);
 		expect(interpolation.x).toBeCloseTo(100); // drawn at the spawn point
 		expect(interpolation.y).toBeCloseTo(0);
 		expect(interpolation.duration).toBeCloseTo(30); // 50 * 0.6
-		expect(interpolation.progress).toEqual(0);
 		expect(interpolation.syncedTick).toEqual(3);
 		expect(interpolation.tick).toEqual(3);
 		expect(interpolation.totalDuration).toBeCloseTo(30);
@@ -59,7 +58,7 @@ describe('startSpawnInterpolation', () => {
 
 		expect(entity.components.transform!.x).toEqual(5);
 		const interpolation = entity.components.interpolation!;
-		expect(interpolation.prevX).toEqual(5);
+		expect(interpolation.targetX).toEqual(5);
 		expect(interpolation.x).toEqual(5);
 		expect(interpolation.duration).toEqual(0);
 		expect(interpolation.tick).toEqual(0);

@@ -18,7 +18,7 @@ import {
 	DYNAMICS_SIZE,
 } from '../../components/dynamics-component';
 import {
-	INTERPOLATION_PREV_X_INDEX,
+	INTERPOLATION_DURATION_INDEX,
 	INTERPOLATION_SIZE,
 	INTERPOLATION_TICK_INDEX,
 } from '../../components/interpolation-component';
@@ -180,7 +180,7 @@ describe('physics-update', () => {
 				return Reflect.get(target, property, target);
 			},
 			set(target, property, value) {
-				if(property === String(INTERPOLATION_PREV_X_INDEX)) {
+				if(property === String(INTERPOLATION_DURATION_INDEX)) {
 					dirtyBeforeSegmentWrite = Number.isNaN(loadFloat32(target, INTERPOLATION_TICK_INDEX));
 				}
 

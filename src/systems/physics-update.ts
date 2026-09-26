@@ -6,8 +6,6 @@ import type { ComponentMap, EntityWorkerSystemCallbacks, EntityWorkerSystemWorld
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
 import {
 	INTERPOLATION_DURATION_INDEX,
-	INTERPOLATION_PREV_X_INDEX,
-	INTERPOLATION_PREV_Y_INDEX,
 	INTERPOLATION_TICK_INDEX,
 	INTERPOLATION_TOTAL_DURATION_INDEX,
 } from '../components/interpolation-component';
@@ -187,7 +185,7 @@ export function createPhysicsUpdate<
 
 			// Taken before anything is written, so the segment a renderer blends along runs from this step's start
 			// to its end.
-			startInterpolationStep(interpolation, components.transform, world.elapsedTime);
+			startInterpolationStep(interpolation, world.elapsedTime);
 
 			// No tree means either this update was called by hand without preRun, or a grouped entity whose group
 			// holds nothing collidable: nothing to sweep against, plain move. Bound locally so it stays narrowed
@@ -439,7 +437,7 @@ export function physicsUpdate<
 	const interpolation = components.interpolation;
 	integrateDynamics(world, entityId, components.velocity, components.dynamics);
 
-	startInterpolationStep(interpolation, components.transform, world.elapsedTime);
+	startInterpolationStep(interpolation, world.elapsedTime);
 	move(
 		entityId,
 		components.transform,
@@ -452,27 +450,19 @@ export function physicsUpdate<
 	finishInterpolationStep(interpolation, world.tick);
 }
 
-// The half of publishing a step that happens before the move: where the entity stands now becomes the `prev`
-// the next frame blends out of, plus how much simulated time the segment covers. The duration is published
-// because a run does not always cover one step - a late run takes two at once - and a renderer dividing by the
-// fixed step would draw that at double speed. Nothing is written without the component, keeping it opt-in.
-function startInterpolationStep(interpolation: Float32Array | undefined, transform: Float32Array, elapsedTime: number): void {
+// Publish simulated time under the dirty marker before moving the transform.
+function startInterpolationStep(interpolation: Float32Array | undefined, elapsedTime: number): void {
 	if(!interpolation) {
 		return;
 	}
 
-	// Mark the publication dirty before changing either endpoint. Without this, a reader can take both tick
-	// samples before the final store while still observing some of the new step's ordinary/atomic writes.
+	// Invalidate readers before changing timing or position.
 	storeFloat32(interpolation, INTERPOLATION_TICK_INDEX, Number.NaN);
-	interpolation[INTERPOLATION_PREV_X_INDEX] = transform[TRANSFORM_X_INDEX];
-	interpolation[INTERPOLATION_PREV_Y_INDEX] = transform[TRANSFORM_Y_INDEX];
 	interpolation[INTERPOLATION_DURATION_INDEX] = elapsedTime;
 	interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] += elapsedTime;
 }
 
-// The half after the move. Written unconditionally, so an entity pressed against a wall still publishes a step
-// (with `prev` where it is) rather than going quiet and leaving a renderer blending against stale data. The tick
-// replaces the dirty marker last, so a reader can only accept the matching `prev` and transform.
+// Stationary entities also publish time; release the matching transform and timing together.
 function finishInterpolationStep(interpolation: Float32Array | undefined, tick: number): void {
 	if(!interpolation) {
 		return;
