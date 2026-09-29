@@ -94,6 +94,12 @@ export {
 	INTERPOLATION_TARGET_X_INDEX,
 	INTERPOLATION_TARGET_Y_INDEX,
 	INTERPOLATION_SYNCED_STEP_DURATION_INDEX,
+	INTERPOLATION_CHANNEL_INDEX,
+	INTERPOLATION_PREVIOUS_X_INDEX,
+	INTERPOLATION_PREVIOUS_Y_INDEX,
+	INTERPOLATION_PREVIOUS_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_TOTAL_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_TICK_INDEX,
 	INTERPOLATION_SIZE,
 } from './components/interpolation-component';
 export type {
@@ -154,5 +160,6 @@ export { default as integrateDynamics } from './systems/dynamics';
 export type { DynamicsCommand, DynamicsCommandBuffer, DynamicsCommandQueue, DynamicsCommands, DynamicsWorld } from './systems/dynamics';
 
 export { default as interpolationUpdate } from './systems/interpolation-update';
+export type { InterpolationWorld } from './systems/interpolation-update';
 export { default as InterpolationSystem } from './systems/interpolation-system';
 export type { InterpolationSystemConfig } from './systems/interpolation-system';

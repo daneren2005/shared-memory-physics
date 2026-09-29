@@ -28,9 +28,11 @@ export interface InterpolationComponent {
 	targetX: number
 	targetY: number
 	syncedStepDuration: number
+	previousX: number
+	previousY: number
 }
 
-// `interpolate` gives an entity this component, opt-in rather than automatic because it is 44 bytes and a
+// `interpolate` gives an entity this component, opt-in rather than automatic because it is 68 bytes and a
 // per-frame visit for something a game may never draw. `x`/`y` come off the same config the transform loads
 // from, so a render position starts where the entity spawned.
 export interface InterpolationConfig {
@@ -63,7 +65,17 @@ export const INTERPOLATION_REMAINING_DURATION_INDEX = 7;
 export const INTERPOLATION_TARGET_X_INDEX = 8;
 export const INTERPOLATION_TARGET_Y_INDEX = 9;
 export const INTERPOLATION_SYNCED_STEP_DURATION_INDEX = 10;
-export const INTERPOLATION_SIZE = 11;
+// The PhysicsSystem that last published this entity (0 = none), whose committed tick gates the current publication.
+export const INTERPOLATION_CHANNEL_INDEX = 11;
+// The publication the current one replaced, written completely before the current tick is invalidated. A reader
+// uses it while the current one is newer than its run's commit, so every entity of a run renders the same step.
+export const INTERPOLATION_PREVIOUS_X_INDEX = 12;
+export const INTERPOLATION_PREVIOUS_Y_INDEX = 13;
+export const INTERPOLATION_PREVIOUS_DURATION_INDEX = 14;
+export const INTERPOLATION_PREVIOUS_TOTAL_DURATION_INDEX = 15;
+// Stamp for the previous slot, following the same NaN-while-writing protocol as the current tick.
+export const INTERPOLATION_PREVIOUS_TICK_INDEX = 16;
+export const INTERPOLATION_SIZE = 17;
 
 class InterpolationComponentImpl extends Component<Float32Array> implements InterpolationComponent {
 	get x() {
@@ -128,6 +140,18 @@ class InterpolationComponentImpl extends Component<Float32Array> implements Inte
 	set syncedStepDuration(value: number) {
 		this.block[INTERPOLATION_SYNCED_STEP_DURATION_INDEX] = value;
 	}
+	get previousX() {
+		return this.block[INTERPOLATION_PREVIOUS_X_INDEX];
+	}
+	set previousX(value: number) {
+		this.block[INTERPOLATION_PREVIOUS_X_INDEX] = value;
+	}
+	get previousY() {
+		return this.block[INTERPOLATION_PREVIOUS_Y_INDEX];
+	}
+	set previousY(value: number) {
+		this.block[INTERPOLATION_PREVIOUS_Y_INDEX] = value;
+	}
 	get remainingDuration() {
 		return this.block[INTERPOLATION_REMAINING_DURATION_INDEX];
 	}
@@ -144,7 +168,7 @@ export const interpolationDefinition: ComponentDefinition<InterpolationComponent
 		const x = config.x ?? 0;
 		const y = config.y ?? 0;
 		// Seed both the render position and cached target at spawn; duration 0 means no published step yet.
-		return [x, y, 0, 0, 0, 0, 0, 0, x, y, 0];
+		return [x, y, 0, 0, 0, 0, 0, 0, x, y, 0, 0, x, y, 0, 0, 0];
 	},
 	attach(entity, memory, index) {
 		return new InterpolationComponentImpl(memory.getBlock(index), index);
@@ -173,6 +197,9 @@ export function snapEntity(entity: SnappableEntity): void {
 
 	interpolation.targetX = interpolation.x = transform.x;
 	interpolation.targetY = interpolation.y = transform.y;
+	// A gated reader may still draw from the previous slot until the in-flight run commits.
+	interpolation.previousX = transform.x;
+	interpolation.previousY = transform.y;
 	interpolation.remainingDuration = 0;
 	interpolation.syncedStepDuration = 0;
 	interpolation.syncedDuration = interpolation.totalDuration;

@@ -2,7 +2,13 @@ import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-a
 import type { EntityWorkerSystemCallbacks, EntityWorkerSystemWorld } from '@daneren2005/shared-memory-ecs';
 import { interpolationUpdate, BACKLOG_CATCHUP_RATE, BACKLOG_TARGET_STEPS } from '../interpolation-update';
 import {
+	INTERPOLATION_CHANNEL_INDEX,
 	INTERPOLATION_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_TICK_INDEX,
+	INTERPOLATION_PREVIOUS_TOTAL_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_X_INDEX,
+	INTERPOLATION_PREVIOUS_Y_INDEX,
 	INTERPOLATION_SIZE,
 	INTERPOLATION_SYNCED_TICK_INDEX,
 	INTERPOLATION_TICK_INDEX,
@@ -181,6 +187,85 @@ describe('interpolation-update', () => {
 			// One frame of holding still, rather than a mismatched position.
 			expect(renderAt(components, 0.5)).toEqual([3, 6]);
 		});
+	});
+});
+
+type GatedComponents = ReturnType<typeof createEntity>;
+
+function createGated(prev: [number, number], current: [number, number]): GatedComponents {
+	const components = createEntity(prev, current);
+	components.interpolation[INTERPOLATION_CHANNEL_INDEX] = 1;
+
+	return components;
+}
+
+// Mirrors physics-update: the replaced publication goes to the previous slot before the current one is dirtied.
+function startPublishing(components: GatedComponents, x: number): void {
+	const { interpolation, transform } = components;
+	storeFloat32(interpolation, INTERPOLATION_PREVIOUS_TICK_INDEX, Number.NaN);
+	interpolation[INTERPOLATION_PREVIOUS_X_INDEX] = transform[TRANSFORM_X_INDEX];
+	interpolation[INTERPOLATION_PREVIOUS_Y_INDEX] = transform[TRANSFORM_Y_INDEX];
+	interpolation[INTERPOLATION_PREVIOUS_DURATION_INDEX] = interpolation[INTERPOLATION_DURATION_INDEX];
+	interpolation[INTERPOLATION_PREVIOUS_TOTAL_DURATION_INDEX] = interpolation[INTERPOLATION_TOTAL_DURATION_INDEX];
+	storeFloat32(interpolation, INTERPOLATION_PREVIOUS_TICK_INDEX, interpolation[INTERPOLATION_TICK_INDEX]);
+	storeFloat32(interpolation, INTERPOLATION_TICK_INDEX, Number.NaN);
+	interpolation[INTERPOLATION_DURATION_INDEX] = 50;
+	interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] += 50;
+	transform[TRANSFORM_X_INDEX] = x;
+}
+function publish(components: GatedComponents, tick: number, x: number): void {
+	startPublishing(components, x);
+	storeFloat32(components.interpolation, INTERPOLATION_TICK_INDEX, tick);
+}
+
+// A worker publishes entity by entity while the main thread renders, so one frame can find part of a run published.
+describe('interpolation-update gated on a committed run', () => {
+	function render(components: GatedComponents, elapsedTime: number, committedTick: number): number {
+		const world = { gameTime: 0, elapsedTime, committedTicks: [Number.NaN, committedTick], getString: () => '' };
+		interpolationUpdate(world, 1, components, {}, callbacks);
+
+		return components.interpolation[INTERPOLATION_X_INDEX];
+	}
+
+	// The CI failure this guards: one ship took the new step while the other ran out of segment and stalled,
+	// leaving them permanently apart on screen.
+	it('keeps entities of one run in step when only some are published by the time they are drawn', () => {
+		const player = createGated([0, 0], [10, 0]);
+		const companion = createGated([100, 0], [110, 0]);
+		render(player, 40, 1);
+		render(companion, 40, 1);
+
+		publish(player, 2, 20);
+		expect(render(companion, 20, 1) - render(player, 20, 1)).toBeCloseTo(100, 4);
+
+		publish(companion, 2, 120);
+		for(let frame = 0; frame < 4; frame++) {
+			expect(render(companion, 20, 2) - render(player, 20, 2)).toBeCloseTo(100, 4);
+		}
+	});
+
+	it('draws a committed step it has not seen yet while the next one is being written', () => {
+		const components = createGated([0, 0], [10, 0]);
+		startPublishing(components, 999);
+
+		expect(render(components, 25, 1)).toBeCloseTo(5, 4);
+	});
+
+	it('uses the current publication once its run commits', () => {
+		const components = createGated([0, 0], [10, 0]);
+		render(components, 50, 1);
+		publish(components, 2, 20);
+
+		expect(render(components, 25, 1)).toBeCloseTo(10, 4);
+		expect(render(components, 25, 2)).toBeCloseTo(15, 4);
+	});
+
+	it('is ungated for an entity no registered system published', () => {
+		const components = createEntity([0, 0], [10, 0]);
+		render(components, 50, 1);
+		publish(components, 2, 20);
+
+		expect(render(components, 25, 1)).toBeCloseTo(15, 4);
 	});
 });
 

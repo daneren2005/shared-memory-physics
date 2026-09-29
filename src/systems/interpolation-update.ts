@@ -1,8 +1,14 @@
 import { loadFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
-import type { EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
+import type { EntityUpdateFunction, EntityWorkerSystemWorld } from '@daneren2005/shared-memory-ecs';
 import type { InterpolationComponents, InterpolationUpdateComponents } from '../components/registry';
 import {
+	INTERPOLATION_CHANNEL_INDEX,
 	INTERPOLATION_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_TICK_INDEX,
+	INTERPOLATION_PREVIOUS_TOTAL_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_X_INDEX,
+	INTERPOLATION_PREVIOUS_Y_INDEX,
 	INTERPOLATION_TARGET_X_INDEX,
 	INTERPOLATION_TARGET_Y_INDEX,
 	INTERPOLATION_SYNCED_STEP_DURATION_INDEX,
@@ -24,8 +30,13 @@ export const BACKLOG_TARGET_STEPS = 1.5;
 // gentle speed-up rather than a jump across the banked segment.
 export const BACKLOG_CATCHUP_RATE = 0.5;
 
+export interface InterpolationWorld extends EntityWorkerSystemWorld {
+	// Committed physics tick per interpolation channel, snapshotted once per run by InterpolationSystem.
+	committedTicks?: Array<number>
+}
+
 // Consume published simulation time while advancing toward the last coherent target.
-export const interpolationUpdate: EntityUpdateFunction<InterpolationComponents, InterpolationUpdateComponents> = (world, entityId, components) => {
+export const interpolationUpdate: EntityUpdateFunction<InterpolationComponents, InterpolationUpdateComponents, InterpolationWorld> = (world, entityId, components) => {
 	const interpolation = components.interpolation;
 	const transform = components.transform;
 
@@ -36,8 +47,22 @@ export const interpolationUpdate: EntityUpdateFunction<InterpolationComponents, 
 	let x = transform[TRANSFORM_X_INDEX];
 	let y = transform[TRANSFORM_Y_INDEX];
 	let after = loadFloat32(interpolation, INTERPOLATION_TICK_INDEX);
+	let coherent = before === after;
 
-	if(before !== after) {
+	// A torn or not-yet-committed publication falls back to the one it replaced, so every entity of a physics run
+	// renders the same step even while the worker is part way through publishing it.
+	const committedTick = world.committedTicks?.[interpolation[INTERPOLATION_CHANNEL_INDEX]];
+	if(committedTick !== undefined && !Number.isNaN(committedTick) && !(coherent && after <= committedTick)) {
+		const previousBefore = loadFloat32(interpolation, INTERPOLATION_PREVIOUS_TICK_INDEX);
+		duration = interpolation[INTERPOLATION_PREVIOUS_DURATION_INDEX];
+		totalDuration = interpolation[INTERPOLATION_PREVIOUS_TOTAL_DURATION_INDEX];
+		x = interpolation[INTERPOLATION_PREVIOUS_X_INDEX];
+		y = interpolation[INTERPOLATION_PREVIOUS_Y_INDEX];
+		after = loadFloat32(interpolation, INTERPOLATION_PREVIOUS_TICK_INDEX);
+		coherent = previousBefore === after;
+	}
+
+	if(!coherent) {
 		// Keep consuming the last coherent segment; dropping this frame makes moving ships stutter relative to a camera.
 		duration = interpolation[INTERPOLATION_SYNCED_STEP_DURATION_INDEX];
 		if(duration <= 0 || interpolation[INTERPOLATION_REMAINING_DURATION_INDEX] <= 0) {

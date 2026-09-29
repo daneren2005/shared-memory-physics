@@ -1,7 +1,7 @@
 import { physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { EntityWorkerSystemCallbacks } from '@daneren2005/shared-memory-ecs';
-import { loadFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
+import { loadFloat32, storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
 import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
 import {
@@ -18,9 +18,16 @@ import {
 	DYNAMICS_SIZE,
 } from '../../components/dynamics-component';
 import {
+	INTERPOLATION_CHANNEL_INDEX,
 	INTERPOLATION_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_TICK_INDEX,
+	INTERPOLATION_PREVIOUS_TOTAL_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_X_INDEX,
+	INTERPOLATION_PREVIOUS_Y_INDEX,
 	INTERPOLATION_SIZE,
 	INTERPOLATION_TICK_INDEX,
+	INTERPOLATION_TOTAL_DURATION_INDEX,
 } from '../../components/interpolation-component';
 
 // Drives the update against raw blocks with no world or system, pinning down the integration math itself;
@@ -197,6 +204,48 @@ describe('physics-update', () => {
 		);
 
 		expect(dirtyBeforeSegmentWrite).toBe(true);
+		expect(loadFloat32(interpolationBlock, INTERPOLATION_TICK_INDEX)).toBe(2);
+	});
+
+	it('keeps the publication it replaces complete in the previous slot before invalidating it', () => {
+		const transform = new Float32Array(TRANSFORM_SIZE);
+		transform[TRANSFORM_X_INDEX] = 5;
+		transform[TRANSFORM_Y_INDEX] = 7;
+		const velocity = new Float32Array(VELOCITY_SIZE);
+		velocity[VELOCITY_X_INDEX] = 10;
+		const interpolationBlock = new Float32Array(new SharedArrayBuffer(INTERPOLATION_SIZE * Float32Array.BYTES_PER_ELEMENT));
+		interpolationBlock[INTERPOLATION_DURATION_INDEX] = 40;
+		interpolationBlock[INTERPOLATION_TOTAL_DURATION_INDEX] = 90;
+		storeFloat32(interpolationBlock, INTERPOLATION_TICK_INDEX, 1);
+		let previousTickAtSegmentWrite = Number.NaN;
+		const interpolation = new Proxy(interpolationBlock, {
+			get(target, property) {
+				return Reflect.get(target, property, target);
+			},
+			set(target, property, value) {
+				if(property === String(INTERPOLATION_DURATION_INDEX)) {
+					previousTickAtSegmentWrite = loadFloat32(target, INTERPOLATION_PREVIOUS_TICK_INDEX);
+				}
+
+				return Reflect.set(target, property, value, target);
+			},
+		});
+
+		physicsUpdate(
+			{ gameTime: 0, elapsedTime: 50, tick: 2, interpolationChannel: 3, getString: () => '' },
+			1,
+			{ transform, velocity, interpolation },
+			{},
+			callbacks,
+		);
+
+		expect(previousTickAtSegmentWrite).toBe(1);
+		expect(interpolationBlock[INTERPOLATION_PREVIOUS_X_INDEX]).toBe(5);
+		expect(interpolationBlock[INTERPOLATION_PREVIOUS_Y_INDEX]).toBe(7);
+		expect(interpolationBlock[INTERPOLATION_PREVIOUS_DURATION_INDEX]).toBe(40);
+		expect(interpolationBlock[INTERPOLATION_PREVIOUS_TOTAL_DURATION_INDEX]).toBe(90);
+		expect(interpolationBlock[INTERPOLATION_CHANNEL_INDEX]).toBe(3);
+		expect(interpolationBlock[INTERPOLATION_TOTAL_DURATION_INDEX]).toBe(140);
 		expect(loadFloat32(interpolationBlock, INTERPOLATION_TICK_INDEX)).toBe(2);
 	});
 

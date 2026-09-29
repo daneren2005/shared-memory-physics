@@ -5,6 +5,7 @@ import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/r
 import { physicsUpdate, POSITION_UPDATED_EVENT, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
 import { COLLIDABLE_QUERY } from './collision';
 import { addPhysicalWorldData, type PhysicalWorldSource } from '../world';
+import { registerInterpolationChannel, unregisterInterpolationChannel } from './interpolation-channels';
 import {
 	DYNAMICS_COMMAND_ENTITY_ID_OFFSET,
 	DYNAMICS_COMMAND_FORCE_X_OFFSET,
@@ -93,6 +94,7 @@ export default class PhysicsSystem<
 	// Bumped per run and stamped onto every interpolated entity so a renderer can tell a blended position from one
 	// physics just replaced. Only has to change; a Float32 holds integers to 2^24, over nine days at a 50ms step.
 	tick = 0;
+	private readonly interpolationChannel: number;
 
 	// Undefined means "whenever something is listening", worked out per run by addDataToWorld.
 	reportMoves: boolean | undefined;
@@ -190,6 +192,17 @@ export default class PhysicsSystem<
 		this.spatialWorld = world;
 		this.reportMoves = options.reportMoves;
 		this.skipGroup = options.skipGroup;
+		this.interpolationChannel = registerInterpolationChannel(world, this);
+	}
+
+	// A worker run is still publishing until its reply lands, so its tick is not committed until then.
+	get committedTick(): number {
+		return this.isCurrentlyRunning() ? this.tick - 1 : this.tick;
+	}
+
+	destroy(): void {
+		unregisterInterpolationChannel(this.world, this.interpolationChannel);
+		super.destroy();
 	}
 
 	// Seeds a just-spawned, already-moving entity's interpolation so a renderer draws it leaving its spawn point
@@ -225,6 +238,7 @@ export default class PhysicsSystem<
 	// entity looks to a renderer like it has never had a physics step.
 	addDataToWorld(world: W): void {
 		world.tick = ++this.tick;
+		world.interpolationChannel = this.interpolationChannel;
 		addPhysicalWorldData(this.spatialWorld, world);
 		// Asked per run so a game can attach and drop the listener freely.
 		world.reportMoves = this.reportMoves ?? this.listenerCount(POSITION_UPDATED_EVENT) > 0;

@@ -348,10 +348,15 @@ world.addSystem(new InterpolationSystem<Components>(world));
 world.loadEntity({ x: 0, y: 0, width: 10, height: 10, velocityX: 100, interpolate: true });
 ```
 
-It takes no configuration and is not wired to the physics system. Physics publishes the transform, step
-duration, cumulative simulated time, and a tick stamp. Rendering caches each coherent target and its timing.
-If it catches physics mid-write, it continues consuming the cached segment until another complete snapshot
-is available.
+It takes no configuration. Physics publishes the transform, step duration, cumulative simulated time, and a tick
+stamp. Rendering caches each coherent target and its timing. If it catches physics mid-write, it continues
+consuming the cached segment until another complete snapshot is available.
+
+A worker publishes a run entity by entity while the main thread renders, so one frame can find some entities of a
+run at its new step and the rest at the old one - two ships flying in formation would then drift apart on screen.
+Each entity therefore keeps the publication it replaced, and `InterpolationSystem` snapshots every
+`PhysicsSystem`'s committed tick once per frame: a publication newer than its run's commit is drawn from the
+previous one until the whole run has landed. Both systems must share the same world object for this to apply.
 A game that retunes `deltaBetweenRuns` mid-flight is followed with nothing told to this system.
 
 Then draw from `interpolation` instead of `transform`, keeping the size and facing where they have always been:
@@ -489,15 +494,15 @@ spot, as above.
 
 The renderer retains the last coherent target while physics publishes a new step, so an overlapping read can keep advancing without freezing a frame.
 
-44 bytes per interpolated entity, four publication writes per entity per physics step, and a per-frame pass of one
+68 bytes per interpolated entity, ten publication writes per entity per physics step, and a per-frame pass of one
 lerp per entity on the main thread - order 0.2ms at 10,000 entities. An entity without the component pays
 nothing at all. `forceMainThread: false` plus a `getWorker` moves the pass to a worker for worlds large enough
 that it shows up in a profile, at the price of the render position being one frame stale; because consumers only
 ever read `interpolation.x`, that is a constructor flag rather than a migration.
 
 Physics marks the tick dirty before changing timing and position, then publishes the completed tick with
-a release store. The reader accepts a new snapshot only when its tick reads match; otherwise it continues
-toward the cached target.
+a release store. The reader accepts a new snapshot only when its tick reads match and its run has committed;
+otherwise it reads the previous publication, and failing that continues toward the cached target.
 
 ## Collisions
 

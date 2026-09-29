@@ -39,6 +39,17 @@ describe('physics-system', () => {
 		expect(system.isWorkerThread).toEqual(false);
 	});
 
+	it('commits a run only once it has finished publishing', () => {
+		world.loadEntity({ x: 0, y: 0, width: 1, height: 1, velocityX: 1 });
+		system.run(50);
+		expect(system.committedTick).toBe(system.tick);
+
+		// A worker run stays in flight until its reply lands.
+		const running = vi.spyOn(system, 'isCurrentlyRunning').mockReturnValue(true);
+		expect(system.committedTick).toBe(system.tick - 1);
+		running.mockRestore();
+	});
+
 	it('only includes entities with both a transform and a velocity', () => {
 		let moving = world.loadEntity({ x: 0, y: 0, width: 1, height: 1, velocityX: 1, velocityY: 1 });
 		let noVelocity = world.loadEntity({ x: 0, y: 0, width: 1, height: 1 });

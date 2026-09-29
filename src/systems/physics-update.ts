@@ -1,11 +1,17 @@
 import { addAtomicFloat32 } from '@daneren2005/shared-memory-objects/utils/atomic-math';
-import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
+import { loadFloat32, storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
 import type SharedSpatialMap from '@daneren2005/shared-memory-objects/spatial/shared-spatial-map';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, EntityWorkerSystemCallbacks, EntityWorkerSystemWorld, EntityQueryComponents, EntityUpdateComponents, EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
 import {
+	INTERPOLATION_CHANNEL_INDEX,
 	INTERPOLATION_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_TICK_INDEX,
+	INTERPOLATION_PREVIOUS_TOTAL_DURATION_INDEX,
+	INTERPOLATION_PREVIOUS_X_INDEX,
+	INTERPOLATION_PREVIOUS_Y_INDEX,
 	INTERPOLATION_TICK_INDEX,
 	INTERPOLATION_TOTAL_DURATION_INDEX,
 } from '../components/interpolation-component';
@@ -31,6 +37,8 @@ import { getSpatialMap, type PhysicalSystemWorld } from '../world';
 export interface PhysicsWorld extends EntityWorkerSystemWorld, PhysicalSystemWorld, DynamicsWorld {
 	// Which physics step this is, bumped per run. Only compared for equality - a publication stamp, not a clock.
 	tick: number
+	// Stamped onto each publication so InterpolationSystem can hold it back until this system's run commits.
+	interpolationChannel?: number
 	// Whether to report this run's moves. Set by PhysicsSystem from whether anything is listening, since the cost
 	// is paid in the worker (an id per moved entity, cloned across the boundary). Undefined means report.
 	reportMoves?: boolean
@@ -185,7 +193,7 @@ export function createPhysicsUpdate<
 
 			// Taken before anything is written, so the segment a renderer blends along runs from this step's start
 			// to its end.
-			startInterpolationStep(interpolation, world.elapsedTime);
+			startInterpolationStep(interpolation, components.transform, world);
 
 			// No tree means either this update was called by hand without preRun, or a grouped entity whose group
 			// holds nothing collidable: nothing to sweep against, plain move. Bound locally so it stays narrowed
@@ -437,7 +445,7 @@ export function physicsUpdate<
 	const interpolation = components.interpolation;
 	integrateDynamics(world, entityId, components.velocity, components.dynamics);
 
-	startInterpolationStep(interpolation, world.elapsedTime);
+	startInterpolationStep(interpolation, components.transform, world);
 	move(
 		entityId,
 		components.transform,
@@ -450,16 +458,26 @@ export function physicsUpdate<
 	finishInterpolationStep(interpolation, world.tick);
 }
 
-// Publish simulated time under the dirty marker before moving the transform.
-function startInterpolationStep(interpolation: Float32Array | undefined, elapsedTime: number): void {
+// Preserve the current publication in the previous slot, then publish simulated time under the dirty marker
+// before moving the transform. The previous slot is complete before the current tick reads NaN, so a reader that
+// finds the current one torn or uncommitted always has a coherent step to fall back on.
+function startInterpolationStep(interpolation: Float32Array | undefined, transform: Float32Array, world: PhysicsWorld): void {
 	if(!interpolation) {
 		return;
 	}
 
+	storeFloat32(interpolation, INTERPOLATION_PREVIOUS_TICK_INDEX, Number.NaN);
+	interpolation[INTERPOLATION_PREVIOUS_X_INDEX] = transform[TRANSFORM_X_INDEX];
+	interpolation[INTERPOLATION_PREVIOUS_Y_INDEX] = transform[TRANSFORM_Y_INDEX];
+	interpolation[INTERPOLATION_PREVIOUS_DURATION_INDEX] = interpolation[INTERPOLATION_DURATION_INDEX];
+	interpolation[INTERPOLATION_PREVIOUS_TOTAL_DURATION_INDEX] = interpolation[INTERPOLATION_TOTAL_DURATION_INDEX];
+	storeFloat32(interpolation, INTERPOLATION_PREVIOUS_TICK_INDEX, loadFloat32(interpolation, INTERPOLATION_TICK_INDEX));
+
 	// Invalidate readers before changing timing or position.
 	storeFloat32(interpolation, INTERPOLATION_TICK_INDEX, Number.NaN);
-	interpolation[INTERPOLATION_DURATION_INDEX] = elapsedTime;
-	interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] += elapsedTime;
+	interpolation[INTERPOLATION_CHANNEL_INDEX] = world.interpolationChannel ?? 0;
+	interpolation[INTERPOLATION_DURATION_INDEX] = world.elapsedTime;
+	interpolation[INTERPOLATION_TOTAL_DURATION_INDEX] += world.elapsedTime;
 }
 
 // Stationary entities also publish time; release the matching transform and timing together.

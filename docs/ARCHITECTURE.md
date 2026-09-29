@@ -53,7 +53,8 @@ main thread                              worker thread (optional)
 | `systems/spatial-index.ts` | Same R-tree without collide categories — targeting / range / nearest queries. Snapshot per run. | `SpatialIndex`, `SpatialFilter` |
 | `systems/spatial-bounds.ts` | Converts transform/body shapes to the axis-aligned bounds stored in the live spatial map. | `spatialBounds` (internal) |
 | `world.ts` | `BaseWorld` subclass that owns the live `SharedSpatialMap`, tracks entity/component lifecycle, exposes entity-level searches, and supplies map handles to worker worlds. Its optional entity generic preserves a consumer's registered wrapper union through lifecycle events and spatial results. | `PhysicalWorld`, `PhysicalWorldEntity`, `PhysicalWorldOptions`, `addPhysicalWorldData`, `getSpatialMap` |
-| `systems/interpolation-system.ts` | Main-thread system that runs the per-frame render-position lerp. | `InterpolationSystem`, `InterpolationSystemConfig` |
+| `systems/interpolation-system.ts` | Main-thread system that runs the per-frame render-position lerp; snapshots committed physics ticks per run. | `InterpolationSystem`, `InterpolationSystemConfig` |
+| `systems/interpolation-channels.ts` | Per-world main-thread registry of PhysicsSystems (channel = index) so interpolation can snapshot each run's committed tick. | `registerInterpolationChannel`, `snapshotCommittedTicks` (internal) |
 | `systems/interpolation-update.ts` | The lerp itself (`render += (target-render)*frameDuration/remainingDuration`), runnable in a worker too. | `interpolationUpdate` |
 | `math/shapes.ts` | Primitive-shape overlap, contact direction + distance functions. Rectangle/circle/capsule remain an oriented core grown by a radius. | `shapesOverlap`, `contactNormal`, `orientedBoxesOverlap`, `segment*DistanceSquared`, `shapeHalfWidth/Height`, `shapeRadius`, `Vector` |
 | `math/polygons.ts` | Convex SAT used only when at least one side is a polygon; projects the other polygon or primitive analytically and supplies the matching contact normal. | `polygonShapesOverlap`, `polygonContactNormal` |
@@ -90,6 +91,13 @@ velocity command supplies jumping, and its worker-safe collision callback queues
   reads and accepts the new snapshot only when both samples are the same non-NaN tick. A subclass
   overriding `addDataToWorld` **must call `super.addDataToWorld(world)`** or nothing gets a tick and
   interpolation stops noticing steps.
+- **A run is drawn only once it has committed.** A worker publishes entity by entity while the main thread renders,
+  so without a gate one frame draws part of a run at its new step and part at the old one, and entities that ran out
+  of segment lose render time for good (the Wasp CI flake: two ships drifting 15-35px apart at 25fps). Physics copies
+  the current publication into the `PREVIOUS_*` slots (own NaN-dirty `PREVIOUS_TICK`) *before* dirtying the current
+  tick, and stamps its `interpolationChannel`. `PhysicsSystem.committedTick` is `tick - 1` while a worker run is in
+  flight. `InterpolationSystem.addDataToWorld` snapshots all channels once per run; an entity whose current tick is
+  torn or newer than its channel's commit reads the previous slot instead. Channel 0 (hand-driven updates) is ungated.
 - **Interpolation time is cumulative.** A late physics run may publish a long segment and then replace it with a
   normal step before rendering has played the long one. Physics therefore publishes total simulated duration;
   interpolation adds every newly observed millisecond to its remaining render timeline and moves from its current
