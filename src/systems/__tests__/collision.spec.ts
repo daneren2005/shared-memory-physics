@@ -51,7 +51,7 @@ function createEntity(box: Box, entityId: number): MovingEntity<PhysicsUpdateCom
 	body[BODY_MASK_INDEX] = box.collideMask ?? DEFAULT_COLLIDE_MASK;
 	let polygon: Float32Array | undefined;
 	if(box.vertices) {
-		const prepared = preparePolygon(box.vertices);
+		const prepared = preparePolygon(box.vertices, box.width, box.height);
 		polygon = new Float32Array(POLYGON_SIZE);
 		polygon.set([prepared.vertices.length / 2, ...prepared.vertices]);
 	}
@@ -184,6 +184,13 @@ describe('collision-broadphase', () => {
 
 			expect(result.fraction).toBeCloseTo(0.4, 3);
 			expect(blocking(result)).toEqual([2]);
+		});
+
+		it('tests an outline inset within a bigger box by the outline, not the box', () => {
+			const inset: Box = { ...triangle, width: 40, height: 40 };
+			expect(hits([inset, { x: 15, y: 15, width: 2, height: 2 }], 1)).toEqual([]);
+			expect(hits([inset, { x: 2, y: 0, width: 2, height: 2 }], 1)).toEqual([2]);
+			expect(hits([{ ...inset, angle: Math.PI / 2 }, { x: 0, y: 5.5, width: 2, height: 2 }], 1)).toEqual([2]);
 		});
 
 		it('tests polygon pairs symmetrically and follows their angles', () => {

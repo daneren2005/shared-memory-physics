@@ -227,9 +227,25 @@ describe('components', () => {
 				.toThrow('Polygon edges cannot cross or share non-adjacent vertices');
 		});
 
-		it('does not allow polygon vertices to compete with another size', () => {
-			expect(() => world.loadEntity({ width: 10, height: 10, vertices: [[-1, -1], [1, 0], [-1, 1]] }))
-				.toThrow('A transform takes polygon vertices, a radius, or a width and height');
+		it('does not allow polygon vertices to compete with a radius', () => {
+			expect(() => world.loadEntity({ radius: 10, vertices: [[-1, -1], [1, 0], [-1, 1]] }))
+				.toThrow('A transform takes polygon vertices or a radius, not both');
+		});
+
+		it('keeps a given width and height and stores the vertices as offsets inside that box', () => {
+			const entity = world.loadEntity({ x: 0, y: 0, width: 20, height: 10, vertices: [[-4, -2], [6, 0], [-4, 2]] });
+
+			expect(entity.components.body?.shape).toEqual(SHAPE_POLYGON);
+			expect(entity.components.transform?.width).toEqual(20);
+			expect(entity.components.transform?.height).toEqual(10);
+			expect(Array.from(entity.components.polygon!.block.slice(1, 7))).toEqual([-0.2, -0.2, 0.3, 0, -0.2, 0.2].map(Math.fround));
+		});
+
+		it('rejects a sized polygon that pokes out of its box', () => {
+			expect(() => world.loadEntity({ width: 10, height: 10, vertices: [[-1, -1], [6, 0], [-1, 1]] }))
+				.toThrow('Polygon vertices must fit inside the width and height they are given with');
+			expect(() => world.loadEntity({ width: 10, vertices: [[-1, -1], [1, 0], [-1, 1]] }))
+				.toThrow('A sized polygon needs both a width and a height');
 		});
 
 		it('is loaded for anything with a size, so everything in the world collides by default', () => {

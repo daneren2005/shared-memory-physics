@@ -5,6 +5,8 @@ export type PolygonVertex = readonly [x: number, y: number];
 
 export interface PolygonConfig {
 	vertices?: ReadonlyArray<PolygonVertex>
+	width?: number
+	height?: number
 }
 
 export interface PolygonComponent {
@@ -35,7 +37,7 @@ export const polygonDefinition: ComponentDefinition<PolygonComponent, Float32Arr
 	size: POLYGON_SIZE,
 	loadProperties: ['vertices'],
 	toBlock(config) {
-		const prepared = preparePolygon(config.vertices);
+		const prepared = preparePolygon(config.vertices, config.width, config.height);
 
 		return [prepared.vertices.length / 2, ...prepared.vertices];
 	},
@@ -44,7 +46,9 @@ export const polygonDefinition: ComponentDefinition<PolygonComponent, Float32Arr
 	},
 };
 
-export function preparePolygon(vertices: ReadonlyArray<PolygonVertex> | undefined): PreparedPolygon {
+// With a width and height, the vertices are offsets from the entity's centre that must fit inside that box, so the
+// outline can sit tighter than the box a game draws (and sizes) the entity by. Without, the vertices' bounds are the box.
+export function preparePolygon(vertices: ReadonlyArray<PolygonVertex> | undefined, boxWidth?: number, boxHeight?: number): PreparedPolygon {
 	if(!vertices || vertices.length < 3 || vertices.length > MAX_POLYGON_VERTICES) {
 		throw new Error(`A polygon needs between 3 and ${MAX_POLYGON_VERTICES} vertices`);
 	}
@@ -101,15 +105,30 @@ export function preparePolygon(vertices: ReadonlyArray<PolygonVertex> | undefine
 		}
 	}
 
-	const centreX = (minX + maxX) / 2;
-	const centreY = (minY + maxY) / 2;
+	if((boxWidth === undefined) !== (boxHeight === undefined)) {
+		throw new Error('A sized polygon needs both a width and a height');
+	}
+	const sized = boxWidth !== undefined && boxHeight !== undefined;
+	if(sized) {
+		if(!(boxWidth > 0) || !(boxHeight > 0)) {
+			throw new Error('A sized polygon needs a positive width and height');
+		} else if(minX < -boxWidth / 2 || maxX > boxWidth / 2 || minY < -boxHeight / 2 || maxY > boxHeight / 2) {
+			// The broadphase indexes the entity by its box, so an outline poking out of it would miss contacts.
+			throw new Error('Polygon vertices must fit inside the width and height they are given with');
+		}
+	}
+
+	const outputWidth = sized ? boxWidth : width;
+	const outputHeight = sized ? boxHeight : height;
+	const centreX = sized ? 0 : (minX + maxX) / 2;
+	const centreY = sized ? 0 : (minY + maxY) / 2;
 	const normalized: Array<number> = [];
 	const ordered = winding > 0 ? vertices : vertices.toReversed();
 	for(const [x, y] of ordered) {
-		normalized.push((x - centreX) / width, (y - centreY) / height);
+		normalized.push((x - centreX) / outputWidth, (y - centreY) / outputHeight);
 	}
 
-	return { width, height, vertices: normalized };
+	return { width: outputWidth, height: outputHeight, vertices: normalized };
 }
 
 function segmentsIntersect(aStart: PolygonVertex, aEnd: PolygonVertex, bStart: PolygonVertex, bEnd: PolygonVertex): boolean {

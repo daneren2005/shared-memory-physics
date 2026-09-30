@@ -21,6 +21,7 @@ export interface TransformConfig {
 	height: number
 	angle?: number
 	radius?: number
+	// A convex outline; alone its bounds become width/height, alongside them it must fit inside that box.
 	vertices?: ReadonlyArray<PolygonVertex>
 }
 // The live runtime half: the physics system moves the position and can turn the box every run, so both round-trip
@@ -87,11 +88,11 @@ export const transformDefinition: ComponentDefinition<TransformComponent, Float3
 		let width = config.width;
 		let height = config.height;
 		if(vertices !== undefined) {
-			if(radius !== undefined || width !== undefined || height !== undefined) {
-				throw new Error('A transform takes polygon vertices, a radius, or a width and height');
+			if(radius !== undefined) {
+				throw new Error('A transform takes polygon vertices or a radius, not both');
 			}
 
-			const prepared = preparePolygon(vertices);
+			const prepared = preparePolygon(vertices, width, height);
 			width = prepared.width;
 			height = prepared.height;
 		}

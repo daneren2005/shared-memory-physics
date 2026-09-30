@@ -1,6 +1,6 @@
 import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component';
 import { POLYGON_VERTEX_COUNT_INDEX, POLYGON_VERTICES_INDEX } from '../components/polygon-component';
-import { capsuleHalfLength } from './shapes';
+import { capsuleCoreAngle, capsuleHalfLength } from './shapes';
 import type { Vector } from './shapes';
 
 interface Projection {
@@ -185,8 +185,9 @@ function testRoundVertexAxes(
 	keepBest: boolean,
 ): boolean {
 	const half = roundShape === SHAPE_CAPSULE ? capsuleHalfLength(roundWidth, roundHeight) : 0;
-	const alongX = Math.cos(roundAngle) * half;
-	const alongY = Math.sin(roundAngle) * half;
+	const coreAngle = capsuleCoreAngle(roundWidth, roundHeight, roundAngle);
+	const alongX = Math.cos(coreAngle) * half;
+	const alongY = Math.sin(coreAngle) * half;
 	const startX = roundX - alongX;
 	const startY = roundY - alongY;
 	const endX = roundX + alongX;
@@ -277,7 +278,8 @@ function projectShape(
 
 	if(shape === SHAPE_CAPSULE) {
 		const half = capsuleHalfLength(width, height);
-		const reach = Math.abs(axisX * Math.cos(angle) + axisY * Math.sin(angle)) * half + height / 2;
+		const coreAngle = capsuleCoreAngle(width, height, angle);
+		const reach = Math.abs(axisX * Math.cos(coreAngle) + axisY * Math.sin(coreAngle)) * half + Math.min(width, height) / 2;
 		out.min = centre - reach;
 		out.max = centre + reach;
 		return;

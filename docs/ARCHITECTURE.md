@@ -42,7 +42,7 @@ main thread                              worker thread (optional)
 | `components/velocity-component.ts` | World units per **second**. Keyed `velocityX/Y` in configs, plus optional linear `damping` that bleeds speed off each step so a mover coasts to a stop. | `velocityDefinition`, `VELOCITY_*_INDEX` |
 | `components/dynamics-component.ts` | Persistent acceleration + inverse mass. Acceleration, queued forces, and queued impulses are integrated on the physics backend. | `dynamicsDefinition`, `DYNAMICS_*_INDEX` |
 | `components/body-component.ts` | Shape + collide category/mask + sensor + continuous-collision flag, plus a runtime-only `dying` bit. A body is what makes an entity collidable. Shape/sensor/ccd/blocksPath/dying share one packed flags word (`BODY_FLAGS_INDEX`), read via `bodyShape`/`isSensor`/`isContinuous`/`blocksPath`/`isDying`. `blocksPath` is a pathfinding hint the physics never reads. | `bodyDefinition`, `canCollide`, `isSensor`, `isContinuous`, `blocksPath`, `isDying`, `markDying`, `bodyShape`, `SHAPE_*`, `BODY_*` |
-| `components/polygon-component.ts` | Fixed-capacity sidecar block for convex polygon vertices. Validates 3-16 boundary vertices and stores them normalized around their source bounds, so transform size scales the outline. Only polygon entities allocate it. | `polygonDefinition`, `preparePolygon`, `MAX_POLYGON_VERTICES`, `POLYGON_*` |
+| `components/polygon-component.ts` | Fixed-capacity sidecar block for convex polygon vertices. Validates 3-16 boundary vertices and stores them normalized around their source bounds (or a given width/height box), so transform size scales the outline. Only polygon entities allocate it. | `polygonDefinition`, `preparePolygon`, `MAX_POLYGON_VERTICES`, `POLYGON_*` |
 | `components/bounciness-component.ts` | Standalone bounce float (not part of body block). | `bouncinessDefinition`, `BOUNCINESS_INDEX` |
 | `components/interpolation-component.ts` | Render position + publication/pacing fields (`tick`, latest/cumulative/remaining duration, cached target), exposed on the block so a spawn can seed a first segment by hand. | `interpolationDefinition`, `snapEntity`, `startSpawnInterpolation`, `INTERPOLATION_*_INDEX` |
 | `systems/physics-system.ts` | Main-thread `EntityWorkerSystem`: gathers entities, snapshots one-run force/impulse/velocity commands, decides which queries/blocks travel, stamps `tick`, and gates move-reporting. Fixed step default. `startInterpolation(entity)` seeds a just-spawned mover so it is drawn moving now (feeds its step + accumulator to `startSpawnInterpolation`). | `PhysicsSystem`, `DEFAULT_PHYSICS_STEP_MS`, `PhysicsSystemConfig`, `VelocityAssignment` |
@@ -71,8 +71,9 @@ velocity command supplies jumping, and its worker-safe collision callback queues
 ## Invariants & gotchas (the non-obvious rules)
 
 - **Polygon bodies are convex and capped at 16 vertices.** `vertices` loads a separate fixed-size polygon block,
-  so primitive bodies pay no vertex storage. Loading recentres and normalizes the outline to its source bounds;
-  the transform's width/height scale it thereafter. Primitive pairs stay on `math/shapes.ts`; only a pair with
+  so primitive bodies pay no vertex storage. Loading recentres and normalizes the outline to its source bounds -
+  or, given with `width`/`height`, keeps the vertices as centre offsets that must fit inside that box (the
+  broadphase indexes the box); the transform's width/height scale it thereafter. Primitive pairs stay on `math/shapes.ts`; only a pair with
   `SHAPE_POLYGON` enters `math/polygons.ts`. Concave outlines must be split into convex bodies.
 - **Fixed 50ms step by default** (`DEFAULT_PHYSICS_STEP_MS`). A move is swept where it *ends*, so a
   step longer than an obstacle is thick lets a fast entity tunnel through it. `deltaBetweenRuns: 0`
@@ -187,7 +188,8 @@ velocity command supplies jumping, and its worker-safe collision callback queues
 - **Render position (`interpolation`) is read-only for rendering.** Anything deterministic (AI,
   targeting, saves) must read `transform`; the render position depends on local frame timing.
 - **Only capsules must name their `shape`**; circle vs rectangle is inferred from `radius` vs
-  `width/height`. Touching exactly = not overlapping; zero-area = never overlaps.
+  `width/height`. A capsule's core runs along its longer side (`capsuleCoreAngle`), so a taller-than-wide
+  capsule lies a quarter turn off its facing. Touching exactly = not overlapping; zero-area = never overlaps.
 - **The bounce normal comes off the same geometry detection used** (`contactNormal`), not off the
   bounding boxes: boxes part along the shallowest of their own four face directions, rounds along the
   gap between their cores. A bounding-box normal is only ever one of the world axes, so a pair meeting

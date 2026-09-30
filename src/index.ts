@@ -136,6 +136,7 @@ export {
 	shapeIsEmpty,
 	shapeRadius,
 	capsuleHalfLength,
+	capsuleCoreAngle,
 	boundsHalfWidth,
 	boundsHalfHeight,
 	orientedBoxesOverlap,

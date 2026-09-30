@@ -93,7 +93,7 @@ has a `polygon` component holding its outline:
 | ----------------- | ------------------------------------- | ------------------------------------------------------------- |
 | `SHAPE_RECTANGLE` | `width`, `height`                     | a `width` x `height` box turned to `angle` – the default      |
 | `SHAPE_CIRCLE`    | `radius`                              | a circle of diameter `width`, which `angle` does not affect   |
-| `SHAPE_CAPSULE`   | `width`, `height`, `shape`             | `width` from end to end, `height` thick, lying along `angle`  |
+| `SHAPE_CAPSULE`   | `width`, `height`, `shape`             | a pill along its longer side, as thick as its shorter side    |
 | `SHAPE_POLYGON`   | `vertices`                             | a convex 3-16 vertex outline, scaled and turned by its transform |
 
 ```ts
@@ -108,8 +108,18 @@ world.loadEntity({ x: 0, y: 0, vertices: [[-8, -6], [10, 0], [-8, 6]] });       
 Polygon vertices are local to the entity. They must describe a convex boundary in clockwise or counter-clockwise
 order; concave, collinear, non-finite, and out-of-range outlines throw during loading. Their bounding box becomes
 the transform's initial `width` and `height`, and the stored vertices are normalized around that box's centre.
-Changing the transform size therefore scales the polygon, while `angle` rotates it around that centre. Give
-`vertices` by themselves rather than alongside `radius` or `width`/`height`.
+Changing the transform size therefore scales the polygon, while `angle` rotates it around that centre. `vertices`
+cannot be given alongside `radius`.
+
+Give `width` and `height` with the `vertices` when the outline should sit tighter than the box the entity is sized
+by - a sprite with the hull drawn inside it, say. The box then stays that size, the vertices are offsets from the
+entity's centre rather than from their own bounds, and every one must lie inside the box (the broadphase indexes
+the box, so an outline poking out of it would miss contacts):
+
+```ts
+// A 40x40 sprite whose triangular hull fills only part of it; x/y and the drawn size stay the sprite's.
+world.loadEntity({ x: 0, y: 0, width: 40, height: 40, vertices: [[-12, -15], [14, 0], [-12, 15]] });
+```
 
 `radius` is the same size said differently: it loads as a `width` and a `height` of the diameter, so there is
 still only one size in the block however the config spelled it. Giving both a `radius` and a `width` throws
@@ -118,9 +128,10 @@ rather than one quietly winning. A config that says nothing about its `shape` is
 have to name their shape**, and an
 unrecognised one throws rather than quietly becoming a rectangle.
 
-A capsule's `width` is its **whole** length, caps included, and it lies along the way the entity faces: a 40x10
-capsule is a 30-long core with a 5 radius cap at each end, and it is the same 10 thick all the way down. One
-told it is no longer than it is wide collapses to a circle rather than turning itself inside out.
+A capsule lies along its **longer** side, caps included: a 40x10 capsule is a 30-long core along the way the entity
+faces with a 5 radius cap at each end, the same 10 thick all the way down, and a 10x40 one is that same pill turned
+a quarter, running along the entity's height instead - handy for art drawn nose-up. `capsuleCoreAngle` gives the
+angle the core lies at. One as long as it is wide is a circle.
 
 Because a circle is a capsule whose core has no length, the three primitive shapes are *an oriented core grown by a
 radius* - a box with no radius, a point, or a segment - which leaves only three overlap tests rather than one
@@ -139,7 +150,7 @@ reflects around; a game reaching for its own response can use it the same way.
 `shapesOverlap` and `contactNormal` are the allocation-free primitive-shape functions. Their polygon counterparts
 are `polygonShapesOverlap` and `polygonContactNormal`, which additionally take the polygon component blocks.
 `shapeHalfWidth` / `shapeHalfHeight` (the axis-aligned box a shape is
-indexed under), `shapeRadius`, `shapeIsEmpty`, `capsuleHalfLength`, and the distance primitives underneath -
+indexed under), `shapeRadius`, `shapeIsEmpty`, `capsuleHalfLength`, `capsuleCoreAngle`, and the distance primitives underneath -
 `segmentSegmentDistanceSquared`, `segmentBoxDistanceSquared` and `pointSegmentDistanceSquared`, each of which
 takes an optional `out` vector and fills it with the gap it measured. `orientedBoxesOverlap`, `boundsHalfWidth`
 and `boundsHalfHeight` are still there and still rectangle-only.

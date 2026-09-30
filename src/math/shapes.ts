@@ -5,7 +5,7 @@
 // The three shapes are one idea: an oriented core grown by a radius.
 //   rectangle - a width x height box,       radius 0
 //   circle    - a point,                    radius width / 2
-//   capsule   - a segment along its facing, radius height / 2
+//   capsule   - a segment along its longer side, radius half the shorter side
 // A circle is a capsule whose segment has no length, so there are only two core kinds - box and segment - and
 // three pair tests rather than one per shape combination. See shapesOverlap.
 
@@ -20,16 +20,20 @@ export interface Vector {
 const GAP: Vector = { x: 0, y: 0 };
 const CANDIDATE: Vector = { x: 0, y: 0 };
 
-// Clamped at 0 so a capsule shorter than it is wide collapses to a circle rather than turning inside out.
 export function capsuleHalfLength(width: number, height: number): number {
-	return Math.max(0, (width - height) / 2);
+	return Math.abs(width - height) / 2;
+}
+
+// The angle a capsule's core segment lies at: its facing, or a quarter turn off it when it is taller than wide.
+export function capsuleCoreAngle(width: number, height: number, angle: number): number {
+	return height > width ? angle + Math.PI / 2 : angle;
 }
 
 export function shapeRadius(shape: number, width: number, height: number): number {
 	if(shape === SHAPE_CIRCLE) {
 		return width / 2;
 	} else if(shape === SHAPE_CAPSULE) {
-		return height / 2;
+		return Math.min(width, height) / 2;
 	}
 
 	return 0;
@@ -41,7 +45,7 @@ export function shapeIsEmpty(shape: number, width: number, height: number): bool
 	if(shape === SHAPE_CIRCLE) {
 		return width <= 0;
 	} else if(shape === SHAPE_CAPSULE) {
-		return height <= 0;
+		return width <= 0 || height <= 0;
 	}
 
 	return width <= 0 || height <= 0;
@@ -54,7 +58,7 @@ export function shapeHalfWidth(shape: number, width: number, height: number, ang
 	if(shape === SHAPE_CIRCLE) {
 		return width / 2;
 	} else if(shape === SHAPE_CAPSULE) {
-		return Math.abs(Math.cos(angle)) * capsuleHalfLength(width, height) + height / 2;
+		return Math.abs(Math.cos(capsuleCoreAngle(width, height, angle))) * capsuleHalfLength(width, height) + Math.min(width, height) / 2;
 	}
 
 	return boundsHalfWidth(width, height, angle);
@@ -63,7 +67,7 @@ export function shapeHalfHeight(shape: number, width: number, height: number, an
 	if(shape === SHAPE_CIRCLE) {
 		return width / 2;
 	} else if(shape === SHAPE_CAPSULE) {
-		return Math.abs(Math.sin(angle)) * capsuleHalfLength(width, height) + height / 2;
+		return Math.abs(Math.sin(capsuleCoreAngle(width, height, angle))) * capsuleHalfLength(width, height) + Math.min(width, height) / 2;
 	}
 
 	return boundsHalfHeight(width, height, angle);
@@ -94,8 +98,9 @@ export function shapesOverlap(
 	}
 
 	const bHalf = coreHalfLength(bShape, bWidth, bHeight);
-	const bCos = Math.cos(bAngle) * bHalf;
-	const bSin = Math.sin(bAngle) * bHalf;
+	const bCoreAngle = capsuleCoreAngle(bWidth, bHeight, bAngle);
+	const bCos = Math.cos(bCoreAngle) * bHalf;
+	const bSin = Math.sin(bCoreAngle) * bHalf;
 	const bRadius = shapeRadius(bShape, bWidth, bHeight);
 
 	if(!aIsRound) {
@@ -106,8 +111,9 @@ export function shapesOverlap(
 	}
 
 	const aHalf = coreHalfLength(aShape, aWidth, aHeight);
-	const aCos = Math.cos(aAngle) * aHalf;
-	const aSin = Math.sin(aAngle) * aHalf;
+	const aCoreAngle = capsuleCoreAngle(aWidth, aHeight, aAngle);
+	const aCos = Math.cos(aCoreAngle) * aHalf;
+	const aSin = Math.sin(aCoreAngle) * aHalf;
 	const reach = shapeRadius(aShape, aWidth, aHeight) + bRadius;
 
 	return segmentSegmentDistanceSquared(
@@ -207,11 +213,13 @@ function roundsContactNormal(
 	out: Vector,
 ): boolean {
 	const aHalf = coreHalfLength(aShape, aWidth, aHeight);
-	const aCos = Math.cos(aAngle) * aHalf;
-	const aSin = Math.sin(aAngle) * aHalf;
+	const aCoreAngle = capsuleCoreAngle(aWidth, aHeight, aAngle);
+	const aCos = Math.cos(aCoreAngle) * aHalf;
+	const aSin = Math.sin(aCoreAngle) * aHalf;
 	const bHalf = coreHalfLength(bShape, bWidth, bHeight);
-	const bCos = Math.cos(bAngle) * bHalf;
-	const bSin = Math.sin(bAngle) * bHalf;
+	const bCoreAngle = capsuleCoreAngle(bWidth, bHeight, bAngle);
+	const bCos = Math.cos(bCoreAngle) * bHalf;
+	const bSin = Math.sin(bCoreAngle) * bHalf;
 
 	const distance = Math.sqrt(segmentSegmentDistanceSquared(
 		aX - aCos, aY - aSin, aX + aCos, aY + aSin,
@@ -238,8 +246,9 @@ function boxRoundContactNormal(
 	out: Vector,
 ): boolean {
 	const half = coreHalfLength(roundShape, roundWidth, roundHeight);
-	const halfX = Math.cos(roundAngle) * half;
-	const halfY = Math.sin(roundAngle) * half;
+	const coreAngle = capsuleCoreAngle(roundWidth, roundHeight, roundAngle);
+	const halfX = Math.cos(coreAngle) * half;
+	const halfY = Math.sin(coreAngle) * half;
 
 	const distance = Math.sqrt(segmentBoxDistanceSquared(
 		roundX - halfX, roundY - halfY, roundX + halfX, roundY + halfY,

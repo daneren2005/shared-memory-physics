@@ -1,6 +1,6 @@
 import {
 	boundsHalfHeight, boundsHalfWidth, contactNormal, orientedBoxesOverlap,
-	capsuleHalfLength, shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap,
+	capsuleCoreAngle, capsuleHalfLength, shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap,
 	pointSegmentDistanceSquared, segmentBoxDistanceSquared, segmentSegmentDistanceSquared,
 } from '../shapes';
 import type { Vector } from '../shapes';
@@ -212,9 +212,14 @@ describe('shapes', () => {
 			expect(capsuleHalfLength(40, 10)).toEqual(15);
 		});
 
-		it('collapses to nothing once it is no longer than it is wide', () => {
+		it('collapses to nothing when it is as long as it is wide', () => {
 			expect(capsuleHalfLength(10, 10)).toEqual(0);
-			expect(capsuleHalfLength(5, 10)).toEqual(0);
+		});
+
+		it('runs along the height when it is taller than wide', () => {
+			expect(capsuleHalfLength(10, 40)).toEqual(15);
+			expect(capsuleCoreAngle(10, 40, 0)).toBeCloseTo(QUARTER_TURN);
+			expect(capsuleCoreAngle(40, 10, 0)).toEqual(0);
 		});
 	});
 
@@ -222,6 +227,7 @@ describe('shapes', () => {
 		it('is half the width of a circle and half the height of a capsule', () => {
 			expect(shapeRadius(SHAPE_CIRCLE, 10, 10)).toEqual(5);
 			expect(shapeRadius(SHAPE_CAPSULE, 40, 10)).toEqual(5);
+			expect(shapeRadius(SHAPE_CAPSULE, 10, 40)).toEqual(5);
 		});
 
 		it('is nothing for a rectangle, whose outline is its own box', () => {
@@ -243,7 +249,8 @@ describe('shapes', () => {
 
 		it('needs the thickness of a capsule, however long it is', () => {
 			expect(shapeIsEmpty(SHAPE_CAPSULE, 40, 0)).toEqual(true);
-			expect(shapeIsEmpty(SHAPE_CAPSULE, 0, 10)).toEqual(false);
+			expect(shapeIsEmpty(SHAPE_CAPSULE, 0, 10)).toEqual(true);
+			expect(shapeIsEmpty(SHAPE_CAPSULE, 10, 40)).toEqual(false);
 		});
 	});
 
@@ -264,6 +271,12 @@ describe('shapes', () => {
 			// 40 long, 10 thick: 20 out along its facing, 5 across.
 			expect(shapeHalfWidth(SHAPE_CAPSULE, 40, 10, 0)).toBeCloseTo(20);
 			expect(shapeHalfHeight(SHAPE_CAPSULE, 40, 10, 0)).toBeCloseTo(5);
+		});
+
+		it('holds the whole height of a capsule taller than wide', () => {
+			expect(shapeHalfWidth(SHAPE_CAPSULE, 10, 40, 0)).toBeCloseTo(5);
+			expect(shapeHalfHeight(SHAPE_CAPSULE, 10, 40, 0)).toBeCloseTo(20);
+			expect(shapeHalfWidth(SHAPE_CAPSULE, 10, 40, QUARTER_TURN)).toBeCloseTo(20);
 		});
 
 		it('swaps a capsule\'s two axes on a quarter turn', () => {
@@ -331,6 +344,17 @@ describe('shapes', () => {
 				// Upright it no longer reaches along x, but it does up y.
 				expect(overlaps(SHAPE_CAPSULE, 0, 0, 40, 10, 0, SHAPE_CAPSULE, 30, 0, 40, 10, QUARTER_TURN)).toEqual(false);
 				expect(overlaps(SHAPE_CAPSULE, 0, 0, 40, 10, QUARTER_TURN, SHAPE_CAPSULE, 0, 30, 40, 10, QUARTER_TURN)).toEqual(true);
+			});
+
+			it('lies along its height when it is taller than wide, the same as a wide one turned a quarter', () => {
+				expect(overlaps(SHAPE_CAPSULE, 0, 0, 10, 40, 0, SHAPE_CIRCLE, 0, 20.99, 2, 2, 0)).toEqual(true);
+				expect(overlaps(SHAPE_CAPSULE, 0, 0, 10, 40, 0, SHAPE_CIRCLE, 0, 21, 2, 2, 0)).toEqual(false);
+				expect(overlaps(SHAPE_CAPSULE, 0, 0, 10, 40, 0, SHAPE_CIRCLE, 5.99, 0, 2, 2, 0)).toEqual(true);
+				expect(overlaps(SHAPE_CAPSULE, 0, 0, 10, 40, 0, SHAPE_CIRCLE, 6, 0, 2, 2, 0)).toEqual(false);
+				expect(overlaps(SHAPE_CAPSULE, 0, 0, 10, 40, 0, SHAPE_RECTANGLE, 0, 24.99, 10, 10, 0)).toEqual(true);
+				expect(overlaps(SHAPE_CAPSULE, 0, 0, 10, 40, 0, SHAPE_RECTANGLE, 0, 25, 10, 10, 0)).toEqual(false);
+				expect(overlaps(SHAPE_CAPSULE, 0, 0, 10, 40, 0, SHAPE_CAPSULE, 0, 39.99, 10, 40, 0)).toEqual(true);
+				expect(overlaps(SHAPE_CAPSULE, 0, 0, 10, 40, 0, SHAPE_CAPSULE, 0, 40, 10, 40, 0)).toEqual(false);
 			});
 
 			it('behaves as a circle once it is no longer than it is wide', () => {
