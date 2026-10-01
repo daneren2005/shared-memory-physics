@@ -45,21 +45,36 @@ function createEntity(prev: [number, number], current: [number, number], duratio
 	return { transform, interpolation };
 }
 
+// Consume the requested fraction of a step.
+function renderAt(components: { transform: Float32Array, interpolation: Float32Array }, alpha: number): [number, number] {
+	const elapsedTime = components.interpolation[INTERPOLATION_DURATION_INDEX] * alpha;
+	const world: EntityWorkerSystemWorld = { gameTime: 0, elapsedTime, getString: () => '' };
+	interpolationUpdate(world, 1, components, {}, callbacks);
+
+	return [
+		components.interpolation[INTERPOLATION_X_INDEX],
+		components.interpolation[INTERPOLATION_Y_INDEX],
+	];
+}
+
+function createTearing(prev: [number, number], current: [number, number]) {
+	const components = createEntity(prev, current);
+	const transform = new Proxy(components.transform, {
+		get(target, prop, receiver) {
+			if(prop === String(TRANSFORM_X_INDEX)) {
+				storeFloat32(components.interpolation, INTERPOLATION_TICK_INDEX, 2);
+			}
+
+			return Reflect.get(target, prop, receiver);
+		},
+	});
+
+	return { transform, interpolation: components.interpolation };
+}
+
 // Drives the update against raw blocks with no world or system, pinning down the blend itself;
 // interpolation-system.spec.ts covers the same end to end.
 describe('interpolation-update', () => {
-	// Consume the requested fraction of a step.
-	function renderAt(components: { transform: Float32Array, interpolation: Float32Array }, alpha: number): [number, number] {
-		const elapsedTime = components.interpolation[INTERPOLATION_DURATION_INDEX] * alpha;
-		const world: EntityWorkerSystemWorld = { gameTime: 0, elapsedTime, getString: () => '' };
-		interpolationUpdate(world, 1, components, {}, callbacks);
-
-		return [
-			components.interpolation[INTERPOLATION_X_INDEX],
-			components.interpolation[INTERPOLATION_Y_INDEX],
-		];
-	}
-
 	it('draws the position the step started from at the start of it', () => {
 		expect(renderAt(createEntity([0, 0], [10, 20]), 0)).toEqual([0, 0]);
 	});
@@ -164,21 +179,6 @@ describe('interpolation-update', () => {
 		});
 
 		// Publish during the transform read to invalidate the earlier timing snapshot.
-		function createTearing(prev: [number, number], current: [number, number]) {
-			const components = createEntity(prev, current);
-			const transform = new Proxy(components.transform, {
-				get(target, prop, receiver) {
-					if(prop === String(TRANSFORM_X_INDEX)) {
-						storeFloat32(components.interpolation, INTERPOLATION_TICK_INDEX, 2);
-					}
-
-					return Reflect.get(target, prop, receiver);
-				},
-			});
-
-			return { transform, interpolation: components.interpolation };
-		}
-
 		it('is dropped rather than drawn from a mismatched pair', () => {
 			const components = createTearing([0, 0], [10, 20]);
 			components.interpolation[INTERPOLATION_X_INDEX] = 3;
@@ -218,15 +218,15 @@ function publish(components: GatedComponents, tick: number, x: number): void {
 	storeFloat32(components.interpolation, INTERPOLATION_TICK_INDEX, tick);
 }
 
+function render(components: GatedComponents, elapsedTime: number, committedTick: number): number {
+	const world = { gameTime: 0, elapsedTime, committedTicks: [Number.NaN, committedTick], getString: () => '' };
+	interpolationUpdate(world, 1, components, {}, callbacks);
+
+	return components.interpolation[INTERPOLATION_X_INDEX];
+}
+
 // A worker publishes entity by entity while the main thread renders, so one frame can find part of a run published.
 describe('interpolation-update gated on a committed run', () => {
-	function render(components: GatedComponents, elapsedTime: number, committedTick: number): number {
-		const world = { gameTime: 0, elapsedTime, committedTicks: [Number.NaN, committedTick], getString: () => '' };
-		interpolationUpdate(world, 1, components, {}, callbacks);
-
-		return components.interpolation[INTERPOLATION_X_INDEX];
-	}
-
 	// The CI failure this guards: one ship took the new step while the other ran out of segment and stalled,
 	// leaving them permanently apart on screen.
 	it('keeps entities of one run in step when only some are published by the time they are drawn', () => {
@@ -347,6 +347,16 @@ function perFrameMovement(drawn: Array<number>): Array<number> {
 // Enough frames for the first step to have landed and the pacing to have settled.
 const WARMUP = 8;
 
+function averageBehind(lag: number): number {
+	const { drawn, simulated } = simulate(lag);
+	let total = 0;
+	for(let i = WARMUP; i < drawn.length; i++) {
+		total += simulated[i] - drawn[i];
+	}
+
+	return total / (drawn.length - WARMUP);
+}
+
 describe('interpolation-update pacing', () => {
 	// The lag a run comes back with, in ms, from instant up to later than the next step was due.
 	const LAGS = [0, 5, 16, 20, 30, 45];
@@ -412,18 +422,8 @@ describe('interpolation-update pacing', () => {
 
 	it('costs latency, and only latency, as a run gets slower', () => {
 		// A slower run is drawn further behind, bounded by one step plus the lag, not growing without limit.
-		const behind = (lag: number) => {
-			const { drawn, simulated } = simulate(lag);
-			let total = 0;
-			for(let i = WARMUP; i < drawn.length; i++) {
-				total += simulated[i] - drawn[i];
-			}
-
-			return total / (drawn.length - WARMUP);
-		};
-
-		const instant = behind(0);
-		const slow = behind(30);
+		const instant = averageBehind(0);
+		const slow = averageBehind(30);
 		expect(slow).toBeGreaterThan(instant);
 		// Anything past step + lag would mean the debt was banked rather than dropped.
 		expect(slow).toBeLessThanOrEqual(SPEED * (STEP + 30 + FRAME) / 1000);

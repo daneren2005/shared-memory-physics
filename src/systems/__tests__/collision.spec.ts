@@ -86,6 +86,39 @@ function hits(boxes: Array<Box>, entityId: number): Array<number> {
 	return overlapping(build(entities), entities[entityId - 1]);
 }
 
+function closeIn(seconds: number): Array<number> {
+	const entities = createEntities([
+		{ x: 0, y: 0, velocityX: 40 },
+		{ x: 80, y: 0, velocityX: -40 },
+	]);
+	const broadphase = build(entities, seconds);
+
+	entities[0].components.transform[TRANSFORM_X_INDEX] = 40;
+	entities[1].components.transform[TRANSFORM_X_INDEX] = 40;
+
+	return overlapping(broadphase, entities[0]);
+}
+
+function sweep(boxes: Array<Box>, entityId: number, moveX: number, moveY: number, seconds = 0): SweepResult<PhysicsUpdateComponents> {
+	const entities = createEntities(boxes);
+
+	return build(entities, seconds).sweep(entities[entityId - 1], moveX, moveY);
+}
+
+function resolve(boxes: Array<Box>, entityId: number, moveX: number, moveY: number, slide = true): MoveResult<PhysicsUpdateComponents> {
+	const entities = createEntities(boxes);
+
+	return build(entities).resolveMove(entities[entityId - 1], moveX, moveY, slide);
+}
+
+function sweptOverlapping(boxes: Array<Box>, entityId: number, moveX: number, moveY: number): Array<number> {
+	const entities = createEntities(boxes);
+	const found: Array<number> = [];
+	build(entities).forEachOverlapping(entities[entityId - 1], other => found.push(other.entityId), moveX, moveY);
+
+	return found.sort((first, second) => first - second);
+}
+
 describe('collision-broadphase', () => {
 	it('finds an entity sitting on top of it', () => {
 		expect(hits([{ x: 0, y: 0 }, { x: 5, y: 0 }], 1)).toEqual([2]);
@@ -343,19 +376,6 @@ describe('collision-broadphase', () => {
 	// pair that only meets mid-run is never looked at.
 	describe('allowing for movement', () => {
 		// Two entities closing at 40/s from 80 apart, both at x = 40 when the run ends.
-		function closeIn(seconds: number): Array<number> {
-			const entities = createEntities([
-				{ x: 0, y: 0, velocityX: 40 },
-				{ x: 80, y: 0, velocityX: -40 },
-			]);
-			const broadphase = build(entities, seconds);
-
-			entities[0].components.transform[TRANSFORM_X_INDEX] = 40;
-			entities[1].components.transform[TRANSFORM_X_INDEX] = 40;
-
-			return overlapping(broadphase, entities[0]);
-		}
-
 		it('still finds an entity that has moved out from under its own box', () => {
 			expect(closeIn(ONE_SECOND)).toEqual([2]);
 		});
@@ -383,12 +403,6 @@ describe('collision-broadphase', () => {
 
 	// 10x10 boxes unless said otherwise, so two meet when their centres are 10 apart.
 	describe('sweeping a move', () => {
-		function sweep(boxes: Array<Box>, entityId: number, moveX: number, moveY: number, seconds = 0): SweepResult<PhysicsUpdateComponents> {
-			const entities = createEntities(boxes);
-
-			return build(entities, seconds).sweep(entities[entityId - 1], moveX, moveY);
-		}
-
 		it('takes the whole move when nothing is in the way', () => {
 			const result = sweep([{ x: 0, y: 0 }, { x: 100, y: 0 }], 1, 10, 0);
 
@@ -544,12 +558,6 @@ describe('collision-broadphase', () => {
 	// Resolving a move as physics applies it, with the single-axis slide that keeps a corner-clipping entity
 	// running along the wall. 10x10 boxes unless said otherwise.
 	describe('resolving a move with sliding', () => {
-		function resolve(boxes: Array<Box>, entityId: number, moveX: number, moveY: number, slide = true): MoveResult<PhysicsUpdateComponents> {
-			const entities = createEntities(boxes);
-
-			return build(entities).resolveMove(entities[entityId - 1], moveX, moveY, slide);
-		}
-
 		it('takes the whole move when nothing is in the way', () => {
 			const result = resolve([{ x: 0, y: 0 }, { x: 100, y: 0 }], 1, 10, 10);
 
@@ -703,18 +711,6 @@ describe('collision-broadphase', () => {
 	// A sensor takes part in detection but not the response: found and reported like any body, but never swept
 	// short against, and it sweeps short against nothing - so a solid passes straight through it.
 	describe('sensors', () => {
-		function sweep(boxes: Array<Box>, entityId: number, moveX: number, moveY: number): SweepResult<PhysicsUpdateComponents> {
-			const entities = createEntities(boxes);
-
-			return build(entities).sweep(entities[entityId - 1], moveX, moveY);
-		}
-
-		function resolve(boxes: Array<Box>, entityId: number, moveX: number, moveY: number, slide = true): MoveResult<PhysicsUpdateComponents> {
-			const entities = createEntities(boxes);
-
-			return build(entities).resolveMove(entities[entityId - 1], moveX, moveY, slide);
-		}
-
 		it('still reports a sensor a mover is sitting on top of', () => {
 			expect(hits([{ x: 0, y: 0 }, { x: 5, y: 0, sensor: true }], 1)).toEqual([2]);
 		});
@@ -770,22 +766,8 @@ describe('collision-broadphase', () => {
 	// A continuous body is tested along its whole path this run, not only where its step ends, so a move long
 	// enough to carry it clean past something still catches it. 10x10 boxes unless said otherwise.
 	describe('continuous collision detection', () => {
-		function sweep(boxes: Array<Box>, entityId: number, moveX: number, moveY: number): SweepResult<PhysicsUpdateComponents> {
-			const entities = createEntities(boxes);
-
-			return build(entities).sweep(entities[entityId - 1], moveX, moveY);
-		}
-
 		// forEachOverlapping is run after the entity has moved, so the searcher stands at the end and the move it
 		// just took is handed back in - which is how the swept path is reconstructed.
-		function sweptOverlapping(boxes: Array<Box>, entityId: number, moveX: number, moveY: number): Array<number> {
-			const entities = createEntities(boxes);
-			const found: Array<number> = [];
-			build(entities).forEachOverlapping(entities[entityId - 1], other => found.push(other.entityId), moveX, moveY);
-
-			return found.sort((first, second) => first - second);
-		}
-
 		it('stops a fast box on the thin wall a plain body flies clean through', () => {
 			// The tunnelling case from the plain sweep: a 2-wide box moving 60 past a 1-thick wall at 50. Plain, it
 			// ends past the wall with nothing to land on; continuous, it is caught and stops on the near face.

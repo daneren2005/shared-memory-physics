@@ -27,6 +27,17 @@ function drawn(entity: BaseEntity<Components, Config>): [number, number] {
 	return [block.x, block.y];
 }
 
+async function teleport(
+	createEntity: (config: Config) => BaseEntity<Components, Config>,
+	drawnOver: (entity: BaseEntity<Components, Config>, count: number) => Promise<Array<[number, number]>>,
+): Promise<BaseEntity<Components, Config>> {
+	const entity = createEntity({ x: 0, y: 0, velocityX: SPEED });
+	await drawnOver(entity, 12);
+	entity.components.transform!.x = 500;
+
+	return entity;
+}
+
 type Mode = 'main-thread' | 'worker';
 const MODES: Array<Mode> = ['main-thread', 'worker'];
 
@@ -172,16 +183,8 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 
 	// The one thing blending cannot work out: a teleport and a long move are the same two numbers.
 	describe('a teleport', () => {
-		async function teleport(): Promise<BaseEntity<Components, Config>> {
-			const entity = createEntity({ x: 0, y: 0, velocityX: SPEED });
-			await drawnOver(entity, 12);
-			entity.components.transform!.x = 500;
-
-			return entity;
-		}
-
 		it('is drawn as a slide without snapEntity', async () => {
-			const entity = await teleport();
+			const entity = await teleport(createEntity, drawnOver);
 			const before = drawn(entity)[0];
 			await frame();
 
@@ -191,7 +194,7 @@ describe.each(MODES)('interpolation-system (%s)', (mode) => {
 		});
 
 		it('lands on the very next frame with it', async () => {
-			const entity = await teleport();
+			const entity = await teleport(createEntity, drawnOver);
 			snapEntity(entity);
 			await frame();
 
