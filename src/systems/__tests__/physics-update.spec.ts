@@ -331,35 +331,36 @@ describe('physics-update', () => {
 		expect(move([0, 0], [velocity[VELOCITY_X_INDEX], velocity[VELOCITY_Y_INDEX]], 1000)).toEqual([7, -7]);
 	});
 
+	// Every event the move fired, so a test asserts how many there were as well as what they were about. No
+	// position travels; `endedUpAt` reads the shared transform block instead.
+	function eventsFrom(velocity: [number, number]): { events: Array<string>, endedUpAt: [number, number] } {
+		const events: Array<string> = [];
+		const transform = new Float32Array(TRANSFORM_SIZE);
+		const velocityBlock = new Float32Array(VELOCITY_SIZE);
+		velocityBlock[VELOCITY_X_INDEX] = velocity[0];
+		velocityBlock[VELOCITY_Y_INDEX] = velocity[1];
+
+		physicsUpdate({ gameTime: 0, elapsedTime: 1000, tick: 1, getString: () => '' }, 7, { transform, velocity: velocityBlock }, {}, {
+			...callbacks,
+			emitSystemEvent(event, entityId) {
+				events.push(`${event}.${entityId}`);
+			},
+			// A move is reported through the batched event alone; the per-entity callbacks must not fire for one too.
+			emitEntityEvent(entityId, event) {
+				events.push(`${entityId}.${event}`);
+			},
+			entityComponentChanged(entityId, componentName, prop) {
+				events.push(`${entityId}.${componentName}.${String(prop)}`);
+			},
+		});
+
+		return {
+			events,
+			endedUpAt: [transform[TRANSFORM_X_INDEX], transform[TRANSFORM_Y_INDEX]],
+		};
+	}
+
 	describe('reporting the move', () => {
-		// Every event the move fired, so a test asserts how many there were as well as what they were about. No
-		// position travels; `endedUpAt` reads the shared transform block instead.
-		function eventsFrom(velocity: [number, number]): { events: Array<string>, endedUpAt: [number, number] } {
-			const events: Array<string> = [];
-			const transform = new Float32Array(TRANSFORM_SIZE);
-			const velocityBlock = new Float32Array(VELOCITY_SIZE);
-			velocityBlock[VELOCITY_X_INDEX] = velocity[0];
-			velocityBlock[VELOCITY_Y_INDEX] = velocity[1];
-
-			physicsUpdate({ gameTime: 0, elapsedTime: 1000, tick: 1, getString: () => '' }, 7, { transform, velocity: velocityBlock }, {}, {
-				...callbacks,
-				emitSystemEvent(event, entityId) {
-					events.push(`${event}.${entityId}`);
-				},
-				// A move is reported through the batched event alone; the per-entity callbacks must not fire for one too.
-				emitEntityEvent(entityId, event) {
-					events.push(`${entityId}.${event}`);
-				},
-				entityComponentChanged(entityId, componentName, prop) {
-					events.push(`${entityId}.${componentName}.${String(prop)}`);
-				},
-			});
-
-			return {
-				events,
-				endedUpAt: [transform[TRANSFORM_X_INDEX], transform[TRANSFORM_Y_INDEX]],
-			};
-		}
 
 		it('reports the entity that moved once, by id, with the position left in the block', () => {
 			const { events, endedUpAt } = eventsFrom([3, -4]);
@@ -800,60 +801,107 @@ describe('createPhysicsUpdate', () => {
 	});
 });
 
+// One run of a bounce-only update. Returns each entity's ending velocity, where the flip shows up.
+function runBounce(units: Array<Unit>, elapsedTime = 1000, stopVelocityOnContact = false) {
+	const entities = units.map((unit, index) => createUnit(unit, index + 1));
+	const update = createPhysicsUpdate({ stopVelocityOnContact });
+
+	const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, getString: () => '' };
+	const queries = { [COLLIDABLE_QUERY]: entities };
+	const ignored: EntityWorkerSystemCallbacks = {
+		entityComponentChanged: () => {},
+		emitEntityEvent: () => {},
+		emitSystemEvent: () => {},
+		entityDied: () => {},
+		addComponent: () => {},
+		removeComponent: () => {},
+		createEntity: () => {},
+	};
+
+	update.preRun!(world, entities, queries, ignored);
+	for(const entity of entities) {
+		update(world, entity.entityId, entity.components, queries, ignored);
+	}
+
+	return {
+		velocityX: (entityId: number) => entities[entityId - 1].components.velocity[VELOCITY_X_INDEX],
+		velocityY: (entityId: number) => entities[entityId - 1].components.velocity[VELOCITY_Y_INDEX],
+	};
+}
+
+function runDamage(health: Record<number, number>) {
+	const entities = [
+		createUnit({ x: 0, y: 0, velocityX: 25, bounciness: 1 }, 1),
+		createUnit({ x: 30, y: 0, velocityX: -5, bounciness: 1 }, 2),
+	];
+	const remaining = { ...health };
+	// Every kill the callback claimed, in order, so claiming one twice is visible rather than idempotent.
+	const deaths: Array<number> = [];
+	function damage(entityId: number, entity: Uint32Array | undefined) {
+		remaining[entityId] -= 1;
+		if(remaining[entityId] <= 0 && entity) {
+			entity[DEAD_INDEX] = 1;
+			deaths.push(entityId);
+		}
+	}
+
+	const update = createPhysicsUpdate({
+		onCollision(_world, self, other) {
+			damage(self.entityId, self.components.entity);
+			damage(other.entityId, other.components.entity);
+		},
+	});
+
+	const world: PhysicsWorld = { gameTime: 0, elapsedTime: 1000, tick: 1, getString: () => '' };
+	const queries = { [COLLIDABLE_QUERY]: entities };
+	const ignored: EntityWorkerSystemCallbacks = {
+		entityComponentChanged: () => {},
+		emitEntityEvent: () => {},
+		emitSystemEvent: () => {},
+		entityDied: () => {},
+		addComponent: () => {},
+		removeComponent: () => {},
+		createEntity: () => {},
+	};
+
+	update.preRun!(world, entities, queries, ignored);
+	for(const entity of entities) {
+		update(world, entity.entityId, entity.components, queries, ignored);
+	}
+
+	return {
+		deaths,
+		velocityX: (entityId: number) => entities[entityId - 1].components.velocity[VELOCITY_X_INDEX],
+	};
+}
+
 // The native bounce from a bounciness block, no onCollision: physics turning an entity around on contact.
 describe('createPhysicsUpdate bounce', () => {
-	// One run of a bounce-only update. Returns each entity's ending velocity, where the flip shows up.
-	function run(units: Array<Unit>, elapsedTime = 1000, stopVelocityOnContact = false) {
-		const entities = units.map((unit, index) => createUnit(unit, index + 1));
-		const update = createPhysicsUpdate({ stopVelocityOnContact });
-
-		const world: PhysicsWorld = { gameTime: 0, elapsedTime, tick: 1, getString: () => '' };
-		const queries = { [COLLIDABLE_QUERY]: entities };
-		const ignored: EntityWorkerSystemCallbacks = {
-			entityComponentChanged: () => {},
-			emitEntityEvent: () => {},
-			emitSystemEvent: () => {},
-			entityDied: () => {},
-			addComponent: () => {},
-			removeComponent: () => {},
-			createEntity: () => {},
-		};
-
-		update.preRun!(world, entities, queries, ignored);
-		for(const entity of entities) {
-			update(world, entity.entityId, entity.components, queries, ignored);
-		}
-
-		return {
-			velocityX: (entityId: number) => entities[entityId - 1].components.velocity[VELOCITY_X_INDEX],
-			velocityY: (entityId: number) => entities[entityId - 1].components.velocity[VELOCITY_Y_INDEX],
-		};
-	}
 
 	it('flips the velocity of a full-bounciness unit that runs head-on into a wall', () => {
 		// At bounciness 1 the whole velocity into the face comes back.
-		const result = run([{ x: 0, y: 0, velocityX: 25, bounciness: 1 }, { x: 30, y: 0 }]);
+		const result = runBounce([{ x: 0, y: 0, velocityX: 25, bounciness: 1 }, { x: 30, y: 0 }]);
 
 		expect(result.velocityX(1)).toBeCloseTo(-25, 3);
 		expect(result.velocityY(1)).toEqual(0);
 	});
 
 	it('keeps half the speed at bounciness 0.5', () => {
-		const result = run([{ x: 0, y: 0, velocityX: 25, bounciness: 0.5 }, { x: 30, y: 0 }]);
+		const result = runBounce([{ x: 0, y: 0, velocityX: 25, bounciness: 0.5 }, { x: 30, y: 0 }]);
 
 		expect(result.velocityX(1)).toBeCloseTo(-12.5, 3);
 	});
 
 	it('cancels the velocity into the surface at bounciness 0', () => {
 		// Nothing bounces: the velocity into the wall is removed and the mover rests against it.
-		const result = run([{ x: 0, y: 0, velocityX: 25, bounciness: 0 }, { x: 30, y: 0 }]);
+		const result = runBounce([{ x: 0, y: 0, velocityX: 25, bounciness: 0 }, { x: 30, y: 0 }]);
 
 		expect(result.velocityX(1)).toBeCloseTo(0, 3);
 	});
 
 	it('keeps the velocity along the surface and only flips the part into it', () => {
 		// A glancing hit on a tall wall: x into the face reverses, y along it is left alone.
-		const result = run([{ x: 0, y: 0, velocityX: 25, velocityY: 40, bounciness: 1 }, { x: 30, y: 0, height: 200 }]);
+		const result = runBounce([{ x: 0, y: 0, velocityX: 25, velocityY: 40, bounciness: 1 }, { x: 30, y: 0, height: 200 }]);
 
 		expect(result.velocityX(1)).toBeCloseTo(-25, 3);
 		expect(result.velocityY(1)).toBeCloseTo(40, 3);
@@ -861,7 +909,7 @@ describe('createPhysicsUpdate bounce', () => {
 
 	it('bounces two circles apart along the line between their centres', () => {
 		// The contact normal between two circles is the line joining their centres.
-		const result = run([
+		const result = runBounce([
 			circle({ x: 0, y: 0, velocityX: 20, bounciness: 1 }),
 			circle({ x: 12, y: 0 }),
 		]);
@@ -871,26 +919,26 @@ describe('createPhysicsUpdate bounce', () => {
 
 	it('leaves a unit with no bounciness block moving as it was, merely stopped short', () => {
 		// A game's walls and terrain: stopped by the sweep, but nothing turns the velocity around.
-		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0 }]);
+		const result = runBounce([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0 }]);
 
 		expect(result.velocityX(1)).toEqual(25);
 	});
 
 	it('optionally removes only the velocity into a solid surface without a bounciness block', () => {
-		const result = run([{ x: 0, y: 0, velocityX: 25, velocityY: 40 }, { x: 30, y: 0, height: 200 }], 1000, true);
+		const result = runBounce([{ x: 0, y: 0, velocityX: 25, velocityY: 40 }, { x: 30, y: 0, height: 200 }], 1000, true);
 
 		expect(result.velocityX(1)).toBeCloseTo(0, 3);
 		expect(result.velocityY(1)).toBeCloseTo(40, 3);
 	});
 
 	it('keeps bounciness behavior when the solid-contact option is enabled', () => {
-		const result = run([{ x: 0, y: 0, velocityX: 25, bounciness: 1 }, { x: 30, y: 0 }], 1000, true);
+		const result = runBounce([{ x: 0, y: 0, velocityX: 25, bounciness: 1 }, { x: 30, y: 0 }], 1000, true);
 
 		expect(result.velocityX(1)).toBeCloseTo(-25, 3);
 	});
 
 	it('does not stop an unbouncy unit against a sensor when the option is enabled', () => {
-		const result = run([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0, sensor: true }], 1000, true);
+		const result = runBounce([{ x: 0, y: 0, velocityX: 25 }, { x: 30, y: 0, sensor: true }], 1000, true);
 
 		expect(result.velocityX(1)).toEqual(25);
 	});
@@ -899,52 +947,6 @@ describe('createPhysicsUpdate bounce', () => {
 	// built on the one-call-per-pair contract. The far unit is slow enough not to overshoot the near one once it
 	// has been turned around, which would hide the second half of the pair behind the tunnelling gap.
 	describe('with a callback that damages both sides and kills at zero', () => {
-		function runDamage(health: Record<number, number>) {
-			const entities = [
-				createUnit({ x: 0, y: 0, velocityX: 25, bounciness: 1 }, 1),
-				createUnit({ x: 30, y: 0, velocityX: -5, bounciness: 1 }, 2),
-			];
-			const remaining = { ...health };
-			// Every kill the callback claimed, in order, so claiming one twice is visible rather than idempotent.
-			const deaths: Array<number> = [];
-			function damage(entityId: number, entity: Uint32Array | undefined) {
-				remaining[entityId] -= 1;
-				if(remaining[entityId] <= 0 && entity) {
-					entity[DEAD_INDEX] = 1;
-					deaths.push(entityId);
-				}
-			}
-
-			const update = createPhysicsUpdate({
-				onCollision(_world, self, other) {
-					damage(self.entityId, self.components.entity);
-					damage(other.entityId, other.components.entity);
-				},
-			});
-
-			const world: PhysicsWorld = { gameTime: 0, elapsedTime: 1000, tick: 1, getString: () => '' };
-			const queries = { [COLLIDABLE_QUERY]: entities };
-			const ignored: EntityWorkerSystemCallbacks = {
-				entityComponentChanged: () => {},
-				emitEntityEvent: () => {},
-				emitSystemEvent: () => {},
-				entityDied: () => {},
-				addComponent: () => {},
-				removeComponent: () => {},
-				createEntity: () => {},
-			};
-
-			update.preRun!(world, entities, queries, ignored);
-			for(const entity of entities) {
-				update(world, entity.entityId, entity.components, queries, ignored);
-			}
-
-			return {
-				deaths,
-				velocityX: (entityId: number) => entities[entityId - 1].components.velocity[VELOCITY_X_INDEX],
-			};
-		}
-
 		it('claims each death once when both die of the contact', () => {
 			const result = runDamage({ 1: 1, 2: 1 });
 
@@ -978,7 +980,7 @@ describe('createPhysicsUpdate bounce', () => {
 
 	it('does not bounce a full-bounciness unit off a sensor', () => {
 		// Nothing bounces off a sensor, so the mover keeps its heading and sails through.
-		const result = run([{ x: 0, y: 0, velocityX: 25, bounciness: 1 }, { x: 30, y: 0, sensor: true }]);
+		const result = runBounce([{ x: 0, y: 0, velocityX: 25, bounciness: 1 }, { x: 30, y: 0, sensor: true }]);
 
 		expect(result.velocityX(1)).toEqual(25);
 	});
@@ -987,7 +989,7 @@ describe('createPhysicsUpdate bounce', () => {
 		// The crawler runs before the mover reaches it, so its own sweep is clear; by the time it is hit the two
 		// only touch, which the overlap test never reports. The contact has to turn both around at once or the
 		// crawler keeps heading in and the pair never separates.
-		const result = run([
+		const result = runBounce([
 			{ x: 30, y: 0, velocityX: -0.5, bounciness: 1 },
 			{ x: 0, y: 0, velocityX: 25, bounciness: 1 },
 		]);
@@ -998,7 +1000,7 @@ describe('createPhysicsUpdate bounce', () => {
 
 	it('bounces the unit that was run into even when the mover does not bounce itself', () => {
 		// Bounciness belongs to whichever side carries it, so a dead-weight mover still sends a bouncy unit back.
-		const result = run([
+		const result = runBounce([
 			{ x: 30, y: 0, velocityX: -0.5, bounciness: 1 },
 			{ x: 0, y: 0, velocityX: 25 },
 		]);
@@ -1009,7 +1011,7 @@ describe('createPhysicsUpdate bounce', () => {
 
 	it('does not bounce a unit a second time on its own turn', () => {
 		// Both were turned around by the first contact; the second one to run must not reflect back into the first.
-		const result = run([
+		const result = runBounce([
 			{ x: 0, y: 0, velocityX: 25, bounciness: 1 },
 			{ x: 30, y: 0, velocityX: -25, bounciness: 1 },
 		]);
