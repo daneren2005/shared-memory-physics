@@ -30,7 +30,7 @@ export interface TransformConfig {
 export interface TransformSerialization {
 	x: number
 	y: number
-	angle: number
+	angle?: number
 }
 
 // Indexes into the backing Float32Array block, exported because the physics update reads the same offsets off
@@ -110,11 +110,16 @@ export const transformDefinition: ComponentDefinition<TransformComponent, Float3
 		return new TransformComponentImpl(memory.getBlock(index), index);
 	},
 	save(component) {
-		return {
+		const saved: TransformSerialization = {
 			x: component.x,
 			y: component.y,
-			angle: component.angle,
 		};
+		const angle = component.angle;
+		if(angle !== 0) {
+			saved.angle = angle;
+		}
+
+		return saved;
 	},
 };
 

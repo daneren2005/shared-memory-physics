@@ -19,7 +19,7 @@ npm install @daneren2005/shared-memory-physics @daneren2005/shared-memory-ecs @d
 | Component       | Config                                       | Serialization              | Block                                          |
 | --------------- | -------------------------------------------- | -------------------------- | ---------------------------------------------- |
 | `dynamics`      | -                                            | `accelerationX?`, `accelerationY?`, `mass?` | `Float32Array` - acceleration and inverse mass |
-| `transform`     | `width`, `height`, `angle?` / `radius`       | `x`, `y`, `angle`          | `Float32Array` – where, how big, facing        |
+| `transform`     | `width`, `height`, `angle?` / `radius`       | `x`, `y`, `angle?`         | `Float32Array` – where, how big, facing        |
 | `velocity`      | –                                            | `velocityX?`, `velocityY?`, `damping?` | `Float32Array` – world units per second        |
 | `body`          | `shape?`, `collideCategory?`, `collideMask?`, `sensor?`, `continuousCollisionDetection?`, `blocksPath?` | –                          | `Uint32Array` – what shape, what collides with |
 | `interpolation` | `interpolate`                                | –                          | `Float32Array` – where to *draw* it            |
@@ -59,8 +59,8 @@ effective mass `1` when a force or impulse is queued for it.
 The transform is split in two. **Config** is what your entity template says - `width` and `height` are
 required, `angle` defaults to `0` - and a size is what loads the component at all: a config with neither a
 width nor a height does not get a transform. **Serialization** is the live state that changes as the world
-runs, so `save()` returns `x` / `y` and `angle`, while a reloaded entity gets its size back from your own
-template rather than the save.
+runs, so `save()` returns `x` / `y` and includes `angle` only when it is nonzero. An omitted angle defaults
+to `0` on load, while a reloaded entity gets its size back from your own template rather than the save.
 
 `x` / `y` are the **centre** of the box, not a corner: the box is rotated about that point and collision
 projects out from it in both directions. `angle` is in **radians** counter-clockwise from the +x axis, and

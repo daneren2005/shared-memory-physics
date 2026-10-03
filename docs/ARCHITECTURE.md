@@ -187,6 +187,8 @@ velocity command supplies jumping, and its worker-safe collision callback queues
   run.
 - **Render position (`interpolation`) is read-only for rendering.** Anything deterministic (AI,
   targeting, saves) must read `transform`; the render position depends on local frame timing.
+- **Transform saves omit zero angles.** `TransformSerialization.angle` is optional; loading an omitted
+  angle defaults to `0`.
 - **Only capsules must name their `shape`**; circle vs rectangle is inferred from `radius` vs
   `width/height`. A capsule's core runs along its longer side (`capsuleCoreAngle`), so a taller-than-wide
   capsule lies a quarter turn off its facing. Touching exactly = not overlapping; zero-area = never overlaps.
