@@ -51,6 +51,7 @@ main thread                              worker thread (optional)
 | `systems/collision.ts` | Broadphase (flatbush R-tree bucketed by collide category) + narrowphase sweep/overlap. `contactPoint` and `contactNormal` report first-touch geometry, including for swept sensors. | `CollisionBroadphase`, `COLLIDABLE_QUERY`, `CollisionContact`, `MoveResult`, `SweepResult` |
 | `systems/bounce.ts` | Native velocity response at solid contacts: reflect entities with bounciness and optionally stop non-bouncing entities along the contact normal. Applied to both sides of a contact. | `bouncePair`, `bounce` (internal) |
 | `systems/spatial-index.ts` | Same R-tree without collide categories — targeting / range / nearest queries. Snapshot per run. | `SpatialIndex`, `SpatialFilter` |
+| `actions/set-entity-position.ts` | Sets an absolute position in raw entity blocks and refreshes the shared spatial map on the calling thread. Does not sweep or change interpolation. | `setEntityPosition` |
 | `systems/spatial-bounds.ts` | Converts transform/body shapes to the axis-aligned bounds stored in the live spatial map. | `spatialBounds` (internal) |
 | `world.ts` | `BaseWorld` subclass that owns the live `SharedSpatialMap`, tracks entity/component lifecycle, exposes entity-level searches, and supplies map handles to worker worlds. Its optional entity generic preserves a consumer's registered wrapper union through lifecycle events and spatial results. | `PhysicalWorld`, `PhysicalWorldEntity`, `PhysicalWorldOptions`, `addPhysicalWorldData`, `getSpatialMap` |
 | `systems/interpolation-system.ts` | Main-thread system that runs the per-frame render-position lerp; snapshots committed physics ticks per run. | `InterpolationSystem`, `InterpolationSystemConfig` |
@@ -130,6 +131,9 @@ velocity command supplies jumping, and its worker-safe collision callback queues
   queries in one run. `PhysicalWorld.spatialMap` is updated after each finalized physics move so clients and
   low-query workers always have an index without rebuilding Flatbush. A custom update that changes a transform
   after the library physics call must use `updateSpatialMap`; a main-thread edit uses `updateSpatialEntity`.
+  `setEntityPosition(world, entity, position)` combines an absolute raw-block placement with its spatial update
+  on either backend. Each coordinate is stored atomically; the transform and index are not a single transaction.
+  It does not sweep for collisions or reset interpolation.
 - **`POSITION_UPDATED_EVENT` carries only ids**, as one array per run (never per entity — that's the
   whole point). The worker only pays for it when someone is listening (`reportMoves`).
 - **`filter` vs `scope` on `PhysicsSystem`.** Both are query filters the ECS applies at gather time

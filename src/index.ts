@@ -153,6 +153,8 @@ export type { CollisionComponents, CollisionContact, CollisionEntity, CollisionF
 export { default as SpatialIndex } from './systems/spatial-index';
 export type { SpatialComponents, SpatialEntity, SpatialFilter } from './systems/spatial-index';
 
+export { setEntityPosition } from './actions/set-entity-position';
+
 export { default as physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT, updateSpatialMap } from './systems/physics-update';
 export type { DeathInterpolationEntity, PhysicsCallbackWorld, PhysicsGroupConfig, PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions, PhysicsWorld } from './systems/physics-update';
 export { default as PhysicsSystem, DEFAULT_PHYSICS_STEP_MS } from './systems/physics-system';

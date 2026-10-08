@@ -844,6 +844,21 @@ box around their actual outline. A direct transform/body edit outside the physic
 `world.updateSpatialEntity(entity)`. A custom physics wrapper that changes a transform after calling the library
 update can call `updateSpatialMap(workerWorld, entityId, components)` instead.
 
+For absolute placement from a worker update or an in-process update, `setEntityPosition` writes both coordinates
+and refreshes the shared index immediately on the calling thread:
+
+```ts
+import { setEntityPosition } from '@daneren2005/shared-memory-physics';
+
+setEntityPosition(workerWorld, { entityId, components }, { x: 300, y: 400 });
+```
+
+It accepts raw query/update blocks, ignores entities without a transform, and uses the optional body for
+shape-aware bounds. Each coordinate is stored atomically; the position and index update are not one transaction.
+It performs no collision sweep and does not change velocity or interpolation. For an interpolated teleport,
+reset the render state separately with `snapEntity` on the entity wrapper. Without a spatial map in the run
+world, it only writes the transform. Share the map with custom workers as described below.
+
 Games with registered ECS wrapper classes can pass their entity union as `PhysicalWorld`'s second generic. The
 world's entity map, lifecycle callbacks, and spatial-query results then retain that union instead of widening to
 `BaseEntity`.
