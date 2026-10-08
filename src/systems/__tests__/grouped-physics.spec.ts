@@ -3,10 +3,11 @@ import { createPhysicsUpdate, type PhysicsWorld } from '../physics-update';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { BaseComponent, EntityWorkerSystemCallbacks } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
-import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
-import { BODY_CATEGORY_INDEX, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SIZE, DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_RECTANGLE } from '../../components/body-component';
-import { TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
-import { VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component';
+import type { MovingEntity } from '../collision';
+import { COLLIDABLE_QUERY } from '../../constants';
+import { BODY_CATEGORY_INDEX, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SIZE, DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_RECTANGLE } from '../../components/body-component-constants';
+import { TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component-constants';
+import { VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component-constants';
 
 // A game whose entities carry a numeric group id, the shape createPhysicsUpdate's `group` option reads. The block
 // is one Uint32; the id sits at index 0. This is exactly how space-sim groups by solarSystemId.

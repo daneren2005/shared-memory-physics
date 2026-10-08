@@ -1,3 +1,20 @@
+import {
+	SHAPE_RECTANGLE,
+	SHAPE_CIRCLE,
+	SHAPE_CAPSULE,
+	SHAPE_POLYGON,
+	DEFAULT_COLLIDE_CATEGORY,
+	DEFAULT_COLLIDE_MASK,
+	BODY_FLAGS_INDEX,
+	BODY_CATEGORY_INDEX,
+	BODY_MASK_INDEX,
+	BODY_SIZE,
+	BODY_SHAPE_MASK,
+	BODY_SENSOR_FLAG,
+	BODY_CCD_FLAG,
+	BODY_DYING_FLAG,
+	BODY_BLOCKS_PATH_FLAG,
+} from './body-component-constants';
 import { Component } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
 import type { PolygonVertex } from './polygon-component';
@@ -19,24 +36,7 @@ export interface BodyComponent {
 	blocksPath: boolean
 }
 
-// The shapes a body can be, all held in the same transform (position, width, height, angle):
-//   SHAPE_RECTANGLE - a width x height box turned to `angle`
-//   SHAPE_CIRCLE    - a circle of diameter `width`, unaffected by `angle`
-//   SHAPE_CAPSULE   - `width` end to end and `height` thick, lying along the way it faces
-//   SHAPE_POLYGON   - a convex outline from the entity's polygon component
-// See src/math/shapes.ts for the geometry.
-export const SHAPE_RECTANGLE = 1;
-export const SHAPE_CIRCLE = 2;
-export const SHAPE_CAPSULE = 3;
-export const SHAPE_POLYGON = 4;
-
 const KNOWN_SHAPES = [SHAPE_RECTANGLE, SHAPE_CIRCLE, SHAPE_CAPSULE, SHAPE_POLYGON];
-
-// Default category: a single bit, so a world that sets no categories behaves as before they existed.
-export const DEFAULT_COLLIDE_CATEGORY = 1;
-// Default mask: every bit, so a default body meets anything whose own mask allows it. Stored in a Uint32Array,
-// so 0xFFFFFFFF ANDs correctly against any category despite not fitting a signed int.
-export const DEFAULT_COLLIDE_MASK = 0xFFFFFFFF;
 
 // Whether two bodies collide: each side's mask must accept the other's category. Symmetric by design, so the
 // outcome does not depend on which entity moved first; a one-sided response is done by checking `other` inside
@@ -67,26 +67,6 @@ export interface BodyConfig {
 	// Marks the body as something pathfinding routes around. Defaults to false.
 	blocksPath?: boolean
 }
-
-// Indexes into the backing Uint32Array block, exported because the broadphase reads the same offsets off the
-// raw shared block. Shape, sensor and ccd share one flags word - never read directly, always through the
-// helpers below so the packing stays in one place.
-export const BODY_FLAGS_INDEX = 0;
-export const BODY_CATEGORY_INDEX = 1;
-export const BODY_MASK_INDEX = 2;
-export const BODY_SIZE = 3;
-
-// The flags word holds the shape in its low bits and the boolean body flags above them.
-export const BODY_SHAPE_MASK = 0b111;
-export const BODY_SENSOR_FLAG = 0b1000;
-export const BODY_CCD_FLAG = 0b10000;
-// A runtime flag, not a config one: set when an entity has struck what will kill it and is playing out one last
-// interpolation segment onto the impact point before it is removed (see `dieAtImpact` in physics-update). Unlike
-// the bits above it is never loaded from config; it lives in the flags word so any thread stepping the entity
-// sees it and it survives to the next run, which is what defers the kill by a step. A dying body is left out of
-// collision and killed at the top of its next update.
-export const BODY_DYING_FLAG = 0b100000;
-export const BODY_BLOCKS_PATH_FLAG = 0b1000000;
 
 // Readers off a raw body block, exported so the broadphase, bounce and game systems unpack the flags the same way.
 export function bodyShape(body: Uint32Array): number {

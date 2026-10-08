@@ -2,10 +2,11 @@ import Flatbush from 'flatbush';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, EntityWorkerSystemCallbacks, EntityWorkerSystemWorld, EntityQueryComponents, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsUpdateComponents } from '../components/registry';
-import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, bodyShape, isContinuous, isDying, isSensor, SHAPE_CAPSULE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component';
-import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
-import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
-import { DYNAMICS_ACCELERATION_X_INDEX, DYNAMICS_ACCELERATION_Y_INDEX, DYNAMICS_INVERSE_MASS_INDEX } from '../components/dynamics-component';
+import { bodyShape, isContinuous, isDying, isSensor } from '../components/body-component';
+import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, SHAPE_CAPSULE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component-constants';
+import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component-constants';
+import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component-constants';
+import { DYNAMICS_ACCELERATION_X_INDEX, DYNAMICS_ACCELERATION_Y_INDEX, DYNAMICS_INVERSE_MASS_INDEX } from '../components/dynamics-component-constants';
 import { contactNormal as shapeContactNormal, shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap } from '../math/shapes';
 import type { Vector } from '../math/shapes';
 import { polygonContactNormal, polygonShapesOverlap } from '../math/polygons';
@@ -19,10 +20,10 @@ import {
 	DYNAMICS_COMMAND_VELOCITY_X_OFFSET,
 	DYNAMICS_COMMAND_VELOCITY_Y_FLAG,
 	DYNAMICS_COMMAND_VELOCITY_Y_OFFSET,
-	findDynamicsCommand,
-	findDynamicsCommandOffset,
-} from './dynamics';
-import type { DynamicsCommands } from './dynamics';
+} from '../actions/dynamics-commands';
+import type { DynamicsCommands } from '../actions/dynamics-commands';
+import { findDynamicsCommand } from '../actions/find-dynamics-command';
+import { findDynamicsCommandOffset } from '../actions/find-dynamics-command-offset';
 
 // How close to contact a sweep settles for, in world units: below anything a game would draw, yet reached by
 // the halving below in a handful of steps.
@@ -30,10 +31,6 @@ const CONTACT_TOLERANCE = 1e-4;
 // Cap on the halving so a huge move cannot spawn unbounded overlap tests; reaches the tolerance for any move
 // up to ~1600 units.
 const MAX_REFINEMENTS = 24;
-
-// Holds everything with a transform and a body, not only the entities the system moves, so a mover can run
-// into a wall or station that has no velocity of its own.
-export const COLLIDABLE_QUERY = 'collidable';
 
 // Blocks handed to a collision callback for the entity run into. `transform` and `body` are guaranteed by the
 // collidable query; `velocity` and anything in `optional` are present only if that entity has them.

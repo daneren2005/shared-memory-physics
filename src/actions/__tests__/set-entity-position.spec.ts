@@ -1,8 +1,9 @@
-import { setEntityPosition } from '../../index';
+import { setEntityPosition } from '../set-entity-position';
 import { createTestWorld, type TestWorld } from '../../__tests__/fixtures/world';
-import { SHAPE_CAPSULE } from '../../components/body-component';
-import { TRANSFORM_SIZE, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
-import { addPhysicalWorldData, type PhysicalSystemWorld } from '../../world';
+import { SHAPE_CAPSULE } from '../../components/body-component-constants';
+import { TRANSFORM_SIZE, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component-constants';
+import type { PhysicalSystemWorld } from '../../world';
+import { addPhysicalWorldData } from '../add-physical-world-data';
 
 describe('setEntityPosition', () => {
 	let world: TestWorld;

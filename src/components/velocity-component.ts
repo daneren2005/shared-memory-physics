@@ -1,3 +1,9 @@
+import {
+	VELOCITY_X_INDEX,
+	VELOCITY_Y_INDEX,
+	VELOCITY_DAMPING_INDEX,
+	VELOCITY_SIZE,
+} from './velocity-component-constants';
 import { Component } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
 
@@ -21,13 +27,6 @@ export interface VelocityConfig {
 }
 // Both spawn config and live state (a game's systems apply forces), so it round-trips through `save`.
 export type VelocitySerialization = VelocityConfig;
-
-// Indexes into the backing Float32Array block, exported because the physics update reads the same offsets off
-// the raw block.
-export const VELOCITY_X_INDEX = 0;
-export const VELOCITY_Y_INDEX = 1;
-export const VELOCITY_DAMPING_INDEX = 2;
-export const VELOCITY_SIZE = 3;
 
 class VelocityComponentImpl extends Component<Float32Array> implements VelocityComponent {
 	get velocityX() {

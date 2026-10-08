@@ -1,3 +1,4 @@
+import { MAX_POLYGON_VERTICES, POLYGON_VERTEX_COUNT_INDEX, POLYGON_SIZE } from './polygon-component-constants';
 import { Component } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
 
@@ -14,11 +15,6 @@ export interface PolygonComponent {
 	readonly block: Float32Array
 	readonly vertexCount: number
 }
-
-export const MAX_POLYGON_VERTICES = 16;
-export const POLYGON_VERTEX_COUNT_INDEX = 0;
-export const POLYGON_VERTICES_INDEX = 1;
-export const POLYGON_SIZE = POLYGON_VERTICES_INDEX + MAX_POLYGON_VERTICES * 2;
 
 export interface PreparedPolygon {
 	width: number

@@ -1,22 +1,34 @@
-import { physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
+import { physicsUpdate, createPhysicsUpdate, type PhysicsWorld } from '../physics-update';
+import { COLLIDABLE_QUERY, POSITION_UPDATED_EVENT } from '../../constants';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { EntityWorkerSystemCallbacks } from '@daneren2005/shared-memory-ecs';
 import { loadFloat32, storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../../components/registry';
-import { COLLIDABLE_QUERY, type MovingEntity } from '../collision';
+import type { MovingEntity } from '../collision';
 import {
-	BODY_CATEGORY_INDEX, BODY_CCD_FLAG, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SENSOR_FLAG, BODY_SIZE,
-	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, isDying, SHAPE_CIRCLE, SHAPE_RECTANGLE,
+	isDying,
 } from '../../components/body-component';
-import { BOUNCINESS_INDEX, BOUNCINESS_SIZE } from '../../components/bounciness-component';
-import { TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
-import { VELOCITY_DAMPING_INDEX, VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component';
+import {
+	BODY_CATEGORY_INDEX,
+	BODY_CCD_FLAG,
+	BODY_FLAGS_INDEX,
+	BODY_MASK_INDEX,
+	BODY_SENSOR_FLAG,
+	BODY_SIZE,
+	DEFAULT_COLLIDE_CATEGORY,
+	DEFAULT_COLLIDE_MASK,
+	SHAPE_CIRCLE,
+	SHAPE_RECTANGLE,
+} from '../../components/body-component-constants';
+import { BOUNCINESS_INDEX, BOUNCINESS_SIZE } from '../../components/bounciness-component-constants';
+import { TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component-constants';
+import { VELOCITY_DAMPING_INDEX, VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component-constants';
 import {
 	DYNAMICS_ACCELERATION_X_INDEX,
 	DYNAMICS_ACCELERATION_Y_INDEX,
 	DYNAMICS_INVERSE_MASS_INDEX,
 	DYNAMICS_SIZE,
-} from '../../components/dynamics-component';
+} from '../../components/dynamics-component-constants';
 import {
 	INTERPOLATION_CHANNEL_INDEX,
 	INTERPOLATION_DURATION_INDEX,
@@ -28,7 +40,7 @@ import {
 	INTERPOLATION_SIZE,
 	INTERPOLATION_TICK_INDEX,
 	INTERPOLATION_TOTAL_DURATION_INDEX,
-} from '../../components/interpolation-component';
+} from '../../components/interpolation-component-constants';
 
 // Drives the update against raw blocks with no world or system, pinning down the integration math itself;
 // physics-system.spec.ts covers the same end to end.

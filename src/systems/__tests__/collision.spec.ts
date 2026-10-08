@@ -4,10 +4,11 @@ import {
 	BODY_CATEGORY_INDEX, BODY_CCD_FLAG, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SENSOR_FLAG, BODY_SIZE,
 	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK,
 	SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE,
-} from '../../components/body-component';
-import { POLYGON_SIZE, preparePolygon, type PolygonVertex } from '../../components/polygon-component';
-import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
-import { VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component';
+} from '../../components/body-component-constants';
+import { preparePolygon, type PolygonVertex } from '../../components/polygon-component';
+import { POLYGON_SIZE } from '../../components/polygon-component-constants';
+import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_SIZE, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component-constants';
+import { VELOCITY_SIZE, VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../../components/velocity-component-constants';
 
 const ONE_SECOND = 1;
 

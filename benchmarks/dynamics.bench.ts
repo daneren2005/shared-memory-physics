@@ -4,9 +4,10 @@ import {
 	DYNAMICS_ACCELERATION_Y_INDEX,
 	DYNAMICS_INVERSE_MASS_INDEX,
 	DYNAMICS_SIZE,
-} from '../src/components/dynamics-component';
-import { VELOCITY_SIZE } from '../src/components/velocity-component';
-import { integrateDynamics, type DynamicsCommand, type DynamicsWorld } from '../src/systems/dynamics';
+} from '../src/components/dynamics-component-constants';
+import { VELOCITY_SIZE } from '../src/components/velocity-component-constants';
+import { integrateDynamics } from '../src/actions/integrate-dynamics';
+import type { DynamicsCommand, DynamicsWorld } from '../src/actions/dynamics-commands';
 
 const ENTITY_COUNT = 10_000;
 const STEP_MS = 16;

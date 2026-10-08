@@ -1,0 +1,4 @@
+export const DYNAMICS_ACCELERATION_X_INDEX = 0;
+export const DYNAMICS_ACCELERATION_Y_INDEX = 1;
+export const DYNAMICS_INVERSE_MASS_INDEX = 2;
+export const DYNAMICS_SIZE = 3;

@@ -9,7 +9,7 @@
 // A circle is a capsule whose segment has no length, so there are only two core kinds - box and segment - and
 // three pair tests rather than one per shape combination. See shapesOverlap.
 
-import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../components/body-component';
+import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../components/body-component-constants';
 
 export interface Vector {
 	x: number

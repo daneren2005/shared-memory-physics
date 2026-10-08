@@ -1,6 +1,6 @@
 import { createPhysicsUpdate } from '../../systems/physics-update';
 import type { PhysicsUpdateComponents } from '../../components/registry';
-import { BODY_CATEGORY_INDEX } from '../../components/body-component';
+import { BODY_CATEGORY_INDEX } from '../../components/body-component-constants';
 import { type Components, HEALTH_INDEX } from './world';
 
 // The blocks this update touches: the two physics needs, plus the game's health.

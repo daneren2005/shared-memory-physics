@@ -1,5 +1,5 @@
 import { createTestWorld, type TestWorld } from '../../__tests__/fixtures/world';
-import { startSpawnInterpolation } from '../interpolation-component';
+import { startSpawnInterpolation } from '../start-spawn-interpolation';
 
 // The seed itself, one call at a time: what `startSpawnInterpolation` writes into the block. The handover to the
 // first real physics step is covered end to end in interpolation-system.spec.ts.

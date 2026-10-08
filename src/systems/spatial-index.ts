@@ -1,7 +1,8 @@
 import Flatbush from 'flatbush';
 import type { EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
-import { bodyShape, SHAPE_RECTANGLE } from '../components/body-component';
-import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
+import { bodyShape } from '../components/body-component';
+import { SHAPE_RECTANGLE } from '../components/body-component-constants';
+import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component-constants';
 import { shapeHalfHeight, shapeHalfWidth } from '../math/shapes';
 
 // The blocks the index reads off each entity. Only the transform is needed; the body refines the box to the

@@ -1,6 +1,7 @@
 import { bouncePair, default as bounce } from '../bounce';
-import { BODY_SENSOR_FLAG, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../../components/body-component';
-import { POLYGON_SIZE, preparePolygon, type PolygonVertex } from '../../components/polygon-component';
+import { BODY_SENSOR_FLAG, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../../components/body-component-constants';
+import { preparePolygon, type PolygonVertex } from '../../components/polygon-component';
+import { POLYGON_SIZE } from '../../components/polygon-component-constants';
 
 const EIGHTH_TURN = Math.PI / 4;
 

@@ -1,5 +1,5 @@
-import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component';
-import { POLYGON_VERTEX_COUNT_INDEX, POLYGON_VERTICES_INDEX } from '../components/polygon-component';
+import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component-constants';
+import { POLYGON_VERTEX_COUNT_INDEX, POLYGON_VERTICES_INDEX } from '../components/polygon-component-constants';
 import { capsuleCoreAngle, capsuleHalfLength } from './shapes';
 import type { Vector } from './shapes';
 

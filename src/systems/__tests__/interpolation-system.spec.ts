@@ -1,7 +1,7 @@
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import PhysicsSystem from '../physics-system';
 import InterpolationSystem from '../interpolation-system';
-import { snapEntity } from '../../components/interpolation-component';
+import { snapEntity } from '../../actions/snap-entity';
 import { createTestWorld, type Components, type Config, type TestWorld } from '../../__tests__/fixtures/world';
 import { collisionUpdate, type CollisionUpdateComponents } from '../../__tests__/fixtures/collision-update';
 

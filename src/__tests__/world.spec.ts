@@ -1,5 +1,5 @@
 import { BaseEntity, EntityFactory } from '@daneren2005/shared-memory-ecs';
-import { SHAPE_CIRCLE } from '../components/body-component';
+import { SHAPE_CIRCLE } from '../components/body-component-constants';
 import PhysicalWorld from '../world';
 import { createTestWorld, registry, type Components, type Config, type TestWorld } from './fixtures/world';
 

@@ -1,6 +1,5 @@
 import { addAtomicFloat32 } from '@daneren2005/shared-memory-objects/utils/atomic-math';
 import { loadFloat32, storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
-import type SharedSpatialMap from '@daneren2005/shared-memory-objects/spatial/shared-spatial-map';
 import { DEAD_INDEX } from '@daneren2005/shared-memory-ecs';
 import type { ComponentMap, EntityWorkerSystemCallbacks, EntityWorkerSystemWorld, EntityQueryComponents, EntityUpdateComponents, EntityUpdateFunction } from '@daneren2005/shared-memory-ecs';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
@@ -14,22 +13,22 @@ import {
 	INTERPOLATION_PREVIOUS_Y_INDEX,
 	INTERPOLATION_TICK_INDEX,
 	INTERPOLATION_TOTAL_DURATION_INDEX,
-} from '../components/interpolation-component';
+} from '../components/interpolation-component-constants';
 import { isDying, markDying } from '../components/body-component';
-import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
-import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
-import CollisionBroadphase, { COLLIDABLE_QUERY, type CollisionContact, type CollisionEntity, type CollisionFunction, type MovingEntity } from './collision';
+import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component-constants';
+import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component-constants';
+import CollisionBroadphase, { type CollisionContact, type CollisionEntity, type CollisionFunction, type MovingEntity } from './collision';
+import { COLLIDABLE_QUERY, POSITION_UPDATED_EVENT } from '../constants';
 import type { Vector } from '../math/shapes';
 import { bouncePair } from './bounce';
-import {
-	combineDynamicsCommands,
-	integrateDynamics,
-	queueDynamicsVector,
-	queueVelocityAssignment,
-} from './dynamics';
-import type { DynamicsCommandQueue, DynamicsWorld, PendingDynamicsCommands } from './dynamics';
+import { combineDynamicsCommands } from '../actions/combine-dynamics-commands';
+import { integrateDynamics } from '../actions/integrate-dynamics';
+import { queueDynamicsVector } from '../actions/queue-dynamics-vector';
+import { queueVelocityAssignment } from '../actions/queue-velocity-assignment';
+import type { DynamicsCommandQueue, DynamicsWorld, PendingDynamicsCommands } from '../actions/dynamics-commands';
 import { spatialBounds, type SpatialBlockComponents } from './spatial-bounds';
-import { getSpatialMap, type PhysicalSystemWorld } from '../world';
+import type { PhysicalSystemWorld } from '../world';
+import { updateSpatialMap } from '../actions/update-spatial-map';
 
 // The per-run data object every physics update is handed: the base one plus the step counter the interpolation
 // component is stamped with. PhysicsSystem fills `tick` from addDataToWorld, so a subclass adding data must
@@ -53,16 +52,6 @@ export interface PhysicsWorld extends EntityWorkerSystemWorld, PhysicalSystemWor
 // and integrated at the start of its next run, so callback behavior does not depend on entity update order.
 export interface PhysicsCallbackWorld extends PhysicsWorld, DynamicsCommandQueue {}
 
-export function updateSpatialMap(world: PhysicalSystemWorld, entityId: number, components: SpatialBlockComponents): void {
-	if(!world.spatialMap && (!world.heap || !world.spatialMapMemory)) {
-		return;
-	}
-
-	const spatialMap: SharedSpatialMap = getSpatialMap(world);
-	const bounds = spatialBounds(components);
-	spatialMap.update(entityId, bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
-}
-
 // What `dieAtImpact` reads off each side. Everything is optional and guarded at runtime so both a MovingEntity
 // (the mover, whose body is only optional in the type) and a CollisionEntity (the thing hit, whose velocity is)
 // can be handed to it either way round - which side carries the fatal category is the game's to sort out.
@@ -74,16 +63,6 @@ export interface DeathInterpolationEntity {
 		body?: Uint32Array
 	}
 }
-
-// The event a move is reported through, emitted on the system on the main thread once the run completes,
-// carrying the ids of everything that moved:
-//
-//   physicsSystem.on(POSITION_UPDATED_EVENT, (entityIds: Array<number>) => { ... });
-//
-// Reported as one id array per run rather than per entity, since nearly everything moves nearly every run. No
-// position travels with the id: the transform is a SharedArrayBuffer block already on the main thread, so a
-// listener reads it off `entity.components.transform`.
-export const POSITION_UPDATED_EVENT = 'position-updated';
 
 const CONTACT_NORMAL: Vector = { x: 0, y: 0 };
 

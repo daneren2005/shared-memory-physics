@@ -1,3 +1,9 @@
+import {
+	DYNAMICS_ACCELERATION_X_INDEX,
+	DYNAMICS_ACCELERATION_Y_INDEX,
+	DYNAMICS_INVERSE_MASS_INDEX,
+	DYNAMICS_SIZE,
+} from './dynamics-component-constants';
 import { Component } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
 
@@ -15,11 +21,6 @@ export interface DynamicsConfig {
 }
 
 export type DynamicsSerialization = DynamicsConfig;
-
-export const DYNAMICS_ACCELERATION_X_INDEX = 0;
-export const DYNAMICS_ACCELERATION_Y_INDEX = 1;
-export const DYNAMICS_INVERSE_MASS_INDEX = 2;
-export const DYNAMICS_SIZE = 3;
 
 class DynamicsComponentImpl extends Component<Float32Array> implements DynamicsComponent {
 	get accelerationX() {

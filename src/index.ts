@@ -1,3 +1,5 @@
+export { COLLIDABLE_QUERY, DEFAULT_PHYSICS_STEP_MS, POSITION_UPDATED_EVENT } from './constants';
+
 export { default as transformDefinition } from './components/transform-component';
 export {
 	TRANSFORM_X_INDEX,
@@ -6,7 +8,7 @@ export {
 	TRANSFORM_HEIGHT_INDEX,
 	TRANSFORM_ANGLE_INDEX,
 	TRANSFORM_SIZE,
-} from './components/transform-component';
+} from './components/transform-component-constants';
 export type {
 	TransformComponent,
 	TransformConfig,
@@ -19,7 +21,7 @@ export {
 	VELOCITY_Y_INDEX,
 	VELOCITY_DAMPING_INDEX,
 	VELOCITY_SIZE,
-} from './components/velocity-component';
+} from './components/velocity-component-constants';
 export type {
 	VelocityComponent,
 	VelocityConfig,
@@ -32,7 +34,7 @@ export {
 	DYNAMICS_ACCELERATION_Y_INDEX,
 	DYNAMICS_INVERSE_MASS_INDEX,
 	DYNAMICS_SIZE,
-} from './components/dynamics-component';
+} from './components/dynamics-component-constants';
 export type {
 	DynamicsComponent,
 	DynamicsConfig,
@@ -56,7 +58,7 @@ export {
 	BODY_CATEGORY_INDEX,
 	BODY_MASK_INDEX,
 	BODY_SIZE,
-} from './components/body-component';
+} from './components/body-component-constants';
 export type {
 	BodyComponent,
 	BodyConfig,
@@ -68,20 +70,20 @@ export {
 	POLYGON_VERTEX_COUNT_INDEX,
 	POLYGON_VERTICES_INDEX,
 	POLYGON_SIZE,
-} from './components/polygon-component';
+} from './components/polygon-component-constants';
 export type { PolygonComponent, PolygonConfig, PolygonVertex, PreparedPolygon } from './components/polygon-component';
 
 export { default as bouncinessDefinition } from './components/bounciness-component';
 export {
 	BOUNCINESS_INDEX,
 	BOUNCINESS_SIZE,
-} from './components/bounciness-component';
+} from './components/bounciness-component-constants';
 export type {
 	BouncinessComponent,
 	BouncinessConfig,
 } from './components/bounciness-component';
 
-export { default as interpolationDefinition, snapEntity, startSpawnInterpolation } from './components/interpolation-component';
+export { default as interpolationDefinition } from './components/interpolation-component';
 export {
 	INTERPOLATION_X_INDEX,
 	INTERPOLATION_Y_INDEX,
@@ -101,13 +103,10 @@ export {
 	INTERPOLATION_PREVIOUS_TOTAL_DURATION_INDEX,
 	INTERPOLATION_PREVIOUS_TICK_INDEX,
 	INTERPOLATION_SIZE,
-} from './components/interpolation-component';
+} from './components/interpolation-component-constants';
 export type {
 	InterpolationComponent,
 	InterpolationConfig,
-	SnappableEntity,
-	SpawnableEntity,
-	SpawnInterpolationOptions,
 } from './components/interpolation-component';
 
 export { physicsRegistry } from './components/registry';
@@ -118,7 +117,7 @@ export type {
 	InterpolationUpdateComponents,
 } from './components/registry';
 
-export { default as PhysicalWorld, addPhysicalWorldData, getSpatialMap } from './world';
+export { default as PhysicalWorld } from './world';
 export type {
 	PhysicalSystemWorld,
 	PhysicalWorldData,
@@ -147,20 +146,27 @@ export {
 export type { Vector } from './math/shapes';
 export { polygonShapesOverlap, polygonContactNormal } from './math/polygons';
 
-export { default as CollisionBroadphase, COLLIDABLE_QUERY } from './systems/collision';
+export { default as CollisionBroadphase } from './systems/collision';
 export type { CollisionComponents, CollisionContact, CollisionEntity, CollisionFunction, MoveResult, MovingEntity, SweepResult } from './systems/collision';
 
 export { default as SpatialIndex } from './systems/spatial-index';
 export type { SpatialComponents, SpatialEntity, SpatialFilter } from './systems/spatial-index';
 
 export { setEntityPosition } from './actions/set-entity-position';
+export { updateSpatialMap } from './actions/update-spatial-map';
+export { getSpatialMap } from './actions/get-spatial-map';
+export { addPhysicalWorldData } from './actions/add-physical-world-data';
+export { snapEntity } from './actions/snap-entity';
+export type { SnappableEntity } from './actions/snap-entity';
+export { startSpawnInterpolation } from './actions/start-spawn-interpolation';
+export type { SpawnableEntity, SpawnInterpolationOptions } from './actions/start-spawn-interpolation';
+export { default as integrateDynamics } from './actions/integrate-dynamics';
+export type { DynamicsCommand, DynamicsCommandBuffer, DynamicsCommandQueue, DynamicsCommands, DynamicsWorld } from './actions/dynamics-commands';
 
-export { default as physicsUpdate, createPhysicsUpdate, POSITION_UPDATED_EVENT, updateSpatialMap } from './systems/physics-update';
+export { default as physicsUpdate, createPhysicsUpdate } from './systems/physics-update';
 export type { DeathInterpolationEntity, PhysicsCallbackWorld, PhysicsGroupConfig, PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions, PhysicsWorld } from './systems/physics-update';
-export { default as PhysicsSystem, DEFAULT_PHYSICS_STEP_MS } from './systems/physics-system';
+export { default as PhysicsSystem } from './systems/physics-system';
 export type { PhysicsSystemConfig, VelocityAssignment } from './systems/physics-system';
-export { default as integrateDynamics } from './systems/dynamics';
-export type { DynamicsCommand, DynamicsCommandBuffer, DynamicsCommandQueue, DynamicsCommands, DynamicsWorld } from './systems/dynamics';
 
 export { default as interpolationUpdate } from './systems/interpolation-update';
 export type { InterpolationWorld } from './systems/interpolation-update';

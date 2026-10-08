@@ -1,4 +1,5 @@
 import { loadFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
+import { BACKLOG_CATCHUP_RATE, BACKLOG_TARGET_STEPS } from '../constants';
 import type { EntityUpdateFunction, EntityWorkerSystemWorld } from '@daneren2005/shared-memory-ecs';
 import type { InterpolationComponents, InterpolationUpdateComponents } from '../components/registry';
 import {
@@ -19,16 +20,8 @@ import {
 	INTERPOLATION_TOTAL_DURATION_INDEX,
 	INTERPOLATION_X_INDEX,
 	INTERPOLATION_Y_INDEX,
-} from '../components/interpolation-component';
-import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
-
-// The render trails the simulation by a bounded backlog. Up to this many steps is the ordinary one-step latency
-// plus headroom for a normal multi-step handover, left to drain on its own. Past it, the excess is a persistent
-// trail (a one-off slow run that never drains when physics publishes every frame) and is eased off.
-export const BACKLOG_TARGET_STEPS = 1.5;
-// How much of a frame's budget the ease-off may spend on top of the frame itself, so catching up reads as a
-// gentle speed-up rather than a jump across the banked segment.
-export const BACKLOG_CATCHUP_RATE = 0.5;
+} from '../components/interpolation-component-constants';
+import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component-constants';
 
 export interface InterpolationWorld extends EntityWorkerSystemWorld {
 	// Committed physics tick per interpolation channel, snapshotted once per run by InterpolationSystem.

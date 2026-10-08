@@ -4,7 +4,7 @@ import {
 	pointSegmentDistanceSquared, segmentBoxDistanceSquared, segmentSegmentDistanceSquared,
 } from '../shapes';
 import type { Vector } from '../shapes';
-import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../../components/body-component';
+import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_RECTANGLE } from '../../components/body-component-constants';
 
 const QUARTER_TURN = Math.PI / 2;
 const EIGHTH_TURN = Math.PI / 4;

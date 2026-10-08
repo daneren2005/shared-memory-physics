@@ -1,9 +1,9 @@
 import type { EntityUpdateComponents } from '@daneren2005/shared-memory-ecs/worker';
 import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
-import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
+import { TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component-constants';
 import type { Vector } from '../math/shapes';
 import type { PhysicalSystemWorld } from '../world';
-import { updateSpatialMap } from '../systems/physics-update';
+import { updateSpatialMap } from './update-spatial-map';
 
 export function setEntityPosition(
 	world: PhysicalSystemWorld, entity: { entityId: number, components: EntityUpdateComponents }, position: Vector,

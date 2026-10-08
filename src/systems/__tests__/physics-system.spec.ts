@@ -1,8 +1,9 @@
 import PhysicsSystem, { type PhysicsSystemConfig } from '../physics-system';
-import { createPhysicsUpdate, POSITION_UPDATED_EVENT, type PhysicsWorld } from '../physics-update';
+import { createPhysicsUpdate, type PhysicsWorld } from '../physics-update';
+import { POSITION_UPDATED_EVENT } from '../../constants';
 import type { BaseEntity } from '@daneren2005/shared-memory-ecs';
 import { createTestWorld, type Components, type Config, type TestWorld } from '../../__tests__/fixtures/world';
-import { SHAPE_CAPSULE } from '../../components/body-component';
+import { SHAPE_CAPSULE } from '../../components/body-component-constants';
 import { collisionUpdate,
 	type CollisionUpdateComponents,
 	COMMAND_VELOCITY_CATEGORY,

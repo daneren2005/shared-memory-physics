@@ -1,14 +1,25 @@
 import { createTestWorld, type TestWorld } from '../../__tests__/fixtures/world';
 import {
-	BODY_CATEGORY_INDEX, BODY_FLAGS_INDEX, BODY_MASK_INDEX, BODY_SHAPE_MASK,
-	DEFAULT_COLLIDE_CATEGORY, DEFAULT_COLLIDE_MASK, SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE, blocksPath,
+	blocksPath,
 } from '../body-component';
-import { MAX_POLYGON_VERTICES } from '../polygon-component';
+import {
+	BODY_CATEGORY_INDEX,
+	BODY_FLAGS_INDEX,
+	BODY_MASK_INDEX,
+	BODY_SHAPE_MASK,
+	DEFAULT_COLLIDE_CATEGORY,
+	DEFAULT_COLLIDE_MASK,
+	SHAPE_CAPSULE,
+	SHAPE_CIRCLE,
+	SHAPE_POLYGON,
+	SHAPE_RECTANGLE,
+} from '../body-component-constants';
+import { MAX_POLYGON_VERTICES } from '../polygon-component-constants';
 import {
 	DYNAMICS_ACCELERATION_X_INDEX,
 	DYNAMICS_ACCELERATION_Y_INDEX,
 	DYNAMICS_INVERSE_MASS_INDEX,
-} from '../dynamics-component';
+} from '../dynamics-component-constants';
 
 describe('components', () => {
 	let world: TestWorld;

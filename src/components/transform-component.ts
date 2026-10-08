@@ -1,3 +1,11 @@
+import {
+	TRANSFORM_X_INDEX,
+	TRANSFORM_Y_INDEX,
+	TRANSFORM_WIDTH_INDEX,
+	TRANSFORM_HEIGHT_INDEX,
+	TRANSFORM_ANGLE_INDEX,
+	TRANSFORM_SIZE,
+} from './transform-component-constants';
 import { Component } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
 import { preparePolygon, type PolygonVertex } from './polygon-component';
@@ -32,15 +40,6 @@ export interface TransformSerialization {
 	y: number
 	angle?: number
 }
-
-// Indexes into the backing Float32Array block, exported because the physics update reads the same offsets off
-// the raw block.
-export const TRANSFORM_X_INDEX = 0;
-export const TRANSFORM_Y_INDEX = 1;
-export const TRANSFORM_WIDTH_INDEX = 2;
-export const TRANSFORM_HEIGHT_INDEX = 3;
-export const TRANSFORM_ANGLE_INDEX = 4;
-export const TRANSFORM_SIZE = 5;
 
 class TransformComponentImpl extends Component<Float32Array> implements TransformComponent {
 	get x() {

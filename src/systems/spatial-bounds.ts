@@ -1,11 +1,12 @@
-import { bodyShape, SHAPE_RECTANGLE } from '../components/body-component';
+import { bodyShape } from '../components/body-component';
+import { SHAPE_RECTANGLE } from '../components/body-component-constants';
 import {
 	TRANSFORM_ANGLE_INDEX,
 	TRANSFORM_HEIGHT_INDEX,
 	TRANSFORM_WIDTH_INDEX,
 	TRANSFORM_X_INDEX,
 	TRANSFORM_Y_INDEX,
-} from '../components/transform-component';
+} from '../components/transform-component-constants';
 import { shapeHalfHeight, shapeHalfWidth } from '../math/shapes';
 
 export interface SpatialBounds {

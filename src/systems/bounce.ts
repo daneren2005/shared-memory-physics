@@ -1,7 +1,8 @@
-import { bodyShape, isSensor, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component';
-import { BOUNCINESS_INDEX } from '../components/bounciness-component';
-import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component';
-import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component';
+import { bodyShape, isSensor } from '../components/body-component';
+import { SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component-constants';
+import { BOUNCINESS_INDEX } from '../components/bounciness-component-constants';
+import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component-constants';
+import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component-constants';
 import { contactNormal } from '../math/shapes';
 import { polygonContactNormal } from '../math/polygons';
 import type { Vector } from '../math/shapes';

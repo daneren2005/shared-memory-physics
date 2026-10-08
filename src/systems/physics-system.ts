@@ -1,10 +1,11 @@
 import { EntityWorkerSystem } from '@daneren2005/shared-memory-ecs';
 import type { BaseEntity, BaseWorld, ComponentDefinitionMap, ComponentMap, EntityWorkerSystemQuery, EntityUpdateComponents, EntityUpdateFunction, SystemConfig } from '@daneren2005/shared-memory-ecs';
-import { startSpawnInterpolation, type SpawnableEntity } from '../components/interpolation-component';
+import { startSpawnInterpolation, type SpawnableEntity } from '../actions/start-spawn-interpolation';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
-import { physicsUpdate, POSITION_UPDATED_EVENT, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
-import { COLLIDABLE_QUERY } from './collision';
-import { addPhysicalWorldData, type PhysicalWorldSource } from '../world';
+import { physicsUpdate, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
+import { COLLIDABLE_QUERY, DEFAULT_PHYSICS_STEP_MS, POSITION_UPDATED_EVENT } from '../constants';
+import type { PhysicalWorldSource } from '../world';
+import { addPhysicalWorldData } from '../actions/add-physical-world-data';
 import { registerInterpolationChannel, unregisterInterpolationChannel } from './interpolation-channels';
 import {
 	DYNAMICS_COMMAND_ENTITY_ID_OFFSET,
@@ -18,20 +19,14 @@ import {
 	DYNAMICS_COMMAND_VELOCITY_X_OFFSET,
 	DYNAMICS_COMMAND_VELOCITY_Y_FLAG,
 	DYNAMICS_COMMAND_VELOCITY_Y_OFFSET,
-	queueDynamicsVector,
-	queueVelocityAssignment,
-} from './dynamics';
-import type { DynamicsCommandBuffer, PendingDynamicsCommands, VelocityAssignment } from './dynamics';
-
-// Default physics step, in ms. 20Hz rather than every frame: cheaper for no loss of correctness, only
-// smoothness, which InterpolationSystem restores. `deltaBetweenRuns: 0` runs it every frame, which a game with
-// very fast entities and no interpolation wants - a longer step is a longer move, and a move longer than an
-// obstacle is thick sweeps clean through it.
-export const DEFAULT_PHYSICS_STEP_MS = 50;
+} from '../actions/dynamics-commands';
+import type { DynamicsCommandBuffer, PendingDynamicsCommands, VelocityAssignment } from '../actions/dynamics-commands';
+import { queueDynamicsVector } from '../actions/queue-dynamics-vector';
+import { queueVelocityAssignment } from '../actions/queue-velocity-assignment';
 
 let nextCommandQueueId = 1;
 
-export type { VelocityAssignment } from './dynamics';
+export type { VelocityAssignment } from '../actions/dynamics-commands';
 
 export interface PhysicsSystemConfig<
 	C extends ComponentMap & PhysicsComponents,

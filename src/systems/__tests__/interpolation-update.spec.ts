@@ -1,6 +1,7 @@
 import { storeFloat32 } from '@daneren2005/shared-memory-objects/utils/float32-atomics';
 import type { EntityWorkerSystemCallbacks, EntityWorkerSystemWorld } from '@daneren2005/shared-memory-ecs';
-import { interpolationUpdate, BACKLOG_CATCHUP_RATE, BACKLOG_TARGET_STEPS } from '../interpolation-update';
+import { interpolationUpdate } from '../interpolation-update';
+import { BACKLOG_CATCHUP_RATE, BACKLOG_TARGET_STEPS } from '../../constants';
 import {
 	INTERPOLATION_CHANNEL_INDEX,
 	INTERPOLATION_DURATION_INDEX,
@@ -15,8 +16,8 @@ import {
 	INTERPOLATION_TOTAL_DURATION_INDEX,
 	INTERPOLATION_X_INDEX,
 	INTERPOLATION_Y_INDEX,
-} from '../../components/interpolation-component';
-import { TRANSFORM_SIZE, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component';
+} from '../../components/interpolation-component-constants';
+import { TRANSFORM_SIZE, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../../components/transform-component-constants';
 
 const callbacks: EntityWorkerSystemCallbacks = {
 	entityComponentChanged: () => {},

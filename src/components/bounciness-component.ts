@@ -1,3 +1,4 @@
+import { BOUNCINESS_INDEX, BOUNCINESS_SIZE } from './bounciness-component-constants';
 import { Component } from '@daneren2005/shared-memory-ecs';
 import type { ComponentDefinition } from '@daneren2005/shared-memory-ecs';
 
@@ -14,10 +15,6 @@ export interface BouncinessComponent {
 export interface BouncinessConfig {
 	bounciness?: number
 }
-
-// Index into the backing Float32Array block, exported because the bounce reads the same offset off the raw block.
-export const BOUNCINESS_INDEX = 0;
-export const BOUNCINESS_SIZE = 1;
 
 class BouncinessComponentImpl extends Component<Float32Array> implements BouncinessComponent {
 	get bounciness() {

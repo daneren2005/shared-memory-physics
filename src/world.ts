@@ -44,23 +44,6 @@ interface SpatialAccessorComponents {
 	body?: { block?: Uint32Array }
 }
 
-export function addPhysicalWorldData(source: PhysicalWorldSource, target: PhysicalWorldData): void {
-	target.spatialMapMemory = source.spatialMap.getSharedMemory();
-}
-
-export function getSpatialMap(world: PhysicalSystemWorld): SharedSpatialMap {
-	if(world.spatialMap) {
-		return world.spatialMap;
-	}
-	if(!world.heap || !world.spatialMapMemory) {
-		throw new Error('Spatial system world is missing its shared MemoryHeap or spatial map');
-	}
-
-	world.spatialMap = new SharedSpatialMap(world.heap, world.spatialMapMemory);
-
-	return world.spatialMap;
-}
-
 export default class PhysicalWorld<
 	R extends ComponentDefinitionMap,
 	E extends BaseEntity<ComponentsOf<R>, EntityConfigOf<R>> = BaseEntity<ComponentsOf<R>, EntityConfigOf<R>>,
