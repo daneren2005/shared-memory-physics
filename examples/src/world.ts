@@ -1,12 +1,13 @@
 import type { ComponentsOf, EntityConfigOf, EntityUpdateComponents } from '@daneren2005/shared-memory-ecs';
-import { physicsRegistry, PhysicalWorld } from '@daneren2005/shared-memory-physics';
+import { navigationRegistry, physicsRegistry, PhysicalWorld } from '@daneren2005/shared-memory-physics';
 import type { PhysicsUpdateComponents } from '@daneren2005/shared-memory-physics';
 
 // A game spreads `physicsRegistry` into its own registry alongside its game specific components.  The examples
-// have none of their own - everything they do is position, size and velocity - so the physics components are
-// the whole of it.
+// have none of their own, so the physics components - plus navigation for the pathfinding examples - are the
+// whole of it.
 export const registry = {
 	...physicsRegistry,
+	...navigationRegistry,
 };
 
 export type Components = ComponentsOf<typeof registry>;

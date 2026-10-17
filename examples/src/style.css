@@ -160,6 +160,16 @@ main {
 	cursor: pointer;
 }
 
+.control select {
+	width: 100%;
+	padding: 6px 8px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: var(--panel);
+	color: var(--text);
+	font: inherit;
+}
+
 .control button:hover {
 	border-color: var(--accent);
 	color: var(--accent);

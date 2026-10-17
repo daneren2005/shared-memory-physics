@@ -32,7 +32,15 @@ export interface ButtonControl {
 	press(): void
 }
 
-export type Control = SliderControl | ToggleControl | ButtonControl;
+export interface SelectControl {
+	kind: 'select'
+	label: string
+	options: ReadonlyArray<{ value: string, label: string }>
+	value: string
+	change(value: string): void
+}
+
+export type Control = SliderControl | ToggleControl | ButtonControl | SelectControl;
 
 // Replaces whatever was in `container` with the elements for `controls`.  Called once when an example is
 // selected, and never per frame - the values a control writes go straight into the running world.
@@ -45,6 +53,8 @@ function renderControl(control: Control): HTMLElement {
 		return renderSlider(control);
 	} else if(control.kind === 'toggle') {
 		return renderToggle(control);
+	} else if(control.kind === 'select') {
+		return renderSelect(control);
 	}
 
 	return renderButton(control);
@@ -107,6 +117,30 @@ function renderToggle(control: ToggleControl): HTMLElement {
 		note.textContent = control.note;
 		row.append(note);
 	}
+
+	return row;
+}
+
+function renderSelect(control: SelectControl): HTMLElement {
+	const row = document.createElement('div');
+	row.className = 'control';
+
+	const label = document.createElement('label');
+	const name = document.createElement('span');
+	name.textContent = control.label;
+	label.append(name);
+
+	const select = document.createElement('select');
+	for(const option of control.options) {
+		const element = document.createElement('option');
+		element.value = option.value;
+		element.textContent = option.label;
+		select.append(element);
+	}
+	select.value = control.value;
+	select.addEventListener('change', () => control.change(select.value));
+
+	row.append(label, select);
 
 	return row;
 }

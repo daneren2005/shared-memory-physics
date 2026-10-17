@@ -25,6 +25,11 @@ export interface Renderable {
 	// The canvas was clicked, at this point in world units.  The page forwards it to whichever example is up, so
 	// the scene does not have to know which examples care about a click.
 	pointerDown(x: number, y: number): void
+	// The pointer moved while held down over the canvas.
+	pointerDrag(x: number, y: number): void
+	// The current example's own drawing under and over the entities.
+	drawUnder(graphics: Phaser.GameObjects.Graphics): void
+	drawOver(graphics: Phaser.GameObjects.Graphics): void
 	// The current example's own colour for this entity, or undefined to fall back to the renderer's default.  The
 	// scene asks per entity per frame; the page routes it to whichever example is up - see Example#entityStyle.
 	entityStyle(entity: BaseEntity<Components, Config>): EntityStyle | undefined
@@ -98,6 +103,11 @@ class ExampleScene extends Scene {
 		this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
 			this.host.pointerDown(pointer.worldX, pointer.worldY);
 		});
+		this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+			if(pointer.isDown) {
+				this.host.pointerDrag(pointer.worldX, pointer.worldY);
+			}
+		});
 	}
 
 	update(time: number, delta: number): void {
@@ -141,12 +151,15 @@ class ExampleScene extends Scene {
 			return;
 		}
 
+		this.host.drawUnder(graphics);
+
 		// A swarm - thousands of boids - is drawn its own way: the default loop's outlined, filled circle is a
 		// triangulated arc plus a stroke plus a matrix save/restore *per entity*, which is fine for a scene of a
 		// few dozen and falls over at ten thousand.  The swarm path draws each as a single flat triangle instead,
 		// so a whole flock is one cheap pass with no strokes and no arcs.
 		if(this.host.swarm) {
 			this.drawSwarm(runtime.world.entities.values());
+			this.host.drawOver(graphics);
 
 			return;
 		}
@@ -179,20 +192,30 @@ class ExampleScene extends Scene {
 				style?.appearance,
 			);
 		}
+
+		this.host.drawOver(graphics);
 	}
 
 	// Draws a swarm the cheap way: one flat, unstroked triangle per mover, pointed the way it is going.  This is
 	// what lets the boids example carry ten thousand entities - the per-entity work is a colour, three points and
 	// a single `fillTriangle`, with none of the arc triangulation, stroking or per-shape canvas save/restore the
-	// default loop does.  Everything without a velocity (the level's walls) is skipped, since a swarm is all
-	// movers and scenery has no heading to point.
+	// default loop does.  Scenery without a velocity (the pathfinding stress test's obstacles) is still drawn as
+	// its shape; there are few enough of those for the full path to be affordable.
 	private drawSwarm(entities: Iterable<BaseEntity<Components, Config>>): void {
 		const graphics = this.graphics;
 
 		for(const entity of entities) {
 			const velocity = entity.components.velocity;
 			const transform = entity.components.transform;
-			if(!velocity || !transform) {
+			if(!transform) {
+				continue;
+			}
+			if(!velocity) {
+				const style = this.host.entityStyle(entity);
+				const color = style?.color ?? STATIC_COLOR;
+				graphics.fillStyle(color, style?.alpha ?? 0.85);
+				graphics.lineStyle(1.5, color, 1);
+				drawShape(graphics, transform, transform, entity.components.body?.shape ?? SHAPE_RECTANGLE, entity.components.polygon?.block);
 				continue;
 			}
 

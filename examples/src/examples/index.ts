@@ -6,6 +6,8 @@ import { breakout } from './breakout';
 import { bulletHell } from './bullet-hell';
 import { clickToMove } from './click-to-move';
 import { interpolationWalk } from './interpolation-walk';
+import { pathfinding } from './pathfinding';
+import { pathfindingStress } from './pathfinding-stress';
 import { platformer } from './platformer';
 import { sensors } from './sensors';
 
@@ -20,6 +22,8 @@ export const EXAMPLES: Array<Example> = [
 	breakout,
 	bulletHell,
 	boids,
+	pathfinding,
+	pathfindingStress,
 ];
 
 export function findExample(id: string): Example | undefined {

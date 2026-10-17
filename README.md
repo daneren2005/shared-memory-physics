@@ -7,7 +7,7 @@ reads positions straight off its entities.
 
 Examples at https://daneren2005.github.io/shared-memory-physics/
 
-The ECS (`>=1.1.1`) and the shared-memory primitives it is built on are **peer dependencies**: a game must
+The ECS (`>=1.10.0`) and the shared-memory primitives it is built on are **peer dependencies**: a game must
 register these components against the same copy of the ECS it builds its world with.
 
 ```sh
@@ -23,6 +23,7 @@ npm install @daneren2005/shared-memory-physics @daneren2005/shared-memory-ecs @d
 | `velocity`      | –                                            | `velocityX?`, `velocityY?`, `damping?` | `Float32Array` – world units per second        |
 | `body`          | `shape?`, `collideCategory?`, `collideMask?`, `sensor?`, `continuousCollisionDetection?`, `blocksPath?` | –                          | `Uint32Array` – what shape, what collides with |
 | `interpolation` | `interpolate`                                | –                          | `Float32Array` – where to *draw* it            |
+| `navigation`    | `navigate`                                   | –                          | `Int32Array` – a goal and the path to it ([Pathfinding](#pathfinding)) |
 
 Entity configs are flat and shared across every component, so velocity is keyed as `velocityX` / `velocityY`
 rather than `x` / `y` (which already belong to the transform). Either velocity axis on its own is enough to
@@ -910,9 +911,111 @@ ask it directly rather than building the sort yourself - it settles as soon as t
 measured to an entity's **box**, not to its centre, so a large target is as near as its nearest edge and
 `maxDistance` reads as a range past the hull.
 
+## Pathfinding
+
+Grid pathfinding for movers that need to walk around walls and buildings: an A* over tiles, run on a worker,
+answering requests written into a `navigation` component. Bodies flagged `blocksPath` are the walls. The physics
+still does the moving; the game reads the path back and steers velocity along it.
+
+Register `navigationRegistry` beside `physicsRegistry`, and give movers a `navigate: true` tag:
+
+```ts
+import { navigationRegistry, physicsRegistry, PathfindingSystem } from '@daneren2005/shared-memory-physics';
+
+const world = new PhysicalWorld({ ...physicsRegistry, ...navigationRegistry, ...gameRegistry });
+world.addSystem(new PathfindingSystem(world, {
+	getInitData: () => ({ tilesWide: 128, tilesHigh: 128, cellSize: 32 }),
+	getWorker: () => new Worker(new URL('./pathfinding.worker.ts', import.meta.url), { type: 'module' }),
+}));
+
+world.loadEntity({ x: 48, y: 48, width: 32, height: 32, blocksPath: true });       // a wall
+const villager = world.loadEntity({ x: 16, y: 16, width: 24, height: 24, navigate: true });
+villager.components.navigation!.navigateTo(400, 300);
+```
+
+The grid's `(0, 0)` is the world's top-left corner and anything off it is blocked. A worker file is the same two
+lines as physics', handing `createEntitySystemWorker` the update the system was given (`pathfindingUpdate` by default).
+
+### The navigation block
+
+Everything is in the mover's `navigation` block (an `Int32Array`), so any thread can set a goal or read a path:
+
+| Call | Does |
+| --- | --- |
+| `navigateTo(block, x, y)` | Sets the goal, marks the mover active and asks for a path |
+| `setNavigationGoal(block, x, y)` | Moves the goal without searching again; the last leg bends to it |
+| `requestPath(block)` | Searches again for the current goal |
+| `stopNavigating(block)` | Marks the mover inactive, so it is neither searched for nor rechecked |
+| `isPathPending(block)` / `isUnreachable(block)` | Whether an answer is still coming / settled as no way there |
+| `followPath(block, x, y, arriveDistance, target)` | Follower bookkeeping, below |
+
+A request is pending while its request id is ahead of its result id; the update writes waypoints and outcome
+first and the result id last, so a settled path is never read half written. Up to `NAVIGATION_MAX_WAYPOINTS` (32)
+waypoints fit; a longer path is cut short and marked `PathStatus.Incomplete`. Goals and paths are transient: whoever
+set a goal sets it again after a load.
+
+`followPath` is what a movement system calls each step. It skips waypoints within `arriveDistance`, writes the next
+point to head for into `target` (no allocation) and says what kind it is:
+
+```ts
+const step = followPath(navigation, x, y, 1, target);
+if(step === FollowStep.Waypoint || step === FollowStep.Goal) {
+	steerToward(target);
+} else {
+	halt(); // Waiting for a path, or Stuck at the closest reachable spot
+}
+```
+
+At the end of an incomplete path it asks for the rest itself and reports `Waiting`.
+
+### What the update does
+
+- Only **active** movers with a pending request are searched. Searching is budgeted per run in A* tiles
+  (`iterationBudget`, default `DEFAULT_PATH_SEARCH_ITERATION_BUDGET`), not wall-clock time, so a run plays out the
+  same on any machine; the first search of a run always goes ahead and the rest wait for the next run. The
+  budget is fixed when the update is built, but `PathfindingSystem`'s `iterationBudget` (a config option and a live
+  field) overrides it from the next run on - say, a larger one when the system is on a worker, where searching
+  costs no frame time. In-process, every tile of budget is main-thread time inside `world.update`.
+- Blockers are assumed never to move. Each is rasterised into the grid when it joins the `pathBlockers` query and
+  cleared when it leaves, and a new one re-paths only movers whose remaining path it crosses.
+- A mover standing inside a blocker (a bed built around a sleeper) searches as if that blocker were not there, so it
+  walks out rather than being relocated past a wall.
+- Paths are smoothed (string pulled) where the straight line is clear and no slower. A mover is placed by its
+  footprint, so one bigger than a tile only fits gaps its whole box fits.
+
+### Configuring it
+
+`createPathfindingUpdate` builds the update both backends run. Hooks are baked in because functions do not
+survive `postMessage`:
+
+```ts
+export const pathfindingUpdate = createPathfindingUpdate<Components, PathfindingUpdateComponents, GameWorld>({
+	search: new GridAStar({ diagonal: true }),
+	// Bodies in these categories stop only movers whose collide mask takes them in, e.g. doors animals cannot open.
+	gateCategories: DOOR,
+	init(navigation, data, queries) {
+		// Feed terrain in: 1.5 for a road, 0.5 for mud.
+		setNavigationTerrainSpeed(navigation, 3, 4, 1.5);
+	},
+	queryChanged(world, queryName, delta) { /* the game's extra queries */ },
+	preRun(world) { /* per-run upkeep */ },
+});
+```
+
+Pass it to `PathfindingSystem` as `updateFunction`, along with `blockers: { not: ['construction'] }` (or a `filter`)
+to narrow what counts as a blocker, `queries` for the hooks' own data, and `optional` for extra mover components.
+Another system wanting the same view of the world (say, finding enclosed pens) can build matching queries with
+`pathBlockerQueries` and keep its own `NavGrid` with `applyRectChanges`.
+
+Gates get a grid per set of gate categories a mover's mask takes in, cloned from the blockers grid the first time
+such a mover searches, so gates nobody collides with cost nothing.
+
+The search itself is swappable: anything implementing `PathSearch` (`findPath(grid, request)`) can be passed as
+`search`. `NavGrid`, `GridAStar`, `sweepCost` and `smoothPath` are exported for use on their own too.
+
 ## Examples
 
-Three runnable examples live in [`examples/`](./examples), rendered with [Phaser](https://phaser.io) (a dev
+Runnable examples live in [`examples/`](./examples), rendered with [Phaser](https://phaser.io) (a dev
 dependency - it is not part of the library) and driven by plain HTML controls beside the canvas:
 
 ```sh
@@ -927,6 +1030,11 @@ npm start          # http://127.0.0.1:8080
   them in turn. It starts on a deliberately long 100ms physics step, so turning **interpolate rendering** off is
   a direct before-and-after on the same running scene: the same simulation, drawn six frames at a time instead
   of one.
+- **Pathfinding** - click to send a square through a scene built to show each pathfinding case: a U-shaped trap,
+  a gap only small movers fit, mud and road terrain, round and angled blockers, and a door only some movers can
+  open. Toggle diagonal movement and smoothing, resize the mover, and add walls or paint terrain while it walks.
+- **Pathfinding stress** - thousands of movers wandering between random goals through hundreds of obstacles, with
+  obstacle churn re-pathing whoever a new wall crosses, and per-worker timings in the stats panel.
 
 Every page has a **physics step** slider (starting at the library's own 50ms) and an **interpolate rendering**
 toggle, so the trade the [interpolation section](#interpolation) describes can be looked at rather than

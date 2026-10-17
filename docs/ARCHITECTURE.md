@@ -78,17 +78,48 @@ main thread                              worker thread (optional)
 | `systems/interpolation-update.ts` | The lerp itself (`render += (target-render)*frameDuration/remainingDuration`), runnable in a worker too. | `interpolationUpdate` |
 | `math/shapes.ts` | Primitive-shape overlap, contact direction + distance functions. Rectangle/circle/capsule remain an oriented core grown by a radius. | `shapesOverlap`, `contactNormal`, `orientedBoxesOverlap`, `segment*DistanceSquared`, `shapeHalfWidth/Height`, `shapeRadius`, `Vector` |
 | `math/polygons.ts` | Convex SAT used only when at least one side is a polygon; projects the other polygon or primitive analytically and supplies the matching contact normal. | `polygonShapesOverlap`, `polygonContactNormal` |
+| `components/navigation-component.ts` | A mover's goal, active flag and the path found to it, plus raw-block helpers any thread uses to ask for and read paths. Not in `physicsRegistry`: games spread `navigationRegistry`. Goal and waypoints are Float32 bit patterns in the Int32 block (`loadFloat32`) so request/result ids can use Atomics. | `navigationDefinition`, `navigateTo`, `setNavigationGoal`, `stopNavigating`, `requestPath`, `isPathPending`, `isUnreachable`, `waypoint`, `writePath` |
+| `components/navigation-component-constants.ts` | Dependency-free navigation block offsets, waypoint cap and size. | `NAVIGATION_*` |
+| `pathfinding/nav-grid.ts` | Per-tile blocker counts (so overlapping blockers remove in any order), terrain speed, lazily rebuilt 4-connected regions for an O(1) unreachable check. | `NavGrid`, `Rect`, `TileRange` |
+| `pathfinding/grid-a-star.ts` | A* over tile anchors, footprint-aware for movers bigger than a tile, terrain-costed, relocates a blocked start/goal, then smooths. Scratch arrays are stamped, not cleared. | `GridAStar`, `GridAStarOptions` |
+| `pathfinding/path-search.ts` | Request/result types and the `PathSearch` seam for swapping algorithms. | `PathSearch`, `PathRequest`, `PathResult`, `PathStatus`, `Point` |
+| `pathfinding/line-of-sight.ts` / `smooth-path.ts` / `min-heap.ts` | Box sweep over tiles (slowest terrain touched, or Infinity if blocked); terrain-aware string pulling; the A* open list. | `sweepCost`, `smoothPath`, `MinHeap` |
+| `pathfinding/path-blockers.ts` | The blocker/gate query definitions, body → tile rect, and rect add/remove against grids. | `pathBlockerQueries`, `blockerRect`, `applyRectChanges`, `PATH_BLOCKERS_QUERY`, `PATH_GATES_QUERY` |
+| `pathfinding/navigation-state.ts` | Worker-local grids: blockers only, plus one per set of gate categories a mover's mask takes in (cloned on first use). Terrain speed applies to all. | `NavigationState`, `createNavigationState`, `navigationGridFor`, `setNavigationTerrainSpeed`, `applyPathBlockerChanges`, `applyPathGateChanges` |
+| `pathfinding/pathfinding-update.ts` | The per-entity update on either backend: searches active pending movers within an iteration budget, rechecks settled paths when blockers are added, ignores blockers a mover stands inside. Game hooks (`init`/`queryChanged`/`preRun`) are baked in; `pathfinding.gateCategories` metadata is stamped on for the system. | `createPathfindingUpdate`, `pathfindingUpdate`, `PathfindingWorld` |
+| `pathfinding/pathfinding-system.ts` | Main-thread `EntityWorkerSystem` over `navigation` + `transform` (+ optional `body`), building blocker/gate queries from the update's metadata. Its live `iterationBudget` field is sent each run as `world.iterationBudget`, overriding the update's baked budget. | `PathfindingSystem`, `PathfindingSystemConfig` |
+| `pathfinding/follow-path.ts` | Follower bookkeeping: advances waypoints, re-requests at the end of an incomplete path, writes the next target without allocating. | `followPath`, `FollowStep` |
 
 Tests sit in `__tests__/` next to what they cover; shared worker/world fixtures live in
 `src/__tests__/fixtures/`. `examples/` is a Phaser-rendered playground (Phaser is a dev dep only). Its shared
 renderer supports optional stick-figure, coin, and enemy appearances while collision geometry remains an
 ordinary physics body; the platformer example demonstrates gravity, jumping, patrols, sensors, and game events.
 
+The two pathfinding examples (`examples/pathfinding.ts`, `pathfinding-stress.ts`) run three stepped systems from
+`examples/src/systems/`: a `PathfindingSystem` subclass whose update swaps `GridAStar` instances so diagonal/smoothing
+toggle live and copies a shared `TerrainData` speed grid into its nav grids when its version changes; a
+`PathFollowSystem` worker that turns `followPath` into velocity (scaled by terrain); then the ordinary sweep physics.
+Examples can add `drawUnder`/`drawOver` canvas layers, `pointerDrag`, `stats` rows, and `select` controls.
+
 The platformer demonstrates dynamics from both threads: persistent acceleration supplies gravity, a main-thread
 velocity command supplies jumping, and its worker-safe collision callback queues knockback. Its update opts into
 `stopVelocityOnContact`, so floors, ceilings, walls, and slopes settle velocity without callback code.
 
 ## Invariants & gotchas (the non-obvious rules)
+
+- **Pathfinding blockers never move.** Each `blocksPath` body is rasterised once when it joins the blocker query and
+  removed by the same rect when it leaves; a moved blocker must leave and rejoin (e.g. `checkAddEntity` after a flag
+  change). Only *added* blockers trigger a recheck of settled paths; removals just let later searches find shorter ways.
+- **The pathfinding update needs ECS >= 1.10**, whose `init` receives the loaded query members. Entities present at
+  load never reach `queryChanged`, so `init` replays them through the same add handlers.
+- **The ECS only runs an update's `init` from `world.load`.** A world filled with `loadEntity` and then `init()`ed never
+  loads, which left `world.navigation` undefined. `PathfindingSystem.init` therefore calls `finishLoading` itself if
+  nothing has loaded it yet; the load consumes pending query deltas, so blockers are not rasterised twice. The init
+  result is re-assigned onto a fresh run world each run, so per-load state a hook mutates must live in an object.
+- **The search budget is work, not time, and can change per run.** `PathfindingSystem.addDataToWorld` writes its
+  `iterationBudget` onto the run world; a subclass overriding it **must call `super.addDataToWorld(world)`** or the
+  override never reaches the update. The check runs before each search, so one search can overshoot by up to the
+  search's own `maxIterations`.
 
 - **Polygon bodies are convex and capped at 16 vertices.** `vertices` loads a separate fixed-size polygon block,
   so primitive bodies pay no vertex storage. Loading recentres and normalizes the outline to its source bounds -

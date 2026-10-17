@@ -109,8 +109,39 @@ export type {
 	InterpolationConfig,
 } from './components/interpolation-component';
 
-export { physicsRegistry } from './components/registry';
+export {
+	default as navigationDefinition,
+	isNavigating,
+	isPathPending,
+	isUnreachable,
+	navigateTo,
+	navigationGoal,
+	requestPath,
+	setNavigationGoal,
+	stopNavigating,
+	waypoint,
+	waypointX,
+	waypointY,
+	writePath,
+} from './components/navigation-component';
+export {
+	NAVIGATION_REQUEST_INDEX,
+	NAVIGATION_RESULT_INDEX,
+	NAVIGATION_OUTCOME_INDEX,
+	NAVIGATION_WAYPOINT_INDEX,
+	NAVIGATION_WAYPOINT_COUNT_INDEX,
+	NAVIGATION_ACTIVE_INDEX,
+	NAVIGATION_GOAL_X_INDEX,
+	NAVIGATION_GOAL_Y_INDEX,
+	NAVIGATION_WAYPOINTS_INDEX,
+	NAVIGATION_MAX_WAYPOINTS,
+	NAVIGATION_SIZE,
+} from './components/navigation-component-constants';
+export type { NavigationComponent, NavigationConfig } from './components/navigation-component';
+
+export { physicsRegistry, navigationRegistry } from './components/registry';
 export type {
+	NavigationComponents,
 	PhysicsComponents,
 	PhysicsUpdateComponents,
 	InterpolationComponents,
@@ -167,6 +198,46 @@ export { default as physicsUpdate, createPhysicsUpdate } from './systems/physics
 export type { DeathInterpolationEntity, PhysicsCallbackWorld, PhysicsGroupConfig, PhysicsUpdateFunction, PhysicsUpdateMetadata, PhysicsUpdateOptions, PhysicsWorld } from './systems/physics-update';
 export { default as PhysicsSystem } from './systems/physics-system';
 export type { PhysicsSystemConfig, VelocityAssignment } from './systems/physics-system';
+
+export { default as NavGrid } from './pathfinding/nav-grid';
+export type { Rect, TileRange } from './pathfinding/nav-grid';
+export { default as GridAStar } from './pathfinding/grid-a-star';
+export type { GridAStarOptions } from './pathfinding/grid-a-star';
+export { default as MinHeap } from './pathfinding/min-heap';
+export { PathStatus } from './pathfinding/path-search';
+export type { PathRequest, PathResult, PathSearch, PathStatusValue, Point } from './pathfinding/path-search';
+export { sweepCost } from './pathfinding/line-of-sight';
+export { smoothPath } from './pathfinding/smooth-path';
+export { FollowStep, followPath } from './pathfinding/follow-path';
+export type { FollowStepValue } from './pathfinding/follow-path';
+export {
+	PATH_BLOCKERS_QUERY,
+	PATH_GATES_QUERY,
+	applyRectChanges,
+	blockerRect,
+	pathBlockerQueries,
+} from './pathfinding/path-blockers';
+export type { PathBlockerComponents, PathBlockerDelta, PathBlockerQueryOptions } from './pathfinding/path-blockers';
+export {
+	applyPathBlockerChanges,
+	applyPathGateChanges,
+	blockingRects,
+	createNavigationState,
+	navigationGridFor,
+	setNavigationTerrainSpeed,
+} from './pathfinding/navigation-state';
+export type { NavigationState } from './pathfinding/navigation-state';
+export { DEFAULT_PATH_SEARCH_ITERATION_BUDGET, createPathfindingUpdate, pathfindingUpdate } from './pathfinding/pathfinding-update';
+export type {
+	PathfindingInitData,
+	PathfindingUpdateComponents,
+	PathfindingUpdateFunction,
+	PathfindingUpdateMetadata,
+	PathfindingUpdateOptions,
+	PathfindingWorld,
+} from './pathfinding/pathfinding-update';
+export { default as PathfindingSystem } from './pathfinding/pathfinding-system';
+export type { PathfindingSystemConfig } from './pathfinding/pathfinding-system';
 
 export { default as interpolationUpdate } from './systems/interpolation-update';
 export type { InterpolationWorld } from './systems/interpolation-update';

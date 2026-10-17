@@ -1,4 +1,5 @@
 import type { BaseEntity, System } from '@daneren2005/shared-memory-ecs';
+import type { GameObjects } from 'phaser';
 import type { InterpolationSystem, PhysicsSystem } from '@daneren2005/shared-memory-physics';
 import type { Control } from './controls';
 import type { Level } from './level';
@@ -122,6 +123,14 @@ export interface Example {
 	// drawn at its own size, so these are the same coordinates entities live in.  Only an example that is steered
 	// by clicking needs this; the rest leave it off and the click does nothing.
 	pointerDown?(runtime: ExampleRuntime, x: number, y: number): void
+	// The pointer moved while held down, for painting or dragging a goal.
+	pointerDrag?(runtime: ExampleRuntime, x: number, y: number): void
+
+	// Extra drawing in world units, under the entities (terrain, a grid) and over them (paths, goals).
+	drawUnder?(runtime: ExampleRuntime, graphics: GameObjects.Graphics): void
+	drawOver?(runtime: ExampleRuntime, graphics: GameObjects.Graphics): void
+	// Example-specific rows appended to the stats panel, refreshed with the rest of it.
+	stats?(runtime: ExampleRuntime): Record<string, string>
 
 	// An override for how a single entity is drawn, asked per entity every frame.  Return a colour (and optional
 	// alpha) to draw it with, or undefined to leave it to the renderer's default.  This is where an example that

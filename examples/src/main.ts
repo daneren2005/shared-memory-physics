@@ -1,6 +1,7 @@
 import { DEFAULT_PHYSICS_STEP_MS, InterpolationSystem, PhysicsSystem } from '@daneren2005/shared-memory-physics';
 import { PerformanceTiming } from '@daneren2005/shared-memory-ecs';
 import type { BaseEntity, System } from '@daneren2005/shared-memory-ecs';
+import type { GameObjects } from 'phaser';
 import { renderControls } from './controls';
 import type { Control } from './controls';
 import type { EntityStyle, HudText, Example, ExampleHost, ExampleRuntime } from './example';
@@ -91,6 +92,24 @@ class ExamplesPage implements ExampleHost, Renderable {
 	pointerDown(x: number, y: number): void {
 		if(this.runtime) {
 			this.example.pointerDown?.(this.runtime, x, y);
+		}
+	}
+
+	pointerDrag(x: number, y: number): void {
+		if(this.runtime) {
+			this.example.pointerDrag?.(this.runtime, x, y);
+		}
+	}
+
+	drawUnder(graphics: GameObjects.Graphics): void {
+		if(this.runtime) {
+			this.example.drawUnder?.(this.runtime, graphics);
+		}
+	}
+
+	drawOver(graphics: GameObjects.Graphics): void {
+		if(this.runtime) {
+			this.example.drawOver?.(this.runtime, graphics);
 		}
 	}
 
@@ -300,6 +319,8 @@ class ExamplesPage implements ExampleHost, Renderable {
 				}
 			}
 		}
+
+		Object.assign(rows, this.example.stats?.(runtime));
 
 		this.elements.stats.replaceChildren(...Object.entries(rows).flatMap(([label, value]) => {
 			const term = document.createElement('dt');

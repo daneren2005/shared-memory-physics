@@ -2,6 +2,7 @@ import { bodyDefinition, type BodyComponent } from './body-component';
 import { bouncinessDefinition, type BouncinessComponent } from './bounciness-component';
 import { dynamicsDefinition, type DynamicsComponent } from './dynamics-component';
 import { interpolationDefinition, type InterpolationComponent } from './interpolation-component';
+import { navigationDefinition, type NavigationComponent } from './navigation-component';
 import { polygonDefinition, type PolygonComponent } from './polygon-component';
 import { transformDefinition, type TransformComponent } from './transform-component';
 import { velocityDefinition, type VelocityComponent } from './velocity-component';
@@ -21,6 +22,13 @@ export const physicsRegistry = {
 	interpolation: interpolationDefinition,
 };
 
+// Kept out of physicsRegistry so only games with pathfinding register it. Spread in alongside it:
+//
+//   const registry = { ...physicsRegistry, ...navigationRegistry };
+export const navigationRegistry = {
+	navigation: navigationDefinition,
+};
+
 // The slice of a game's component map the physics systems need. A type alias, not an interface, so it satisfies
 // the ECS's `ComponentMap` index signature; systems only require the game's map extends this.
 export type PhysicsComponents = {
@@ -38,6 +46,13 @@ export type PhysicsComponents = {
 export type InterpolationComponents = {
 	transform: TransformComponent
 	interpolation: InterpolationComponent
+};
+
+// The slice PathfindingSystem needs.
+export type NavigationComponents = {
+	navigation: NavigationComponent
+	transform: TransformComponent
+	body: BodyComponent
 };
 
 // The same components as their backing arrays, the form an update sees on the worker thread. `body`, `bounciness`,
