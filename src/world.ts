@@ -55,7 +55,8 @@ export default class PhysicalWorld<
 		const { spatial, ...worldOptions } = options;
 		super(registry, worldOptions);
 
-		this.spatialMap = new SharedSpatialMap(this.heap, spatial);
+		// Float64 because eids only increase: Float32 caps lifetime-created entities at 2^24, Float64 covers the uint32 eid range
+		this.spatialMap = new SharedSpatialMap(this.heap, { type: Float64Array, ...spatial });
 		this.on('entity-added', (entity: PhysicalWorldEntity<R, E>) => {
 			this.updateSpatialEntity(entity);
 			entity.on('component-added', (name: string) => {

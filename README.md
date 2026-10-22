@@ -839,6 +839,11 @@ const clicked = world.findNearestSpatial(mouseX, mouseY, 0);
 const nearby = world.searchSpatialAround(x, y, 100, 100);
 ```
 
+The map defaults to `type: Float64Array`. Entity ids are never reused, so a `Float32` map, which only holds ids
+below 2^24 (~16.7M), runs out after that many entities have *ever* been created. `Float64` covers the whole
+uint32 eid range for about 1.4x the memory per entity. Pass `spatial: { type: Float32Array }` only if a world
+will create fewer entities than that over its lifetime.
+
 `searchSpatial`, `searchSpatialAround`, `findNearestSpatial`, and `findNearbySpatial` return live entities and
 accept entity filters. Shape-aware axis-aligned bounds are stored: rotated rectangles and capsules occupy the
 box around their actual outline. A direct transform/body edit outside the physics update must be followed by
