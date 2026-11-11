@@ -1,12 +1,16 @@
 import SharedSpatialMap from '@daneren2005/shared-memory-objects/spatial/shared-spatial-map';
 import type { SharedSpatialMapConfig, SharedSpatialMapMemory } from '@daneren2005/shared-memory-objects/spatial/shared-spatial-map';
+import type { SpatialEntity } from '@daneren2005/shared-memory-objects/spatial/spatial-entity';
 import { BaseWorld } from '@daneren2005/shared-memory-ecs';
 import type {
 	BaseEntity,
 	ComponentDefinitionMap,
 	ComponentsOf,
+	CompressedWorldConfig,
 	EntityWorkerSystemWorld,
 	EntityConfigOf,
+	WorldConfig,
+	WorldLoadOptions,
 	WorldOptions,
 } from '@daneren2005/shared-memory-ecs';
 import { boundsOverlap, querySize, spatialBounds } from './systems/spatial-bounds';
@@ -50,6 +54,8 @@ export default class PhysicalWorld<
 > extends BaseWorld<R, ComponentsOf<R>, EntityConfigOf<R>, E> implements PhysicalWorldSource {
 	readonly spatialMap: SharedSpatialMap;
 	private spatialIds = new Set<number>();
+	// Bulk-loaded entities whose spatial entry is still to be written, by eid.
+	private pendingSpatial = new Map<number, PhysicalWorldEntity<R, E>>();
 
 	constructor(registry: R, options: PhysicalWorldOptions<R, E> = {}) {
 		const { spatial, ...worldOptions } = options;
@@ -71,8 +77,21 @@ export default class PhysicalWorld<
 			});
 		});
 		this.on('entity-removed', (entity: PhysicalWorldEntity<R, E>) => {
+			this.pendingSpatial.delete(entity.eid);
 			this.spatialIds.delete(entity.eid);
 			this.spatialMap.remove(entity.eid);
+		});
+	}
+
+	// Inserts the entities a bulk load queued before anything can read the map: worker systems only run after this.
+	load(config: WorldConfig<EntityConfigOf<R>> | CompressedWorldConfig<EntityConfigOf<R>>, options: WorldLoadOptions = {}): Promise<void> {
+		this.pendingSpatial.clear();
+		return super.load(config, {
+			...options,
+			onEntitiesReady: () => {
+				this.flushPendingSpatial();
+				options.onEntitiesReady?.();
+			},
 		});
 	}
 
@@ -81,6 +100,11 @@ export default class PhysicalWorld<
 		if(!entity) {
 			return;
 		}
+		if(this.isBulkLoading) {
+			this.pendingSpatial.set(entity.eid, entity);
+			return;
+		}
+		this.flushPendingSpatial();
 
 		const components = entity.components as typeof entity.components & SpatialAccessorComponents;
 		const transform = components.transform?.block;
@@ -95,10 +119,33 @@ export default class PhysicalWorld<
 		this.spatialMap.update(entity.eid, bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
 	}
 
+	// Inserting one by one during a load regrows and rehashes the buckets as the map fills; bulkInsert sizes them once.
+	private flushPendingSpatial() {
+		if(this.pendingSpatial.size === 0) {
+			return;
+		}
+		const inserts: Array<SpatialEntity> = [];
+		for(const entity of this.pendingSpatial.values()) {
+			const components = entity.components as typeof entity.components & SpatialAccessorComponents;
+			const transform = components.transform?.block;
+			if(!transform) {
+				this.spatialIds.delete(entity.eid);
+				this.spatialMap.remove(entity.eid);
+				continue;
+			}
+			const bounds = spatialBounds({ transform, body: components.body?.block });
+			this.spatialIds.add(entity.eid);
+			inserts.push({ id: entity.eid, x: bounds.minX, y: bounds.minY, width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY });
+		}
+		this.pendingSpatial.clear();
+		this.spatialMap.bulkInsert(inserts);
+	}
+
 	searchSpatial(minX: number, minY: number, maxX: number, maxY: number, filter?: PhysicalWorldFilter<R, E>): Array<PhysicalWorldEntity<R, E>> {
 		if(maxX < minX || maxY < minY) {
 			return [];
 		}
+		this.flushPendingSpatial();
 
 		const found: Array<PhysicalWorldEntity<R, E>> = [];
 		const ids = Number.isFinite(minX) && Number.isFinite(minY) && Number.isFinite(maxX) && Number.isFinite(maxY)
@@ -129,6 +176,7 @@ export default class PhysicalWorld<
 	}
 
 	findNearbySpatial(x: number, y: number, maxResults: number, maxDistance = Infinity, filter?: PhysicalWorldFilter<R, E>): Array<PhysicalWorldEntity<R, E>> {
+		this.flushPendingSpatial();
 		const ids = this.spatialMap.neighbors(x, y, maxResults, maxDistance, id => {
 			const entity = this.getEntityByEid(id);
 			return !!entity && (!filter || filter(entity));
