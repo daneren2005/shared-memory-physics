@@ -311,6 +311,12 @@ it, and `reportMoves: false` turns it off regardless.
 The move is written with `addAtomicFloat32` rather than a plain `+=`, so a game system on another thread can
 add to the same position in the same instant without either move being lost.
 
+**Access for `ConflictScheduler`.** `PhysicsSystem` declares `writes: ['transform', 'velocity', 'interpolation']`,
+plus `body` and `entity` when `createPhysicsUpdate` has an `onCollision` callback (`dieAtImpact` flags the body
+and the entity dies a run later). Pass `writes` for anything else your callback changes; it is merged in.
+`InterpolationSystem` declares `writes: ['interpolation']`, and `PathfindingSystem` declares `navigation` merged with
+any `writes` you pass.
+
 ### Running off the main thread
 
 Bundlers need the `new Worker(new URL(...))` call written out in your own source, so the worker entry file

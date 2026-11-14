@@ -2,7 +2,7 @@ import { EntityWorkerSystem } from '@daneren2005/shared-memory-ecs';
 import type { BaseEntity, BaseWorld, ComponentDefinitionMap, ComponentMap, EntityWorkerSystemQuery, EntityUpdateComponents, EntityUpdateFunction, SystemConfig } from '@daneren2005/shared-memory-ecs';
 import { startSpawnInterpolation, type SpawnableEntity } from '../actions/start-spawn-interpolation';
 import type { PhysicsComponents, PhysicsUpdateComponents } from '../components/registry';
-import { physicsUpdate, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
+import { physicsUpdate, PHYSICS_WRITES, type PhysicsUpdateMetadata, type PhysicsWorld } from './physics-update';
 import { COLLIDABLE_QUERY, DEFAULT_PHYSICS_STEP_MS, POSITION_UPDATED_EVENT } from '../constants';
 import type { PhysicalWorldSource } from '../world';
 import { addPhysicalWorldData } from '../actions/add-physical-world-data';
@@ -169,6 +169,9 @@ export default class PhysicsSystem<
 			name: options.name ?? 'PhysicsSystem',
 			deltaBetweenRuns: options.deltaBetweenRuns ?? DEFAULT_PHYSICS_STEP_MS,
 			firstRun: options.firstRun,
+			reads: options.reads,
+			writes: [...new Set([...updateFunction.physics?.writes ?? PHYSICS_WRITES, ...options.writes ?? []])],
+			exclusive: options.exclusive,
 
 			// Movement needs both; an entity with only one is not moved, though it can still be collided with.
 			required: ['transform', 'velocity'],

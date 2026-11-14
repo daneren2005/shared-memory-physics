@@ -69,6 +69,13 @@ describe('PathfindingSystem', () => {
 		system.destroy();
 	});
 
+	it('declares navigation as written, merged with the game\'s writes', () => {
+		const world = createNavigationWorld();
+		const system = new PathfindingSystem(world, { getInitData: () => ({ tilesWide: 10, tilesHigh: 10, cellSize: CELL }), writes: ['transform'] });
+		expect(system.writes).toEqual(['navigation', 'transform']);
+		system.destroy();
+	});
+
 	it('gathers only movers with a navigation component', () => {
 		const world = createNavigationWorld();
 		const system = new PathfindingSystem(world, { getInitData: () => ({ tilesWide: 10, tilesHigh: 10, cellSize: CELL }) });

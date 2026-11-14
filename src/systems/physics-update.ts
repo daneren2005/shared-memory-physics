@@ -92,6 +92,9 @@ export interface PhysicsGroupConfig<C extends ComponentMap> {
 	index: number
 }
 
+// Moves and blends always write these; bouncing and dynamics write velocity.
+export const PHYSICS_WRITES = ['transform', 'velocity', 'interpolation'] as const;
+
 // What PhysicsSystem needs to know about an update to set up its components and queries. Stamped on by
 // createPhysicsUpdate so a game declares its collision setup once, in the module both backends import.
 export interface PhysicsUpdateMetadata<C extends ComponentMap> {
@@ -103,6 +106,8 @@ export interface PhysicsUpdateMetadata<C extends ComponentMap> {
 	optional: Array<keyof C & string>
 	// Set when the update groups its run; PhysicsSystem reads it to send the group block with movers and collidables.
 	group?: PhysicsGroupConfig<C>
+	// Components the library itself writes, declared to ConflictScheduler. A callback's own writes come from the game.
+	writes: Array<keyof C & string>
 }
 
 export type PhysicsUpdateFunction<
@@ -230,6 +235,8 @@ export function createPhysicsUpdate<
 				dynamics: true,
 				optional,
 				group,
+				// dieAtImpact flags the dying body, and that entity dies on a later run.
+				writes: onCollision ? [...PHYSICS_WRITES, 'body', 'entity'] : [...PHYSICS_WRITES],
 			},
 		},
 	);

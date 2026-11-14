@@ -207,6 +207,10 @@ velocity command supplies jumping, and its worker-safe collision callback queues
   before it could. A mover with no bounciness therefore still runs the overlap pass when *anything*
   in the run is bouncy (`CollisionBroadphase.hasBounciness`). The bounce is a reflection, not an
   impulse: a still entity has no velocity into the surface, so nothing is transferred to it.
+- **Scheduler access is declared by the library.** `PhysicsUpdateMetadata.writes` (from `createPhysicsUpdate`,
+  `PHYSICS_WRITES` for the bare update) is merged with the config's `writes` into `PhysicsSystem.writes`;
+  `InterpolationSystem` writes only `interpolation` and `PathfindingSystem` writes `navigation` (plus config `writes`).
+  A callback's own effects are the game's to declare.
 - **`stopVelocityOnContact` is opt-in and subordinate to bounciness.** With it enabled on
   `createPhysicsUpdate`, each non-bouncy side of a solid contact loses only the velocity component pointing into
   the shape-accurate normal. The default remains sweep-only velocity behavior; sensors never receive a solid

@@ -28,6 +28,7 @@ export default class InterpolationSystem<
 			// Every frame, which is the whole point.
 			deltaBetweenRuns: 0,
 			firstRun: options.firstRun,
+			writes: ['interpolation'],
 
 			// No velocity is read - the blend is between two positions the simulation produced - so a velocity-less
 			// entity is in this system on the same terms as a ship.

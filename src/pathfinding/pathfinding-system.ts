@@ -59,6 +59,9 @@ export default class PathfindingSystem<
 			name: options.name ?? 'PathfindingSystem',
 			deltaBetweenRuns: options.deltaBetweenRuns ?? DEFAULT_PHYSICS_STEP_MS,
 			firstRun: options.firstRun,
+			reads: options.reads,
+			writes: [...new Set(['navigation', ...options.writes ?? []])],
+			exclusive: options.exclusive,
 			required: ['navigation', 'transform'],
 			optional: optional.includes('body') ? optional : ['body', ...optional],
 			queries: {

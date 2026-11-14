@@ -36,6 +36,16 @@ describe('physics-system', () => {
 		system.destroy();
 	});
 
+	it('declares the components it writes for conflict scheduling', () => {
+		expect(system.writes).toEqual(['transform', 'velocity', 'interpolation']);
+		const swept = new PhysicsSystem<Components>(world, { name: 'Swept', updateFunction: createPhysicsUpdate<Components>(), writes: ['transform'] });
+		expect(swept.writes).toEqual(['transform', 'velocity', 'interpolation']);
+		const colliding = new PhysicsSystem<Components>(world, { name: 'Colliding', updateFunction: createPhysicsUpdate<Components>({ onCollision: () => {} }) });
+		expect(colliding.writes).toEqual(['transform', 'velocity', 'interpolation', 'body', 'entity']);
+		swept.destroy();
+		colliding.destroy();
+	});
+
 	it('falls back to the main thread when no worker was supplied', () => {
 		expect(system.isWorkerThread).toEqual(false);
 	});
