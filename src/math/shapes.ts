@@ -20,6 +20,21 @@ export interface Vector {
 const GAP: Vector = { x: 0, y: 0 };
 const CANDIDATE: Vector = { x: 0, y: 0 };
 
+// Below the error of an angle stored as float32 (cos of a float32 quarter turn is ~4e-8), far above double noise.
+const AXIS_SNAP = 1e-6;
+
+// cos/sin with near-zero results snapped to zero. Unsnapped, a float32 quarter turn leaves a box ~1e-6 skewed, so a
+// mover flush against its face counts as overlapping the moment it slides along it, and is pinned there.
+export function angleCos(angle: number): number {
+	return snapZero(Math.cos(angle));
+}
+export function angleSin(angle: number): number {
+	return snapZero(Math.sin(angle));
+}
+function snapZero(value: number): number {
+	return Math.abs(value) < AXIS_SNAP ? 0 : value;
+}
+
 export function capsuleHalfLength(width: number, height: number): number {
 	return Math.abs(width - height) / 2;
 }
@@ -58,7 +73,7 @@ export function shapeHalfWidth(shape: number, width: number, height: number, ang
 	if(shape === SHAPE_CIRCLE) {
 		return width / 2;
 	} else if(shape === SHAPE_CAPSULE) {
-		return Math.abs(Math.cos(capsuleCoreAngle(width, height, angle))) * capsuleHalfLength(width, height) + Math.min(width, height) / 2;
+		return Math.abs(angleCos(capsuleCoreAngle(width, height, angle))) * capsuleHalfLength(width, height) + Math.min(width, height) / 2;
 	}
 
 	return boundsHalfWidth(width, height, angle);
@@ -67,7 +82,7 @@ export function shapeHalfHeight(shape: number, width: number, height: number, an
 	if(shape === SHAPE_CIRCLE) {
 		return width / 2;
 	} else if(shape === SHAPE_CAPSULE) {
-		return Math.abs(Math.sin(capsuleCoreAngle(width, height, angle))) * capsuleHalfLength(width, height) + Math.min(width, height) / 2;
+		return Math.abs(angleSin(capsuleCoreAngle(width, height, angle))) * capsuleHalfLength(width, height) + Math.min(width, height) / 2;
 	}
 
 	return boundsHalfHeight(width, height, angle);
@@ -99,8 +114,8 @@ export function shapesOverlap(
 
 	const bHalf = coreHalfLength(bShape, bWidth, bHeight);
 	const bCoreAngle = capsuleCoreAngle(bWidth, bHeight, bAngle);
-	const bCos = Math.cos(bCoreAngle) * bHalf;
-	const bSin = Math.sin(bCoreAngle) * bHalf;
+	const bCos = angleCos(bCoreAngle) * bHalf;
+	const bSin = angleSin(bCoreAngle) * bHalf;
 	const bRadius = shapeRadius(bShape, bWidth, bHeight);
 
 	if(!aIsRound) {
@@ -112,8 +127,8 @@ export function shapesOverlap(
 
 	const aHalf = coreHalfLength(aShape, aWidth, aHeight);
 	const aCoreAngle = capsuleCoreAngle(aWidth, aHeight, aAngle);
-	const aCos = Math.cos(aCoreAngle) * aHalf;
-	const aSin = Math.sin(aCoreAngle) * aHalf;
+	const aCos = angleCos(aCoreAngle) * aHalf;
+	const aSin = angleSin(aCoreAngle) * aHalf;
 	const reach = shapeRadius(aShape, aWidth, aHeight) + bRadius;
 
 	return segmentSegmentDistanceSquared(
@@ -165,10 +180,10 @@ function boxesContactNormal(
 	bX: number, bY: number, bWidth: number, bHeight: number, bAngle: number,
 	out: Vector,
 ): boolean {
-	const aCos = Math.cos(aAngle);
-	const aSin = Math.sin(aAngle);
-	const bCos = Math.cos(bAngle);
-	const bSin = Math.sin(bAngle);
+	const aCos = angleCos(aAngle);
+	const aSin = angleSin(aAngle);
+	const bCos = angleCos(bAngle);
+	const bSin = angleSin(bAngle);
 	const aHalfWidth = aWidth / 2;
 	const aHalfHeight = aHeight / 2;
 	const bHalfWidth = bWidth / 2;
@@ -214,12 +229,12 @@ function roundsContactNormal(
 ): boolean {
 	const aHalf = coreHalfLength(aShape, aWidth, aHeight);
 	const aCoreAngle = capsuleCoreAngle(aWidth, aHeight, aAngle);
-	const aCos = Math.cos(aCoreAngle) * aHalf;
-	const aSin = Math.sin(aCoreAngle) * aHalf;
+	const aCos = angleCos(aCoreAngle) * aHalf;
+	const aSin = angleSin(aCoreAngle) * aHalf;
 	const bHalf = coreHalfLength(bShape, bWidth, bHeight);
 	const bCoreAngle = capsuleCoreAngle(bWidth, bHeight, bAngle);
-	const bCos = Math.cos(bCoreAngle) * bHalf;
-	const bSin = Math.sin(bCoreAngle) * bHalf;
+	const bCos = angleCos(bCoreAngle) * bHalf;
+	const bSin = angleSin(bCoreAngle) * bHalf;
 
 	const distance = Math.sqrt(segmentSegmentDistanceSquared(
 		aX - aCos, aY - aSin, aX + aCos, aY + aSin,
@@ -247,8 +262,8 @@ function boxRoundContactNormal(
 ): boolean {
 	const half = coreHalfLength(roundShape, roundWidth, roundHeight);
 	const coreAngle = capsuleCoreAngle(roundWidth, roundHeight, roundAngle);
-	const halfX = Math.cos(coreAngle) * half;
-	const halfY = Math.sin(coreAngle) * half;
+	const halfX = angleCos(coreAngle) * half;
+	const halfY = angleSin(coreAngle) * half;
 
 	const distance = Math.sqrt(segmentBoxDistanceSquared(
 		roundX - halfX, roundY - halfY, roundX + halfX, roundY + halfY,
@@ -264,8 +279,8 @@ function boxRoundContactNormal(
 
 	// The core runs through the box, leaving no gap to point along. Fall back to the shallowest way out, in the
 	// box's frame where it is axis aligned: its own two sides, or square across the core.
-	const cos = Math.cos(boxAngle);
-	const sin = Math.sin(boxAngle);
+	const cos = angleCos(boxAngle);
+	const sin = angleSin(boxAngle);
 	const offsetX = roundX - boxX;
 	const offsetY = roundY - boxY;
 	const localX = offsetX * cos + offsetY * sin;
@@ -344,10 +359,10 @@ function normalize(x: number, y: number, out: Vector): boolean {
 // Half the axis-aligned box containing a rotated rectangle: each side contributes however much now points along
 // the axis. width / 2 at angle 0, height / 2 at a quarter turn.
 export function boundsHalfWidth(width: number, height: number, angle: number): number {
-	return (Math.abs(Math.cos(angle)) * width + Math.abs(Math.sin(angle)) * height) / 2;
+	return (Math.abs(angleCos(angle)) * width + Math.abs(angleSin(angle)) * height) / 2;
 }
 export function boundsHalfHeight(width: number, height: number, angle: number): number {
-	return (Math.abs(Math.sin(angle)) * width + Math.abs(Math.cos(angle)) * height) / 2;
+	return (Math.abs(angleSin(angle)) * width + Math.abs(angleCos(angle)) * height) / 2;
 }
 
 // Whether two rotated boxes overlap, by the separating axis theorem: for two boxes only four axes can separate
@@ -361,10 +376,10 @@ export function orientedBoxesOverlap(
 		return false;
 	}
 
-	const aCos = Math.cos(aAngle);
-	const aSin = Math.sin(aAngle);
-	const bCos = Math.cos(bAngle);
-	const bSin = Math.sin(bAngle);
+	const aCos = angleCos(aAngle);
+	const aSin = angleSin(aAngle);
+	const bCos = angleCos(bAngle);
+	const bSin = angleSin(bAngle);
 
 	const aHalfWidth = aWidth / 2;
 	const aHalfHeight = aHeight / 2;
@@ -472,8 +487,8 @@ export function segmentBoxDistanceSquared(
 	boxX: number, boxY: number, boxWidth: number, boxHeight: number, boxAngle: number,
 	out?: Vector,
 ): number {
-	const cos = Math.cos(boxAngle);
-	const sin = Math.sin(boxAngle);
+	const cos = angleCos(boxAngle);
+	const sin = angleSin(boxAngle);
 	const halfWidth = boxWidth / 2;
 	const halfHeight = boxHeight / 2;
 

@@ -1,6 +1,6 @@
 import { SHAPE_CAPSULE, SHAPE_CIRCLE, SHAPE_POLYGON, SHAPE_RECTANGLE } from '../components/body-component-constants';
 import { POLYGON_VERTEX_COUNT_INDEX, POLYGON_VERTICES_INDEX } from '../components/polygon-component-constants';
-import { capsuleCoreAngle, capsuleHalfLength } from './shapes';
+import { angleCos, angleSin, capsuleCoreAngle, capsuleHalfLength } from './shapes';
 import type { Vector } from './shapes';
 
 interface Projection {
@@ -130,8 +130,8 @@ function testEdges(
 	keepBest: boolean,
 ): boolean {
 	const count = polygon[POLYGON_VERTEX_COUNT_INDEX];
-	const cos = Math.cos(angle);
-	const sin = Math.sin(angle);
+	const cos = angleCos(angle);
+	const sin = angleSin(angle);
 	for(let i = 0; i < count; i++) {
 		const next = (i + 1) % count;
 		const currentX = worldVertexX(polygon, i, x, width, height, cos, sin);
@@ -159,8 +159,8 @@ function testRectangleAxes(
 	bX: number, bY: number, bWidth: number, bHeight: number, bAngle: number,
 	keepBest: boolean,
 ): boolean {
-	const cos = Math.cos(angle);
-	const sin = Math.sin(angle);
+	const cos = angleCos(angle);
+	const sin = angleSin(angle);
 
 	return testAxis(
 		cos, sin,
@@ -186,15 +186,15 @@ function testRoundVertexAxes(
 ): boolean {
 	const half = roundShape === SHAPE_CAPSULE ? capsuleHalfLength(roundWidth, roundHeight) : 0;
 	const coreAngle = capsuleCoreAngle(roundWidth, roundHeight, roundAngle);
-	const alongX = Math.cos(coreAngle) * half;
-	const alongY = Math.sin(coreAngle) * half;
+	const alongX = angleCos(coreAngle) * half;
+	const alongY = angleSin(coreAngle) * half;
 	const startX = roundX - alongX;
 	const startY = roundY - alongY;
 	const endX = roundX + alongX;
 	const endY = roundY + alongY;
 	const count = polygon[POLYGON_VERTEX_COUNT_INDEX];
-	const cos = Math.cos(polygonAngle);
-	const sin = Math.sin(polygonAngle);
+	const cos = angleCos(polygonAngle);
+	const sin = angleSin(polygonAngle);
 	for(let i = 0; i < count; i++) {
 		const vertexX = worldVertexX(polygon, i, polygonX, polygonWidth, polygonHeight, cos, sin);
 		const vertexY = worldVertexY(polygon, i, polygonY, polygonWidth, polygonHeight, cos, sin);
@@ -279,15 +279,15 @@ function projectShape(
 	if(shape === SHAPE_CAPSULE) {
 		const half = capsuleHalfLength(width, height);
 		const coreAngle = capsuleCoreAngle(width, height, angle);
-		const reach = Math.abs(axisX * Math.cos(coreAngle) + axisY * Math.sin(coreAngle)) * half + Math.min(width, height) / 2;
+		const reach = Math.abs(axisX * angleCos(coreAngle) + axisY * angleSin(coreAngle)) * half + Math.min(width, height) / 2;
 		out.min = centre - reach;
 		out.max = centre + reach;
 		return;
 	}
 
 	if(shape === SHAPE_RECTANGLE) {
-		const cos = Math.cos(angle);
-		const sin = Math.sin(angle);
+		const cos = angleCos(angle);
+		const sin = angleSin(angle);
 		const reach = Math.abs(axisX * cos + axisY * sin) * width / 2
 			+ Math.abs(axisX * -sin + axisY * cos) * height / 2;
 		out.min = centre - reach;
@@ -302,8 +302,8 @@ function projectShape(
 	}
 
 	const count = polygon[POLYGON_VERTEX_COUNT_INDEX];
-	const cos = Math.cos(angle);
-	const sin = Math.sin(angle);
+	const cos = angleCos(angle);
+	const sin = angleSin(angle);
 	out.min = Infinity;
 	out.max = -Infinity;
 	for(let i = 0; i < count; i++) {

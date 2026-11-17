@@ -1,5 +1,5 @@
 import {
-	boundsHalfHeight, boundsHalfWidth, contactNormal, orientedBoxesOverlap,
+	angleCos, angleSin, boundsHalfHeight, boundsHalfWidth, contactNormal, orientedBoxesOverlap,
 	capsuleCoreAngle, capsuleHalfLength, shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap,
 	pointSegmentDistanceSquared, segmentBoxDistanceSquared, segmentSegmentDistanceSquared,
 } from '../shapes';
@@ -110,6 +110,28 @@ describe('oriented-box', () => {
 			expect(orientedBoxesOverlap(0, 0, 10, 2, EIGHTH_TURN, 4, 4, 6, 3, -EIGHTH_TURN))
 				.toEqual(orientedBoxesOverlap(4, 4, 6, 3, -EIGHTH_TURN, 0, 0, 10, 2, EIGHTH_TURN));
 		});
+
+		it('lets a box slide flush past the corner of one turned a float32 quarter turn', () => {
+			// Diagonally corner to corner, then nudged along the shared edge line: touching, never overlapping.
+			const turn = Math.fround(QUARTER_TURN);
+			expect(orientedBoxesOverlap(8242, 8306, 28, 28, 0, 8288, 8352, 64, 64, turn)).toEqual(false);
+			expect(orientedBoxesOverlap(8242.5, 8306, 28, 28, 0, 8288, 8352, 64, 64, turn)).toEqual(false);
+			expect(orientedBoxesOverlap(8242, 8306.5, 28, 28, 0, 8288, 8352, 64, 64, turn)).toEqual(false);
+		});
+	});
+});
+
+describe('angle trig', () => {
+	it('snaps a float32 quarter turn onto the axes', () => {
+		const turn = Math.fround(QUARTER_TURN);
+		expect(angleCos(turn)).toEqual(0);
+		expect(angleSin(turn)).toEqual(Math.sin(turn));
+		expect(angleSin(Math.fround(Math.PI))).toEqual(0);
+	});
+
+	it('leaves any real rotation alone', () => {
+		expect(angleCos(EIGHTH_TURN)).toEqual(Math.cos(EIGHTH_TURN));
+		expect(angleSin(0.001)).toEqual(Math.sin(0.001));
 	});
 });
 

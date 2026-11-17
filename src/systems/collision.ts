@@ -7,7 +7,7 @@ import { BODY_CATEGORY_INDEX, BODY_MASK_INDEX, SHAPE_CAPSULE, SHAPE_POLYGON, SHA
 import { TRANSFORM_ANGLE_INDEX, TRANSFORM_HEIGHT_INDEX, TRANSFORM_WIDTH_INDEX, TRANSFORM_X_INDEX, TRANSFORM_Y_INDEX } from '../components/transform-component-constants';
 import { VELOCITY_X_INDEX, VELOCITY_Y_INDEX } from '../components/velocity-component-constants';
 import { DYNAMICS_ACCELERATION_X_INDEX, DYNAMICS_ACCELERATION_Y_INDEX, DYNAMICS_INVERSE_MASS_INDEX } from '../components/dynamics-component-constants';
-import { contactNormal as shapeContactNormal, shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap } from '../math/shapes';
+import { angleCos, angleSin, contactNormal as shapeContactNormal, shapeHalfHeight, shapeHalfWidth, shapeIsEmpty, shapeRadius, shapesOverlap } from '../math/shapes';
 import type { Vector } from '../math/shapes';
 import { polygonContactNormal, polygonShapesOverlap } from '../math/polygons';
 import {
@@ -793,8 +793,8 @@ function sweptOverlaps(searcher: Searcher, startX: number, startY: number, moveX
 		// The move measured in the box's own frame, where the box is axis aligned and merely slides by it. Growing
 		// each side by that slide over-covers the two corners the slid hexagon leaves open, which reports early, not
 		// short.
-		const cos = Math.cos(searcher.angle);
-		const sin = Math.sin(searcher.angle);
+		const cos = angleCos(searcher.angle);
+		const sin = angleSin(searcher.angle);
 		const localX = moveX * cos + moveY * sin;
 		const localY = -moveX * sin + moveY * cos;
 
